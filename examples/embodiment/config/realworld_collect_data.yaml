@@ -1,5 +1,5 @@
 defaults:
-  - env/realworld_peg_insertion@env.eval
+  - env/realworld_data_collect@env.eval
   - override hydra/job_logging: stdout
 
 hydra:
@@ -21,7 +21,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: ROBOT_IP
+          - robot_ip: 172.16.0.2
             node_rank: 0
 
 runner:
@@ -32,14 +32,21 @@ runner:
     experiment_name: "collect-data"
     logger_backends: ["tensorboard"] # wandb, swanlab
   num_data_episodes: 20
-  record_task_description: False
+  # CollectEpisode / LeRobot dataset parameters
+  export_format: "lerobot"   # "lerobot" or "pickle"
+  robot_type: "panda"
+  fps: 10
+  only_success: False
 
 env:
   group_name: "EnvGroup"
   eval:
+    no_gripper: False
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    use_spacemouse: False
+    use_gello: True
     override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+      # target_ee_pose: [0.67241359,-0.07849087,0.05522433,-3.11611227,0.0469322,0.89696324]
+      target_ee_pose: [0.53123349, -0.06841109, 0.05703992, 3.12080389, 0.18755655, 0.24284845]
       success_hold_steps: 1  # define how many consecutive steps the robot must hold the position to succeed

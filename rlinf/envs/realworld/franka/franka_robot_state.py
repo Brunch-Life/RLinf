@@ -40,7 +40,7 @@ class FrankaRobotState:
         default_factory=lambda: np.zeros((6, 7))
     )  # ZeroJacobian.zero_jacobian
 
-    gripper_position: int = 0  # Sum(JointState.position)
+    gripper_position: float = 0.0  # Sum(JointState.position)
     gripper_open: bool = False
 
     def to_dict(self):

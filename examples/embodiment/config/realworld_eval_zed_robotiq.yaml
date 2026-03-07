@@ -1,0 +1,92 @@
+defaults:
+  - env/realworld_eval@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# ── Two-node split deployment ────────────────────────────────────
+#   node 0 (server, 22.04): GPU + 3× ZED cameras  →  env worker
+#   node 1 (NUC,    20.04): Franka arm + Robotiq   →  FrankaController
+#
+# Start Ray:
+#   server:  RLINF_NODE_RANK=0 ray start --head --port=6379
+#   NUC:     RLINF_NODE_RANK=1 ray start --address=<server_ip>:6379
+# ─────────────────────────────────────────────────────────────────
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0           # server — env worker runs here (ZED cameras)
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 172.16.0.2            # Franka arm IP (reachable from server)
+            node_rank: 0                    # hardware enumeration on server
+            controller_node_rank: 1         # FrankaController on NUC
+            camera_type: "zed"
+            camera_serials:                 # Replace with your ZED serial numbers
+              - "10848563"
+              - "39651335"
+              - "34303972"
+            gripper_type: "robotiq"
+            gripper_connection: "/dev/ttyUSB0"   # Robotiq USB-RS485 on NUC
+    - label: nuc
+      node_ranks: 1           # NUC — FrankaController runs here
+      # ── IMPORTANT: NUC must source ROS + venv BEFORE `ray start` ──
+      # Ray captures env vars at start time. On the NUC, run:
+      #   source /opt/ros/noetic/setup.bash
+      #   source /home/franka/cynws/RLinf/.venv/bin/activate
+      #   # (activate already sources catkin_ws/devel/setup.bash)
+      #   RLINF_NODE_RANK=1 ray start --address=<server_ip>:6379
+      # This ensures geometry_msgs, rospy, franka_msgs etc. are on PYTHONPATH.
+      env_configs:
+        - node_ranks: 1
+          python_interpreter_path: /home/franka/cynws/RLinf/.venv/bin/python3  # Replace
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "eval-realworld-zed-robotiq"
+    logger_backends: ["tensorboard"]
+  num_eval_episodes: 20
+  max_episode_steps: 1000
+  dry_run: False        # True = query policy but do NOT move robot (debug mode)
+  dry_run_steps: 5      # number of inference steps in dry-run mode
+  # "absolute" = policy outputs target EE pose → subtract current state to get delta
+  # "delta"    = policy outputs delta directly → pass through to env
+  # pi0_custom with extra_delta_transform=True outputs delta actions directly.
+  action_type: "delta"
+
+policy_server:
+  host: "localhost"
+  port: 12345
+  config_name: "pi0_custom"
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: False
+    use_gello: False
+    keyboard_reward_wrapper: "single_stage"
+    override_cfg:
+      target_ee_pose: [0.53, -0.07, 0.2, 3.12, 0.19, 0.24]  # Replace with your task pose
+      # Safety boundary [x, y, z, rx, ry, rz] (euler angles, same as data collection).
+      # If both are all-zero, auto-computed from random_*_range params × 10.
+      # Values below are computed from target_ee_pose with data-collection defaults:
+      #   xy ±0.5m, z_low -1.0m, z_high +1.0m, rpy ±π/6×10
+      ee_pose_limit_min: [ 0.03, -0.57, -0.80, -2.12, -5.05, -5.00]
+      ee_pose_limit_max: [ 1.03,  0.43,  1.20,  8.36,  5.43,  5.48]

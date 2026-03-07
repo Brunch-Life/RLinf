@@ -324,8 +324,14 @@ class Cluster:
                 ]
             )
             for actor_state in alive_actors:
-                actor = ray.get_actor(actor_state.name)
-                ray.kill(actor, no_restart=True)
+                try:
+                    actor = ray.get_actor(
+                        actor_state.name, namespace=Cluster.NAMESPACE
+                    )
+                    ray.kill(actor, no_restart=True)
+                except ValueError:
+                    # Actor may have already died; skip
+                    pass
 
             if ray.is_initialized():
                 # Mimic ray's sleep before shutdown to ensure log messages are flushed

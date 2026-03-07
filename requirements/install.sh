@@ -646,13 +646,18 @@ install_robocasa_env() {
 
 install_franka_env() {
     # Install serl_franka_controller
+    # Optional hardware support:
+    #   - Robotiq 2F gripper: pymodbus is installed via the franka extra in pyproject.toml.
+    #     Connect the gripper via USB-RS485 adapter and set gripper_type: robotiq in YAML.
+    #   - ZED cameras: install ZED SDK from https://www.stereolabs.com/developers/release
+    #     (provides pyzed; not pip-installable). Set camera_type: zed in YAML.
     # Check if ROS_CATKIN_PATH is set or serl_franka_controllers is already built
     set +euo pipefail
     source /opt/ros/noetic/setup.bash
     set -euo pipefail
     ROS_CATKIN_PATH=$(realpath "$VENV_DIR/franka_catkin_ws")
-    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.15.0}
-    FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.0}
+    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.19.0}
+    FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.2}
 
     mkdir -p "$ROS_CATKIN_PATH/src"
 
@@ -683,17 +688,17 @@ install_franka_env() {
     export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:$LD_LIBRARY_PATH
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
-    # Then franka_ros
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build --pkg franka_ros
+    # Then franka_ros (build all sub-packages: franka_control, franka_hw, etc.)
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
 
     # Finally serl_franka_controllers
     catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
     popd >/dev/null
 
-    echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
-    echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+    echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:/opt/ros/noetic/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
+    echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
 }
 
 install_xsquare_turtle2_env() {

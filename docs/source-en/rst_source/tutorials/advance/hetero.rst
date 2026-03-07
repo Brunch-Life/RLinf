@@ -115,3 +115,55 @@ Using the reserved ``node`` group in ``component_placement`` disables
 hardware placement entirely and interprets ranks as node ranks only. This
 is useful for placing hardware-agnostic processes (such as agents or
 CPU-only workers) on particular nodes regardless of available GPUs.
+
+
+Alternative camera and gripper hardware
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+By default, Franka hardware nodes use Intel RealSense cameras and the
+Franka built-in parallel-jaw gripper. You can switch to **ZED cameras**
+and/or a **Robotiq 2F gripper** by adding the corresponding fields to the
+``configs`` entries:
+
+.. code-block:: yaml
+
+	cluster:
+	  node_groups:
+	    - label: franka
+	      node_ranks: 0
+	      hardware:
+	        type: Franka
+	        configs:
+	          - robot_ip: "172.16.0.2"
+	            node_rank: 0
+	            camera_type: "zed"               # "realsense" (default) or "zed"
+	            camera_serials:
+	              - "12345678"
+	            gripper_type: "robotiq"           # "franka" (default) or "robotiq"
+	            gripper_connection: "/dev/ttyUSB0" # serial port for Robotiq (USB-RS485)
+
+**ZED cameras**
+
+* Install the `ZED SDK <https://www.stereolabs.com/developers/release>`_
+  from the Stereolabs website. The SDK installs the ``pyzed`` Python
+  package into your system Python; it is not pip-installable.
+* Set ``camera_type: "zed"`` in the hardware config.
+* ZED serial numbers are shorter pure-digit strings; use
+  ``ZEDCamera.get_device_serial_numbers()`` or ``ZED Explorer`` to
+  discover them.
+
+**Robotiq 2F gripper**
+
+* Connect the gripper to the control PC via a **USB-RS485 adapter**
+  (e.g. ``/dev/ttyUSB0``).
+* The ``pymodbus`` package (installed automatically with the ``franka``
+  extra) handles Modbus RTU communication directly — **no ROS package
+  required**.
+* Set ``gripper_type: "robotiq"`` and ``gripper_connection`` to the
+  serial device path.
+* When using Robotiq, the impedance controller is launched with
+  ``load_gripper:=false`` automatically so Franka does not try to
+  manage its built-in gripper.
+* Remember to configure the Franka end-effector load parameters in
+  `Franka Desk <https://franka.de>`_ to match the Robotiq mass
+  (0.925 kg for 2F-85) and center of mass.

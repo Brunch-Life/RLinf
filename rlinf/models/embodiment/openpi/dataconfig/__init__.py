@@ -297,13 +297,14 @@ _CONFIGS = [
         name="pi0_custom",
         model=pi0_config.Pi0Config(),
         data=CustomDataConfig(
-            repo_id="physical-intelligence/custom_dataset",
+            repo_id="YinuoTHU/real-gello",
             base_config=DataConfig(
                 prompt_from_task=True
             ),  # we need language instruction
-            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
-            extra_delta_transform=False,  # True for delta action, False for abs_action
-            action_train_with_rotation_6d=False,  # User can add extra config in custom dataset
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base"),
+            extra_delta_transform=True,  # True for delta action, False for abs_action
+            action_train_with_rotation_6d=False,
+            select_state_dims=(4, 5, 6, 7, 8, 9, 0),  # 19D→7D: tcp_pose(6) + gripper(1)
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),

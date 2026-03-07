@@ -20,13 +20,97 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from rlinf.data.embodied_io_struct import (
-    ChunkStepResult,
-    EmbodiedRolloutResult,
-)
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
+from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
+
+
+class RealWorldCollectEpisode(CollectEpisode):
+    """CollectEpisode variant for interactive data collection with deferred recording.
+
+    Keyboard controls:
+        a: Start recording (prior positioning steps are discarded)
+        b: End episode as failure (terminated, reward=-1)
+        c: End episode as success (terminated, reward=+1)
+
+    Before pressing 'a', the operator can freely position the robot via
+    SpaceMouse / GELLO without any data being recorded.  Records the actual
+    ``info["intervene_action"]`` instead of the placeholder zero-action.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from rlinf.envs.realworld.common.keyboard.keyboard_listener import (
+            KeyboardListener,
+        )
+
+        self._listener = KeyboardListener()
+        self._recording = False
+        self._last_episode_was_recorded = False
+
+    @property
+    def last_episode_was_recorded(self) -> bool:
+        return self._last_episode_was_recorded
+
+    def reset(self, *, seed=None, options=None):
+        self._recording = False
+        return super().reset(seed=seed, options=options)
+
+    @staticmethod
+    def _inject_success(info: dict, success: bool) -> None:
+        """Inject a success flag into info so ``_get_episode_success`` picks it up."""
+        flag = torch.tensor(success)
+        if isinstance(info, dict):
+            ep = info.get("episode")
+            if isinstance(ep, dict):
+                ep["success_once"] = flag
+            else:
+                info["success"] = flag
+
+    def step(self, action, **kwargs):
+        obs, reward, terminated, truncated, info = self.env.step(action, **kwargs)
+        key = self._listener.get_key()
+
+        if key == "a" and not self._recording:
+            self._recording = True
+            for env_idx in range(self.num_envs):
+                self._buffers[env_idx] = self._new_buffer()
+                self._buffers[env_idx]["observations"].append(
+                    self._slice_copy(obs, env_idx)
+                )
+            print(
+                "\n>>> Recording STARTED "
+                "(press 'c' = success, 'b' = fail) <<<"
+            )
+            return obs, reward, terminated, truncated, info
+
+        if key == "b":
+            terminated = torch.ones_like(terminated, dtype=torch.bool)
+            reward = torch.full_like(reward, -1.0)
+            self._inject_success(info, False)
+        elif key == "c":
+            terminated = torch.ones_like(terminated, dtype=torch.bool)
+            reward = torch.full_like(reward, 1.0)
+            self._inject_success(info, True)
+
+        if self._recording:
+            recorded_action = action
+            if isinstance(info, dict) and "intervene_action" in info:
+                recorded_action = info["intervene_action"]
+            self._record_step(
+                recorded_action, obs, reward, terminated, truncated, info
+            )
+            self._maybe_flush(terminated, truncated)
+
+        done = any(
+            self._scalar_flag(terminated, i) or self._scalar_flag(truncated, i)
+            for i in range(self.num_envs)
+        )
+        if done:
+            self._last_episode_was_recorded = self._recording
+            self._recording = False
+
+        return obs, reward, terminated, truncated, info
 
 
 class DataCollector(Worker):
@@ -35,8 +119,8 @@ class DataCollector(Worker):
 
         self.cfg = cfg
         self.num_data_episodes = cfg.runner.num_data_episodes
-        self.total_cnt = 0
-        self.env = RealWorldEnv(
+
+        base_env = RealWorldEnv(
             cfg.env.eval,
             num_envs=1,
             seed_offset=0,
@@ -44,140 +128,73 @@ class DataCollector(Worker):
             worker_info=self.worker_info,
         )
 
-        # Initialize TrajectoryReplayBuffer
-        # Change directory name to 'demos' as requested
-        buffer_path = os.path.join(self.cfg.runner.logger.log_path, "demos")
-        self.log_info(f"Initializing ReplayBuffer at: {buffer_path}")
+        log_path = self.cfg.runner.logger.get("log_path") or "logs"
+        self.save_dir = os.path.join(log_path, "lerobot_dataset")
+        self.log_info(f"Saving LeRobot dataset to: {self.save_dir}")
 
-        self.buffer = TrajectoryReplayBuffer(
-            seed=self.cfg.seed if hasattr(self.cfg, "seed") else 1234,
-            enable_cache=False,
-            auto_save=True,
-            auto_save_path=buffer_path,
-            trajectory_format="pt",
+        runner_cfg = self.cfg.runner
+        self.env = RealWorldCollectEpisode(
+            env=base_env,
+            save_dir=self.save_dir,
+            num_envs=1,
+            export_format=getattr(runner_cfg, "export_format", "lerobot"),
+            robot_type=getattr(runner_cfg, "robot_type", "panda"),
+            fps=getattr(runner_cfg, "fps", 10),
+            only_success=getattr(runner_cfg, "only_success", False),
+            show_goal_site=False,
         )
-
-    def _process_obs(self, obs):
-        """
-        Process observations to match the format expected by EmbodiedRolloutResult.
-        """
-        if not self.cfg.runner.record_task_description:
-            obs.pop("task_descriptions", None)
-
-        ret_obs = {}
-        for key, val in obs.items():
-            if isinstance(val, np.ndarray):
-                val = torch.from_numpy(val)
-
-            val = val.cpu()
-
-            # Map keys: 'images' -> 'main_images', others remain
-            if "images" == key:
-                ret_obs["main_images"] = val.clone()  # Keep uint8
-            else:
-                ret_obs[key] = val.clone()
-
-        return ret_obs
 
     def run(self):
         obs, _ = self.env.reset()
         success_cnt = 0
+        total_cnt = 0
         progress_bar = tqdm(
             range(self.num_data_episodes), desc="Collecting Data Episodes:"
         )
 
-        current_rollout = EmbodiedRolloutResult(
-            max_episode_length=self.cfg.env.eval.max_episode_steps,
-            model_weights_id="demo_expert",
+        action_dim = self.env.action_space.shape[-1]
+        self.log_info(
+            "Keyboard controls: 'a' = start recording, "
+            "'c' = success + end, 'b' = fail + end"
         )
-
-        current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
-            action = np.zeros((1, 6))
-            next_obs, reward, done, _, info = self.env.step(action)
+            action = np.zeros((1, action_dim))
+            obs, reward, terminated, truncated, info = self.env.step(action)
 
-            if "intervene_action" in info:
-                action = info["intervene_action"]
-
-            next_obs_processed = self._process_obs(next_obs)
-
-            # --- Construct ChunkStepResult ---
-            # Prepare action tensor [1, 6]
-            if isinstance(action, torch.Tensor):
-                action_tensor = action.float().cpu()
-            else:
-                action_tensor = torch.from_numpy(action).float()
-
-            if action_tensor.ndim == 1:
-                action_tensor = action_tensor.unsqueeze(0)
-
-            # Reward and Done [1, 1]
-            if isinstance(reward, torch.Tensor):
-                reward_tensor = reward.float().cpu()
-            else:
-                reward_tensor = torch.tensor(reward).float()
-            if reward_tensor.ndim == 1:
-                reward_tensor = reward_tensor.unsqueeze(1)
-
-            if isinstance(done, torch.Tensor):
-                done_tensor = done.bool().cpu()
-            else:
-                done_tensor = torch.tensor(done).bool()
-            if done_tensor.ndim == 1:
-                done_tensor = done_tensor.unsqueeze(1)
-
-            step_result = ChunkStepResult(
-                actions=action_tensor,
-                rewards=reward_tensor,
-                dones=done_tensor,
-                terminations=done_tensor,
-                truncations=torch.zeros_like(done_tensor),
-                forward_inputs={"action": action_tensor},
-            )
-
-            current_rollout.append_step_result(step_result)
-            current_rollout.append_transitions(
-                curr_obs=current_obs_processed, next_obs=next_obs_processed
-            )
-
-            obs = next_obs
-            current_obs_processed = next_obs_processed
+            done = bool(terminated.any()) or bool(truncated.any())
 
             if done:
-                r_val = (
-                    reward[0]
-                    if hasattr(reward, "__getitem__") and len(reward) > 0
-                    else reward
-                )
-                if isinstance(r_val, torch.Tensor):
-                    r_val = r_val.item()
+                if self.env.last_episode_was_recorded:
+                    r_val = (
+                        reward[0]
+                        if hasattr(reward, "__getitem__") and len(reward) > 0
+                        else reward
+                    )
+                    if isinstance(r_val, torch.Tensor):
+                        r_val = r_val.item()
 
-                success_cnt += int(r_val)
-                self.total_cnt += 1
-                self.log_info(
-                    f"Success: {r_val}. Total: {success_cnt}/{self.num_data_episodes}"
-                )
+                    is_success = float(r_val) > 0
+                    success_cnt += int(is_success)
+                    total_cnt += 1
+                    self.log_info(
+                        f"Episode {total_cnt} done. Success: {is_success}. "
+                        f"Successes: {success_cnt}/{self.num_data_episodes}"
+                    )
+                    progress_bar.update(1)
+                else:
+                    self.log_info(
+                        "Episode ended without recording (no 'a' press). "
+                        "Resetting..."
+                    )
 
-                # Save Trajectory to the 'demos' directory
-                trajectory = current_rollout.to_trajectory()
-                trajectory.intervene_flags = torch.ones_like(trajectory.intervene_flags)
-                self.buffer.add_trajectories([trajectory])
-
-                # Reset for next episode
                 obs, _ = self.env.reset()
-                current_obs_processed = self._process_obs(obs)
-                current_rollout = EmbodiedRolloutResult(
-                    max_episode_length=self.cfg.env.eval.max_episode_steps,
-                    model_weights_id="demo_expert",
-                )
-                progress_bar.update(1)
 
-        self.buffer.close()
-        self.log_info(
-            f"Finished. Demos saved in: {os.path.join(self.cfg.runner.logger.log_path, 'demos')}"
-        )
         self.env.close()
+        self.log_info(
+            f"Finished. {success_cnt} successful episodes collected. "
+            f"LeRobot dataset saved to: {self.save_dir}"
+        )
 
 
 @hydra.main(

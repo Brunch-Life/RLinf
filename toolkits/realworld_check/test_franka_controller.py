@@ -19,12 +19,20 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from rlinf.scheduler import Cluster
 from rlinf.envs.realworld.franka.franka_controller import FrankaController
 
 
 def main():
     robot_ip = os.environ.get("FRANKA_ROBOT_IP", None)
+    robot_ip = "172.16.0.2"
     assert robot_ip is not None, "Please set the FRANKA_ROBOT_IP environment variable."
+    cluster_cfg = {
+        "num_nodes": 1,
+        "component_placement": {"actor, rollout, env": {"node_group": "franka", "placement": 0}},
+        "node_groups": [{"label": "franka", "node_ranks": 0, "hardware": {"type": "Franka", "configs": [{"robot_ip": robot_ip, "node_rank": 0}]}}]
+    }
+    cluster = Cluster(cluster_cfg=cluster_cfg)
     controller = FrankaController.launch_controller(robot_ip=robot_ip)
 
     start_time = time.time()

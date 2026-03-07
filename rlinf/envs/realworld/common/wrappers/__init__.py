@@ -20,12 +20,14 @@ from .reward_done_wrapper import (
     KeyboardRewardDoneWrapper,
 )
 from .spacemouse_intervention import SpacemouseIntervention
+from .gello_intervention import GelloIntervention
 
 __all__ = [
     "Quat2EulerWrapper",
     "GripperCloseEnv",
     "RelativeFrame",
     "SpacemouseIntervention",
+    "GelloIntervention"
     "KeyboardRewardDoneWrapper",
     "KeyboardRewardDoneMultiStageWrapper",
 ]

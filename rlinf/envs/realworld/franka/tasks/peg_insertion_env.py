@@ -105,8 +105,8 @@ class PegInsertionConfig(FrankaRobotConfig):
 class PegInsertionEnv(FrankaEnv):
     def __init__(self, override_cfg, worker_info=None, hardware_info=None, env_idx=0):
         # Update config according to current env
-        config = PegInsertionConfig(**override_cfg)
-        super().__init__(config, worker_info, hardware_info, env_idx)
+        self.config = PegInsertionConfig(**override_cfg)
+        super().__init__(self.config, worker_info, hardware_info, env_idx)
 
     @property
     def task_description(self):
@@ -127,3 +127,11 @@ class PegInsertionEnv(FrankaEnv):
         self._interpolate_move(reset_pose, timeout=1)
 
         super().go_to_rest(joint_reset)
+
+    def get_tcp_pose(self):
+        self._franka_state = self._controller.get_state().wait()[0]
+        tcp_pose = self._franka_state.tcp_pose
+        return tcp_pose
+    
+    def get_action_scale(self):
+        return self.config.action_scale

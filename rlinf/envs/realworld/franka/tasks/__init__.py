@@ -21,6 +21,10 @@ from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
 from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
     PegInsertionEnv as PegInsertionEnv,
 )
+from rlinf.envs.realworld.franka.tasks.data_collect_env import (
+    DataCollectEnv as DataCollectEnv,
+)
+
 
 register(
     id="PegInsertionEnv-v1",
@@ -33,3 +37,7 @@ register(
 )
 
 register(id="BottleEnv-v1", entry_point="rlinf.envs.realworld.franka.tasks:BottleEnv")
+register(
+    id="DataCollectEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:DataCollectEnv",
+)

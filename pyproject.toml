@@ -121,7 +121,9 @@ franka = [
     "defusedxml",
     "pyspacemouse==1.1.5", 
     "imageio[ffmpeg]",
-    "pynput"
+    "pynput",
+    "pymodbus>=3.0",
+    "pyserial>=3.5",
 ]
 xsquare_turtle2 = [
     "pyyaml",

@@ -34,6 +34,13 @@ class ROSController:
         self._ros_version = ros_version
         assert self._ros_version == 1, "Currently only ROS 1 is supported."
 
+        ros_lib = "/opt/ros/noetic/lib"
+        ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+        if ros_lib not in ld_path.split(":"):
+            os.environ["LD_LIBRARY_PATH"] = (
+                f"{ros_lib}:{ld_path}" if ld_path else ros_lib
+            )
+
         # ROS is a global service on the node
         # When there are multiple controllers, concurrency control is needed
         ros_lock_file = "/tmp/.ros.lock"
@@ -55,7 +62,7 @@ class ROSController:
                     self._ros_core = psutil.Popen(
                         ["roscore"], stdout=sys.stdout, stderr=sys.stdout
                     )
-                    time.sleep(1)  # Wait for roscore to start
+                    time.sleep(10)  # Wait for roscore to start
 
         # Initialize ros node
         rospy.init_node("franka_controller", anonymous=True)

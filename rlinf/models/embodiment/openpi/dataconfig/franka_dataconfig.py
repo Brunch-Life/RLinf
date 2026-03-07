@@ -24,6 +24,30 @@ from rlinf.models.embodiment.openpi.policies import franka_policy
 
 
 @dataclasses.dataclass(frozen=True)
+class _SelectStateDims(_transforms.DataTransformFn):
+    """Select specific dimensions from ``observation/state`` during training.
+
+    When loading a dataset whose state vector has more dimensions than the
+    policy expects (e.g. 19D full FrankaEnv state vs. 7D tcp_pose+gripper),
+    this transform picks the relevant subset.  During inference the client
+    already sends the correct 7D state, so the transform is a no-op when
+    the input dimension matches the output length.
+    """
+
+    indices: tuple[int, ...] = (4, 5, 6, 7, 8, 9, 0)
+
+    def __call__(self, data: dict) -> dict:
+        key = "observation/state"
+        if key not in data:
+            return data
+        state = np.asarray(data[key])
+        if state.shape[-1] == len(self.indices):
+            return data
+        data[key] = state[..., list(self.indices)]
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
 class CustomDataConfig(DataConfigFactory):
     """
     This config is used to configure transforms that are applied at various parts of the data pipeline.
@@ -37,6 +61,11 @@ class CustomDataConfig(DataConfigFactory):
     extra_delta_transform: bool = True  # False for additional process(abs_action - state) to get delta action for training
     # train actions using rotation_6d
     action_train_with_rotation_6d: bool = False
+    # Indices into the dataset state vector to select for the 7D policy input.
+    # Default (4,5,6,7,8,9,0) picks tcp_pose(6D) + gripper(1D) from the
+    # 19D RealWorldEnv state (alphabetical: gripper, tcp_force, tcp_pose, tcp_torque, tcp_vel).
+    # Set to None to disable (when the dataset already has 7D state).
+    select_state_dims: tuple[int, ...] | None = (4, 5, 6, 7, 8, 9, 0)
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -65,14 +94,19 @@ class CustomDataConfig(DataConfigFactory):
             ]
         )
 
+        input_transforms = []
+        if self.select_state_dims is not None:
+            input_transforms.append(_SelectStateDims(indices=self.select_state_dims))
+        input_transforms.append(
+            franka_policy.FrankaEEInputs(
+                action_dim=model_config.action_dim,
+                model_type=model_config.model_type,
+                action_train_with_rotation_6d=self.action_train_with_rotation_6d,
+            )
+        )
+
         data_transforms = _transforms.Group(
-            inputs=[
-                franka_policy.FrankaEEInputs(
-                    action_dim=model_config.action_dim,
-                    model_type=model_config.model_type,
-                    action_train_with_rotation_6d=self.action_train_with_rotation_6d,
-                )
-            ],
+            inputs=input_transforms,
             outputs=[
                 franka_policy.FrankaEEOutputs(
                     action_train_with_rotation_6d=self.action_train_with_rotation_6d

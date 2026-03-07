@@ -19,3 +19,6 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 PKG-INFO
+dataset/*
+checkpoints/*
+toolkits/gello_software/

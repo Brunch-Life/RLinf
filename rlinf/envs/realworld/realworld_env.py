@@ -33,6 +33,7 @@ from rlinf.envs.realworld.common.wrappers import (
     Quat2EulerWrapper,
     RelativeFrame,
     SpacemouseIntervention,
+    GelloIntervention
 )
 from rlinf.envs.realworld.venv import NoAutoResetSyncVectorEnv
 from rlinf.envs.utils import to_tensor
@@ -87,13 +88,16 @@ class RealWorldEnv(gym.Env):
             env = GripperCloseEnv(env)
         if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
             env = SpacemouseIntervention(env)
+        if not env.config.is_dummy and self.cfg.get("use_gello", False):
+            env = GelloIntervention(env)
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
 
-        env = RelativeFrame(env)
+        if self.cfg.get("use_relative_frame", True):
+            env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)
         return env
 
@@ -128,6 +132,14 @@ class RealWorldEnv(gym.Env):
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
         self.task_descriptions = list(self.env.call("task_description"))
+
+    @property
+    def action_space(self):
+        return self.env.action_space
+
+    @property
+    def observation_space(self):
+        return self.env.observation_space
 
     @property
     def total_num_group_envs(self):
