@@ -179,6 +179,11 @@ def format_obs_for_policy(
 
     The policy server expects ``observation/state`` as
     ``[x, y, z, rx, ry, rz, gripper]`` (7-D).
+
+    Extra camera images from ``extra_view_images`` are sent as
+    ``observation/extra_image_0``, ``observation/extra_image_1``, etc.
+    so that ``FrankaEEInputs`` on the server can assign them to the
+    correct Pi0 image slots via ``pi0_slot_keys``.
     """
     states = obs["states"]
     if isinstance(states, torch.Tensor):
@@ -196,11 +201,24 @@ def format_obs_for_policy(
     gripper = states[state_index_map["gripper_position"]]  # [g]
     state_7d = np.concatenate([tcp_pose, gripper]).astype(np.float32)
 
-    return {
+    result = {
         "observation/image": np.ascontiguousarray(main_image),
         "observation/state": state_7d,
         "prompt": task_description,
     }
+
+    extra_views = obs.get("extra_view_images")
+    if extra_views is not None:
+        if isinstance(extra_views, torch.Tensor):
+            extra_views = extra_views.cpu().numpy()
+        if extra_views.ndim == 5:  # [num_envs, num_cameras, H, W, C]
+            extra_views = extra_views[0]
+        for i in range(extra_views.shape[0]):
+            result[f"observation/extra_image_{i}"] = np.ascontiguousarray(
+                extra_views[i]
+            )
+
+    return result
 
 
 # ---------------------------------------------------------------------------

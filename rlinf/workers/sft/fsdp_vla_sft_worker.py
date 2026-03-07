@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from typing import Any
 
 import torch
@@ -29,8 +30,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: list[str], eval_dataset: bool = False):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
-            import openpi.training.data_loader as openpi_data_loader
-
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
             config = get_openpi_config(
@@ -38,6 +37,18 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 model_path=self.cfg.actor.model.model_path,
                 batch_size=self.cfg.actor.micro_batch_size * self._world_size,
             )
+
+            # Derive HF_LEROBOT_HOME from the data path so that LeRobot
+            # resolves ``repo_id`` to a local directory instead of calling
+            # the HuggingFace Hub API (which fails without network access).
+            data_path = self.cfg.data.get("train_data_paths", None)
+            repo_id = config.data.repo_id
+            if data_path and repo_id and data_path.endswith(repo_id):
+                os.environ["HF_LEROBOT_HOME"] = data_path[: -len(repo_id)].rstrip("/")
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+            import openpi.training.data_loader as openpi_data_loader
+
             data_loader = openpi_data_loader.create_data_loader(
                 config, framework="pytorch", shuffle=True
             )

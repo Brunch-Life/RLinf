@@ -305,6 +305,16 @@ _CONFIGS = [
             extra_delta_transform=True,  # True for delta action, False for abs_action
             action_train_with_rotation_6d=False,
             select_state_dims=(4, 5, 6, 7, 8, 9, 0),  # 19D→7D: tcp_pose(6) + gripper(1)
+            extra_image_keys=("extra_image_0", "extra_image_1"),
+            # Camera alignment with Pi0 pre-training:
+            #   image        = wrist camera    → left_wrist_0_rgb  (close-up slot)
+            #   extra_image_0 = left standing  → base_0_rgb        (global view slot)
+            #   extra_image_1 = right standing → right_wrist_0_rgb (second view slot)
+            pi0_slot_keys=(
+                "observation/extra_image_0",   # base_0_rgb ← left standing camera
+                "observation/image",           # left_wrist_0_rgb ← wrist camera
+                "observation/extra_image_1",   # right_wrist_0_rgb ← right standing camera
+            ),
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),

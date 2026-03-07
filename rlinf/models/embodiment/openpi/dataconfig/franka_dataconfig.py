@@ -66,6 +66,25 @@ class CustomDataConfig(DataConfigFactory):
     # 19D RealWorldEnv state (alphabetical: gripper, tcp_force, tcp_pose, tcp_torque, tcp_vel).
     # Set to None to disable (when the dataset already has 7D state).
     select_state_dims: tuple[int, ...] | None = (4, 5, 6, 7, 8, 9, 0)
+    # Parquet column names of extra camera images to load from the LeRobot
+    # dataset.  Typically ``("extra_image_0", "extra_image_1")`` for a
+    # 3-camera setup.
+    extra_image_keys: tuple[str, ...] = ()
+    # Mapping of the three Pi0 image slots (base_0_rgb, left_wrist_0_rgb,
+    # right_wrist_0_rgb) to observation keys.  Override this to align your
+    # physical cameras with the pre-trained semantics:
+    #   base_0_rgb        — pre-trained on third-person / global views
+    #   left_wrist_0_rgb  — pre-trained on wrist / close-up views
+    #   right_wrist_0_rgb — pre-trained on wrist / close-up views
+    # For example, if your main ``image`` is a wrist camera and the extras
+    # are standing (third-person) cameras, set:
+    #   ("observation/extra_image_0", "observation/image", "observation/extra_image_1")
+    # Use None to pad a slot with zeros and mask it out.
+    pi0_slot_keys: tuple[str | None, str | None, str | None] = (
+        "observation/image",
+        "observation/extra_image_0",
+        "observation/extra_image_1",
+    )
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -81,17 +100,17 @@ class CustomDataConfig(DataConfigFactory):
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
+        repack_mapping = {
+            "observation/image": "image",
+            "observation/state": "state",
+            "actions": "actions",
+            "prompt": "prompt",
+        }
+        for i, col in enumerate(self.extra_image_keys):
+            repack_mapping[f"observation/extra_image_{i}"] = col
+
         repack_transform = _transforms.Group(
-            inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "observation/image": "image",
-                        "observation/state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
-                    }
-                )
-            ]
+            inputs=[_transforms.RepackTransform(repack_mapping)]
         )
 
         input_transforms = []
@@ -102,6 +121,8 @@ class CustomDataConfig(DataConfigFactory):
                 action_dim=model_config.action_dim,
                 model_type=model_config.model_type,
                 action_train_with_rotation_6d=self.action_train_with_rotation_6d,
+                num_extra_images=len(self.extra_image_keys),
+                pi0_slot_keys=self.pi0_slot_keys,
             )
         )
 
