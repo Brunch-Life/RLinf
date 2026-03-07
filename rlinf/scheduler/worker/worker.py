@@ -50,7 +50,7 @@ class WorkerMeta(type):
     def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any]):
         """Wrap the function to catch SystemExit exceptions."""
         for attr_name, attr_value in attrs.items():
-            if callable(attr_value) and not isinstance(attr_value, staticmethod):
+            if callable(attr_value):
                 attrs[attr_name] = cls._catch_failure_for_cls_func(
                     name, attr_name, attr_value
                 )
