@@ -532,7 +532,7 @@ class LeRobotDatasetWriter:
         # Flatten to 2D: [N, ...] -> [N, -1] for easier computation
         # For images: [N, H, W, C] -> we compute per-channel stats
         # For state/actions: [N, D] -> compute per-dimension stats
-        if key in ["image", "wrist_image"]:
+        if key in {"image", "wrist_image", *self.extra_image_keys}:
             # For images, compute per-channel mean/std
             # Reshape to [N, H*W, C] then mean over H*W
             data_reshaped = data.reshape(n, -1, data.shape[-1])  # [N, H*W, C]
