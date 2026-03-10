@@ -52,7 +52,7 @@ runner:
     project_name: rlinf
     experiment_name: "collect-data-zed-robotiq"
     logger_backends: ["tensorboard"]
-  num_data_episodes: 20
+  num_data_episodes: 50
   export_format: "lerobot"
   robot_type: "panda"
   fps: 10
