@@ -231,7 +231,7 @@ def load_policy_rlinf(
     from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
     train_config = get_openpi_config(config_name, model_path=checkpoint_path)
-    checkpoint_dir = download.maybe_download(str(checkpoint_path))
+    checkpoint_dir = str(download.maybe_download(str(checkpoint_path)))
     ckpt_dir, ckpt_fmt = _resolve_checkpoint(checkpoint_dir)
 
     logger.info("Config: %s | Checkpoint: %s (format: %s)", config_name, ckpt_dir, ckpt_fmt)
