@@ -44,13 +44,13 @@ cluster:
       # ── IMPORTANT: NUC must source ROS + venv BEFORE `ray start` ──
       # Ray captures env vars at start time. On the NUC, run:
       #   source /opt/ros/noetic/setup.bash
-      #   source /home/franka/cynws/RLinf/.venv/bin/activate
+      #   source /home/franka/workspace/RLinf/.venv/bin/activate
       #   # (activate already sources catkin_ws/devel/setup.bash)
       #   RLINF_NODE_RANK=1 ray start --address=<server_ip>:6379
       # This ensures geometry_msgs, rospy, franka_msgs etc. are on PYTHONPATH.
       env_configs:
         - node_ranks: 1
-          python_interpreter_path: /home/franka/cynws/RLinf/.venv/bin/python3  # Replace
+          python_interpreter_path: /home/franka/workspace/RLinf/.venv/bin/python3  # Replace
 
 runner:
   task_type: embodied
@@ -90,3 +90,14 @@ env:
       #   xy ±0.5m, z_low -1.0m, z_high +1.0m, rpy ±π/6×10
       ee_pose_limit_min: [ 0.03, -0.57, -0.80, -2.12, -5.05, -5.00]
       ee_pose_limit_max: [ 1.03,  0.43,  1.20,  8.36,  5.43,  5.48]
+
+# ── Data collection during eval ────────────────────────────────
+# When enabled, every eval episode is saved as a LeRobot dataset.
+# Success / failure is annotated via keyboard_reward_wrapper above
+# (press 'c' = success, 'a' = failure during the episode).
+collect:
+  enabled: false
+  export_format: "lerobot"     # "lerobot" or "pickle"
+  robot_type: "panda"
+  fps: 10
+  only_success: false          # true = discard failed episodes

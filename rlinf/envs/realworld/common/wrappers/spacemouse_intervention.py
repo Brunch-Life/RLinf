@@ -56,8 +56,6 @@ class SpacemouseIntervention(gym.ActionWrapper):
                 gripper_action = np.zeros((1,))
             expert_a = np.concatenate((expert_a, gripper_action), axis=0)
 
-        print(f"expert_a: {expert_a}")
-
         if time.time() - self.last_intervene < 0.5:
             return expert_a, True
 

@@ -12,13 +12,13 @@ Transformations applied:
 
 Usage:
     python toolkits/convert_stats_to_norm_stats.py \
-        --stats-json dataset/YinuoTHU/real-gello/meta/stats.json \
-        --output-dir checkpoints/torch/pi0_base/YinuoTHU/real-gello
+        --stats-json dataset/<user>/<dataset>/meta/stats.json \
+        --output-dir checkpoints/torch/pi0_base/<user>/<dataset>
 
     # Or with custom dims:
     python toolkits/convert_stats_to_norm_stats.py \
-        --stats-json dataset/YinuoTHU/real-gello/meta/stats.json \
-        --output-dir checkpoints/torch/pi0_base/YinuoTHU/real-gello \
+        --stats-json dataset/<user>/<dataset>/meta/stats.json \
+        --output-dir checkpoints/torch/pi0_base/<user>/<dataset> \
         --select-state-dims 4 5 6 7 8 9 0 \
         --action-dim 32
 """

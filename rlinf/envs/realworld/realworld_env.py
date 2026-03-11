@@ -89,7 +89,14 @@ class RealWorldEnv(gym.Env):
         if not env.config.is_dummy and self.cfg.get("use_spacemouse", True):
             env = SpacemouseIntervention(env)
         if not env.config.is_dummy and self.cfg.get("use_gello", False):
-            env = GelloIntervention(env)
+            gello_port = self.cfg.get("gello_port", None)
+            if gello_port is None:
+                raise ValueError(
+                    "use_gello is True but gello_port is not set in the env config. "
+                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
+                    "serial port of your GELLO device."
+                )
+            env = GelloIntervention(env, port=gello_port)
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)

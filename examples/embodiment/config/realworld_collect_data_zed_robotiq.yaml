@@ -43,7 +43,7 @@ cluster:
       node_ranks: 1           # NUC — FrankaController runs here
       env_configs:
         - node_ranks: 1
-          python_interpreter_path: /home/franka/cynws/RLinf/.venv/bin/python3  # Replace
+          python_interpreter_path: /home/franka/workspace/RLinf/.venv/bin/python3  # Replace
 
 runner:
   task_type: embodied
@@ -66,5 +66,6 @@ env:
     auto_reset: False
     use_spacemouse: False
     use_gello: True
+    gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"  # Replace with your GELLO serial port
     override_cfg:
       target_ee_pose: [0.53, -0.07, 0.2, 3.12, 0.19, 0.24]  # Replace with your task pose

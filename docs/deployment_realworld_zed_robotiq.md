@@ -55,7 +55,7 @@
 > - ZED 相机序列号（当前：`10848563`, `39651335`, `34303972`）
 > - Franka 机械臂 IP（当前：`172.16.0.2`）
 > - Robotiq 夹爪串口（当前：`/dev/ttyUSB0`）
-> - NUC 上 Python 虚拟环境路径（当前：`/home/franka/cynws/RLinf/.venv/bin/python3`）
+> - NUC 上 Python 虚拟环境路径（当前：`/home/franka/workspace/RLinf/.venv/bin/python3`）
 > - 4090 服务器和 NUC 的 IP 地址
 > - 远端 A100 服务器 SSH 地址和端口
 
@@ -68,10 +68,12 @@
 NUC 需要安装 ROS Noetic、Franka 驱动以及 RLinf 的 franka 环境依赖。
 
 ```bash
-# 1. 克隆 RLinf
-git clone https://github.com/Brunch-Life/RLinf.git
+# 1. 克隆 RLinf（--recurse-submodules 会自动拉取 GELLO 遥操作工具包）
+git clone --recurse-submodules https://github.com/Brunch-Life/RLinf.git
 cd RLinf
 git checkout feature/real_sft
+# 若已克隆但缺少 submodule，补充初始化：
+# git submodule update --init --recursive
 
 # 2. 安装 franka 环境依赖（会安装 ROS、franka_ros 等）
 #    如果已有 ROS 等系统依赖，可加 SKIP_ROS=1 跳过系统包安装
@@ -89,7 +91,7 @@ source .venv/bin/activate
 
 ```bash
 # 1. 克隆 RLinf
-git clone https://github.com/Brunch-Life/RLinf.git
+git clone --recurse-submodules https://github.com/Brunch-Life/RLinf.git
 cd RLinf
 git checkout feature/real_sft
 
@@ -102,10 +104,12 @@ source .venv/bin/activate
 
 ### 2.3 远端 A100 服务器（训练节点）
 
+```bash
 # 1. 克隆 RLinf
 git clone https://github.com/Brunch-Life/RLinf.git
 cd RLinf
 git checkout feature/real_sft
+```
 
 
 推荐使用 Docker 镜像，无需手动安装依赖。
@@ -140,25 +144,34 @@ cd /workspace/RLinf
 
 ### 3.1 配置文件
 
-配置文件位于 `examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml`，关键配置项：
+本节使用 `collect_data_with_wrapper.sh`（LeRobot wrapper 版本），对应配置文件 `examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml`。
+
+> 如果需要采集 RLPD / 在线 RL 训练用的 `.pt` 格式数据，请使用 `collect_data.sh` 配合 `realworld_collect_data.yaml`，该流程无需以下 wrapper 相关参数。
+
+关键配置项：
 
 
-| 配置项                        | 值           | 说明                 |
-| -------------------------- | ----------- | ------------------ |
-| `cluster.num_nodes`        | `2`         | 双节点：4090 + NUC     |
-| `env.eval.use_gello`       | `True`      | 使用 GELLO 遥操作       |
-| `env.eval.use_spacemouse`  | `False`     | 不使用 SpaceMouse     |
-| `runner.num_data_episodes` | `50`        | 采集 50 个 episode    |
-| `runner.export_format`     | `"lerobot"` | 输出 LeRobot v2.0 格式 |
-| `runner.fps`               | `10`        | 采集帧率 10Hz          |
-| `runner.only_success`      | `True`      | 只保存成功的 episode     |
-| `camera_type`              | `"zed"`     | ZED 相机             |
-| `gripper_type`             | `"robotiq"` | Robotiq 夹爪         |
+| 配置项                        | 值           | 说明                            |
+| -------------------------- | ----------- | ----------------------------- |
+| `cluster.num_nodes`        | `2`         | 双节点：4090 + NUC                |
+| `env.eval.use_gello`       | `True`      | 使用 GELLO 遥操作                  |
+| `env.eval.use_spacemouse`  | `False`     | 不使用 SpaceMouse                |
+| `runner.num_data_episodes` | `50`        | 采集 50 个 episode               |
+| `runner.export_format`     | `"lerobot"` | 输出 LeRobot v2.0 格式（wrapper 专用） |
+| `runner.fps`               | `10`        | 采集帧率 10Hz（wrapper 专用）          |
+| `runner.only_success`      | `True`      | 只保存成功的 episode（wrapper 专用）     |
+| `camera_type`              | `"zed"`     | ZED 相机                        |
+| `gripper_type`             | `"robotiq"` | Robotiq 夹爪                    |
 
 
-根据实际情况修改配置文件中的 **相机序列号**、**机械臂 IP**、**夹爪串口**、**NUC Python 路径** 和 **初始末端位姿** `target_ee_pose`。
+根据实际情况修改配置文件中的 **相机序列号**、**机械臂 IP**、**夹爪串口**、**GELLO 串口**、**NUC Python 路径** 和 **初始末端位姿** `target_ee_pose`。
 
 ### 3.2 启动步骤
+
+> **两种采集脚本说明：**
+>
+> - `collect_data.sh` — 使用原始 `TrajectoryReplayBuffer` 格式（`.pt`），适用于 RLPD / 在线 RL 训练流程。全程录制，无键盘控制。
+> - `collect_data_with_wrapper.sh` — 使用 `CollectEpisode` wrapper，输出 LeRobot v2.0 格式，支持键盘交互式录制。**本文档以此脚本为例。**
 
 **Step 1：NUC 端启动**
 
@@ -193,11 +206,19 @@ RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090服务器I
 # 5. 等待 NUC 加入集群（可选检查）
 ray status
 
-# 6. 启动数据采集
-bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
+# 6. 启动数据采集（LeRobot 格式 + 键盘控制）
+bash examples/embodiment/collect_data_with_wrapper.sh realworld_collect_data_zed_robotiq
 ```
 
-### 3.3 采集时键盘控制（可用脚控键盘）
+> 若需要采集 RLPD 训练用的 `.pt` 格式数据，改用 `collect_data.sh`：
+>
+> ```bash
+> bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
+> ```
+
+### 3.3 采集时键盘控制（仅 wrapper 版本）
+
+> 以下键盘控制仅在使用 `collect_data_with_wrapper.sh` 时生效。使用原始 `collect_data.sh` 时无键盘控制，全程自动录制。
 
 
 | 按键    | 功能                                           |
@@ -253,7 +274,7 @@ rsync -avhzP logs/<timestamp>/lerobot_dataset/ \
 >
 > - `<REMOTE_HOST>`：远端服务器 SSH 别名或 `user@ip:port` 格式（如 `my-server` 或 `user@192.168.1.100`）
 > - `<REMOTE_RLINF_PATH>`：远端 RLinf 仓库路径（如 `/workspace/RLinf` 或 `/mnt/data/RLinf`）
-> - `<DATASET_REPO_ID>`：数据集标识（如 `YinuoTHU/real-gello`）
+> - `<DATASET_REPO_ID>`：数据集标识（如 `<user>/<dataset>`）
 
 ### 4.2 转换 norm_stats
 
@@ -299,22 +320,20 @@ python toolkits/convert_stats_to_norm_stats.py \
 
 配置文件：`examples/sft/config/custom_sft_openpi.yaml`
 
-关键训练参数：
+配置文件中的 `train_data_paths` 和 `model_path` 是占位符，需替换为实际路径。关键训练参数：
 
 
-| 参数                               | 值              | 说明                                                 |
-| -------------------------------- | -------------- | -------------------------------------------------- |
-| `data.train_data_paths`          | 数据集绝对路径        | 如 `"/workspace/RLinf/dataset/YinuoTHU/real-gello"` |
-| `actor.model.model_path`         | Pi0 预训练权重路径    | 如 `"/workspace/RLinf/checkpoints/torch/pi0_base"`  |
-| `actor.model.openpi.config_name` | `"pi0_custom"` | OpenPI 配置名                                         |
-| `actor.micro_batch_size`         | `16`           | 每卡 batch size                                      |
-| `actor.global_batch_size`        | `128`          | 全局 batch size（8 卡 × 16 = 128）                      |
-| `actor.optim.lr`                 | `2.5e-5`       | 学习率                                                |
-| `actor.optim.lr_scheduler`       | `"cosine"`     | 余弦退火                                               |
-| `actor.optim.lr_warmup_steps`    | `1000`         | warmup 步数                                          |
-| `runner.max_steps`               | `30000`        | 总训练步数                                              |
-| `runner.save_interval`           | `1000`         | 每 1000 步保存 checkpoint                              |
-| `actor.model.add_value_head`     | `True`         | 添加 value head（纯 SFT 可设为 `False`）                   |
+| 参数                               | 配置文件默认值                  | 建议值（8卡）       | 说明                                                    |
+| -------------------------------- | ------------------------ | -------------- | ----------------------------------------------------- |
+| `data.train_data_paths`          | `"/path/to/custom-data"` | 数据集绝对路径        | 如 `"/workspace/RLinf/dataset/<DATASET_REPO_ID>"`       |
+| `actor.model.model_path`         | `"/path/to/pi0-model"`   | Pi0 预训练权重路径    | 如 `"/workspace/RLinf/checkpoints/torch/pi0_base"`      |
+| `actor.model.openpi.config_name` | `"pi0_custom"`           | `"pi0_custom"` | OpenPI 配置名                                            |
+| `actor.micro_batch_size`         | `1`                      | `16`           | 每卡 batch size，根据 GPU 显存调整                             |
+| `actor.global_batch_size`        | `16`                     | `128`          | 全局 batch size（8 卡 × 16 = 128）                         |
+| `actor.optim.lr`                 | `7.91e-6`                | `2.5e-5`       | 学习率，可根据实际训练调整                                         |
+| `runner.max_steps`               | `-1`（不限制）                | `30000`        | 总训练步数，`-1` 表示按 `max_epochs` 控制                        |
+| `runner.save_interval`           | `10`                     | `1000`         | 每 N 步保存 checkpoint                                    |
+| `actor.model.add_value_head`     | `True`                   | `True`         | 添加 value head（纯 SFT 可设为 `False`）                      |
 
 
 **启动训练：**
@@ -503,7 +522,7 @@ RLINF_NODE_RANK=1 ray start --address=<4090服务器IP>:6379
 
 ```bash
 # 1. 进入 RLinf 目录
-cd ~/cyn_ws/RLinf
+cd /path/to/RLinf
 
 # 2. 激活虚拟环境
 source .venv/bin/activate
@@ -547,36 +566,42 @@ bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
 ## 附录 A：键盘控制速查表
 
 
-| 场景                                      | a           | b             | c             |
-| --------------------------------------- | ----------- | ------------- | ------------- |
-| **数据采集** (`collect_real_data`)          | 开始录制        | 失败并结束 episode | 成功并结束 episode |
-| **评估** (`eval_realworld`, single_stage) | 失败 (-1, 结束) | 中性 (0, 不结束)   | 成功 (+1, 结束)   |
+| 场景                                                          | a           | b             | c             |
+| ----------------------------------------------------------- | ----------- | ------------- | ------------- |
+| **数据采集** (`collect_data_with_wrapper.sh`)                   | 开始录制        | 失败并结束 episode | 成功并结束 episode |
+| **评估** (`eval_realworld.sh`, single_stage)                  | 失败 (-1, 结束) | 中性 (0, 不结束)   | 成功 (+1, 结束)   |
 
 
-> **注意：** 数据采集和评估的按键含义**不同**，请注意区分。
+> **注意：**
+> - 数据采集和评估的按键含义**不同**，请注意区分。
+> - 键盘控制仅适用于 `collect_data_with_wrapper.sh`（wrapper 版本）。原始 `collect_data.sh`（Replay Buffer 版本）无键盘控制，全程自动录制。
 
 ---
 
 ## 附录 B：关键文件索引
 
 
-| 文件                                                                   | 作用                                      |
-| -------------------------------------------------------------------- | --------------------------------------- |
-| `examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml` | 数据采集配置                                  |
-| `examples/embodiment/config/realworld_eval_zed_robotiq.yaml`         | 真机评估配置                                  |
-| `examples/embodiment/collect_data.sh`                                | 数据采集启动脚本                                |
-| `examples/embodiment/collect_real_data.py`                           | 数据采集 Python 入口                          |
-| `examples/embodiment/eval_realworld.sh`                              | 真机评估启动脚本                                |
-| `examples/embodiment/eval_realworld.py`                              | 真机评估 Python 入口                          |
-| `examples/embodiment/serve_policy.py`                                | Policy Server（远端部署）                     |
-| `examples/sft/config/custom_sft_openpi.yaml`                         | RLinf Pi0 SFT 训练配置                      |
-| `toolkits/convert_stats_to_norm_stats.py`                            | stats.json → norm_stats.json 转换工具       |
-| `ray_utils/realworld/setup_before_ray.sh`                            | 真机 Ray 启动前环境配置模板                        |
-| `requirements/install.sh`                                            | RLinf 依赖安装脚本                            |
-| `rlinf/models/embodiment/openpi/dataconfig/__init__.py`              | RLinf 侧 `pi0_custom` 配置定义               |
-| `openpi/src/openpi/policies/franka_policy.py`                        | OpenPI 侧 FrankaEEInputs（需与 RLinf 对齐）    |
-| `openpi/src/openpi/training/config.py`                               | OpenPI 侧 `pi0_custom` 训练配置（需与 RLinf 对齐） |
-| `openpi/scripts/train_pytorch.py`                                    | OpenPI 原生 PyTorch 训练入口                  |
+| 文件                                                                   | 作用                                          |
+| -------------------------------------------------------------------- | ------------------------------------------- |
+| `examples/embodiment/config/realworld_collect_data.yaml`             | 数据采集配置（Replay Buffer / RL 训练用）             |
+| `examples/embodiment/config/realworld_collect_data_wrapper.yaml`     | 数据采集配置（LeRobot wrapper / 单节点基础版）           |
+| `examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml` | 数据采集配置（LeRobot wrapper / 双节点 ZED+Robotiq） |
+| `examples/embodiment/config/realworld_eval_zed_robotiq.yaml`         | 真机评估配置                                      |
+| `examples/embodiment/collect_data.sh`                                | 数据采集启动脚本（Replay Buffer / `.pt` 格式）         |
+| `examples/embodiment/collect_real_data.py`                           | 数据采集 Python 入口（Replay Buffer / RL 训练用）     |
+| `examples/embodiment/collect_data_with_wrapper.sh`                   | 数据采集启动脚本（LeRobot 格式 + 键盘控制）              |
+| `examples/embodiment/collect_real_data_with_wrapper.py`              | 数据采集 Python 入口（CollectEpisode wrapper）     |
+| `examples/embodiment/eval_realworld.sh`                              | 真机评估启动脚本                                    |
+| `examples/embodiment/eval_realworld.py`                              | 真机评估 Python 入口                              |
+| `examples/embodiment/serve_policy.py`                                | Policy Server（远端部署）                         |
+| `examples/sft/config/custom_sft_openpi.yaml`                         | RLinf Pi0 SFT 训练配置（含占位符路径，需替换）            |
+| `toolkits/convert_stats_to_norm_stats.py`                            | stats.json → norm_stats.json 转换工具           |
+| `ray_utils/realworld/setup_before_ray.sh`                            | 真机 Ray 启动前环境配置模板                            |
+| `requirements/install.sh`                                            | RLinf 依赖安装脚本                                |
+| `rlinf/models/embodiment/openpi/dataconfig/__init__.py`              | RLinf 侧 `pi0_custom` 配置定义                   |
+| `openpi/src/openpi/policies/franka_policy.py`                        | OpenPI 侧 FrankaEEInputs（需与 RLinf 对齐）        |
+| `openpi/src/openpi/training/config.py`                               | OpenPI 侧 `pi0_custom` 训练配置（需与 RLinf 对齐）     |
+| `openpi/scripts/train_pytorch.py`                                    | OpenPI 原生 PyTorch 训练入口                      |
 
 
 ---

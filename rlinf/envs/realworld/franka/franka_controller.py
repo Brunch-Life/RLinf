@@ -111,12 +111,7 @@ class FrankaController(Worker):
         ros_python_paths = [
             "/opt/ros/noetic/lib/python3/dist-packages",
         ]
-        # Auto-discover catkin workspace devel paths
-        for pattern in [
-            os.path.expanduser("~/*/RLinf/.venv/franka_catkin_ws/devel/lib/python3/dist-packages"),
-            "/home/*/cynws/RLinf/.venv/franka_catkin_ws/devel/lib/python3/dist-packages",
-        ]:
-            ros_python_paths.extend(glob.glob(pattern))
+        
         for p in ros_python_paths:
             if os.path.isdir(p) and p not in sys.path:
                 sys.path.insert(0, p)

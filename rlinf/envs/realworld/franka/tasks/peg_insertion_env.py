@@ -132,6 +132,6 @@ class PegInsertionEnv(FrankaEnv):
         self._franka_state = self._controller.get_state().wait()[0]
         tcp_pose = self._franka_state.tcp_pose
         return tcp_pose
-    
+
     def get_action_scale(self):
         return self.config.action_scale

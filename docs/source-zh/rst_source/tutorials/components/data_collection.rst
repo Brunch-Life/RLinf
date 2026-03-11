@@ -16,6 +16,9 @@ RLinf 提供两种数据采集方案，面向不同的下游用途：
    * - **真机 Replay Buffer 采集**
      - ``collect_data.sh``
      - 真机 RLPD 先验数据 / 策略初始化
+   * - **真机 LeRobot 采集**
+     - ``collect_data_with_wrapper.sh``
+     - SFT 训练 / LeRobot 流水线（键盘交互式）
 
 ----
 
@@ -392,6 +395,88 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 4. 用 SpaceMouse 操作机器人完成任务。成功次数达到 ``num_data_episodes`` 后，
    脚本自动保存并退出，日志和数据存放在 ``logs/{timestamp}/`` 目录下。
+
+----
+
+真机 LeRobot 数据采集（Wrapper 模式）
+--------------------------------------
+
+针对 SFT 训练或 LeRobot 兼容流水线，提供基于 wrapper 的交互式采集脚本，
+支持键盘控制并输出 LeRobot v2.0 格式数据。与上述 Replay Buffer 采集不同，
+该模式支持 **延迟录制**：操作员可以在按键前自由移动机器人调整位姿，
+不会记录调整过程的数据。
+
+核心组件
+~~~~~~~~
+
+- **入口脚本**：``examples/embodiment/collect_data_with_wrapper.sh``
+- **采集逻辑**：``examples/embodiment/collect_real_data_with_wrapper.py``
+  （``RealWorldCollectEpisode`` + ``DataCollector``）
+- **配置文件**：任何 ``realworld_collect_data*.yaml``
+
+``RealWorldCollectEpisode`` 在 ``CollectEpisode`` 基础上增加了键盘控制：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 85
+
+   * - 按键
+     - 功能
+   * - ``a``
+     - 开始录制（之前的定位步骤被丢弃）
+   * - ``b``
+     - 标记失败并结束 episode（reward = -1）
+   * - ``c``
+     - 标记成功并结束 episode（reward = +1）
+
+实际录制的动作来自 ``info["intervene_action"]``（SpaceMouse / GELLO 的真实输入），
+而非占位用的零动作。
+
+额外配置参数
+~~~~~~~~~~~~
+
+除 Replay Buffer 部分列出的参数外，Wrapper 版本还支持：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 45
+
+   * - 参数
+     - 默认值
+     - 说明
+   * - ``runner.export_format``
+     - ``"lerobot"``
+     - 输出格式（``"lerobot"`` 或 ``"pickle"``）
+   * - ``runner.robot_type``
+     - ``"panda"``
+     - 机器人类型，写入 LeRobot 元数据
+   * - ``runner.fps``
+     - ``10``
+     - 数据集帧率
+   * - ``runner.only_success``
+     - ``False``
+     - 仅保存成功的 episode
+
+数据格式
+~~~~~~~~
+
+数据以 LeRobot v2.0 格式保存到 ``logs/{timestamp}/lerobot_dataset/`` 目录下。
+完整 schema 详见上方 *Episode 数据采集* 章节。
+
+使用步骤
+~~~~~~~~
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data_with_wrapper.sh realworld_collect_data_zed_robotiq
+
+典型工作流：
+
+1. 用 GELLO / SpaceMouse 将机器人移动到期望的初始位姿。
+2. 按 ``a`` 开始录制。
+3. 操作机器人完成任务。
+4. 按 ``c``（成功）或 ``b``（失败）结束 episode。
+5. 系统自动重置，等待下一个 episode。
 
 ----
 

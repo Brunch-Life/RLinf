@@ -16,6 +16,9 @@ RLinf provides two data collection approaches targeting different downstream use
    * - **Real-robot Replay Buffer Collection**
      - ``collect_data.sh``
      - Real-robot RLPD prior data / policy initialization
+   * - **Real-robot LeRobot Collection**
+     - ``collect_data_with_wrapper.sh``
+     - SFT training / LeRobot pipeline (keyboard-interactive)
 
 ----
 
@@ -412,6 +415,90 @@ Usage Steps
 4. Use the SpaceMouse to operate the robot. Once ``num_data_episodes`` successes
    are recorded the script saves the buffer and exits. Logs and data are written
    under ``logs/{timestamp}/``.
+
+----
+
+Real-robot LeRobot Collection (Wrapper-based)
+----------------------------------------------
+
+For SFT training or LeRobot-compatible pipelines, a wrapper-based collection
+script provides interactive keyboard control and outputs data in LeRobot v2.0
+format.  Unlike the Replay Buffer approach above, it supports **deferred
+recording**: the operator can freely position the robot before pressing a key
+to begin data capture.
+
+Core Components
+~~~~~~~~~~~~~~~
+
+- **Entry script**: ``examples/embodiment/collect_data_with_wrapper.sh``
+- **Collection logic**: ``examples/embodiment/collect_real_data_with_wrapper.py``
+  (``RealWorldCollectEpisode`` + ``DataCollector``)
+- **Config file**: any ``realworld_collect_data*.yaml``
+
+``RealWorldCollectEpisode`` extends ``CollectEpisode`` with keyboard controls:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 85
+
+   * - Key
+     - Action
+   * - ``a``
+     - Start recording (prior positioning steps are discarded)
+   * - ``b``
+     - End episode as failure (reward = -1)
+   * - ``c``
+     - End episode as success (reward = +1)
+
+The recorded action is taken from ``info["intervene_action"]`` (the actual
+SpaceMouse / GELLO input) rather than the placeholder zero-action.
+
+Additional Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+In addition to the parameters listed in the Replay Buffer section, the wrapper
+version supports:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 45
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``runner.export_format``
+     - ``"lerobot"``
+     - Output format (``"lerobot"`` or ``"pickle"``)
+   * - ``runner.robot_type``
+     - ``"panda"``
+     - Robot type written to LeRobot metadata
+   * - ``runner.fps``
+     - ``10``
+     - Dataset frame rate
+   * - ``runner.only_success``
+     - ``False``
+     - Save only successful episodes
+
+Data Format
+~~~~~~~~~~~
+
+Data is saved in LeRobot v2.0 format under ``logs/{timestamp}/lerobot_dataset/``.
+See the *Episode Data Collection* section above for the full schema description.
+
+Usage
+~~~~~
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data_with_wrapper.sh realworld_collect_data_zed_robotiq
+
+Typical workflow:
+
+1. Use GELLO / SpaceMouse to position the robot to the desired start pose.
+2. Press ``a`` to begin recording.
+3. Operate the robot to complete the task.
+4. Press ``c`` (success) or ``b`` (failure) to end the episode.
+5. The system resets and waits for the next episode.
 
 ----
 

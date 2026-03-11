@@ -18,71 +18,73 @@ import numpy as np
 
 
 class GelloExpert:
-    # """
-    # This class provides an interface to the SpaceMouse.
-    # It continuously reads the SpaceMouse state and provide
-    # a "get_action" method to get the latest action and button state.
-    # """ TODO
+    """Interface to the GELLO teleoperation device.
 
-    def __init__(self, port):
-        from toolkits.gello_teleop.gello_teleop_agent import GelloTeleopAgent
+    Continuously reads GELLO joint positions in a background thread,
+    computes the corresponding TCP pose via forward kinematics, and
+    exposes the result through :meth:`get_action`.
+
+    Args:
+        port: Serial port of the GELLO device, e.g.
+            ``"/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"``.
+    """
+
+    def __init__(self, port: str):
         from toolkits.gello_teleop.franka_fk import FrankaFK
+        from toolkits.gello_teleop.gello_teleop_agent import GelloTeleopAgent
+
         self.agent = GelloTeleopAgent(port=port)
         self.fk = FrankaFK()
 
-
         self.state_lock = threading.Lock()
-        self.latest_data = {"target_pos": np.zeros(3),"target_quat": np.zeros(4), "gripper": np.zeros(1)}
-        # Start a thread to continuously read the SpaceMouse state
-        self.thread = threading.Thread(target=self._read_gello)
-        self.thread.daemon = True
+        self.latest_data = {
+            "target_pos": np.zeros(3),
+            "target_quat": np.zeros(4),
+            "gripper": np.zeros(1),
+        }
+        self.thread = threading.Thread(target=self._read_gello, daemon=True)
         self.thread.start()
 
     def _read_gello(self):
-        # import pyspacemouse
-
         while True:
-            # state = pyspacemouse.read()
             gello_joints, gello_gripper = self.agent.get_action()
-
             gello_gripper = np.array([gello_gripper])
-
             target_pos, target_quat = self.fk.get_fk(gello_joints)
 
-
-            
             with self.state_lock:
                 self.latest_data["target_pos"] = target_pos
                 self.latest_data["target_quat"] = target_quat
                 self.latest_data["gripper"] = gello_gripper
 
-
-
     def get_action(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Returns the latest action and button state of the SpaceMouse."""
+        """Return ``(target_pos, target_quat, gripper)`` from the latest GELLO reading."""
         with self.state_lock:
-            return self.latest_data["target_pos"], self.latest_data["target_quat"], self.latest_data["gripper"]
+            return (
+                self.latest_data["target_pos"],
+                self.latest_data["target_quat"],
+                self.latest_data["gripper"],
+            )
 
 
 if __name__ == "__main__":
+    import argparse
     import time
 
-    def test_gello():
-        # """Test the SpaceMouseExpert class.
+    parser = argparse.ArgumentParser(description="Test the GELLO expert.")
+    parser.add_argument(
+        "--port",
+        type=str,
+        required=True,
+        help="Serial port of the GELLO device.",
+    )
+    args = parser.parse_args()
 
-        # This interactive test prints the action and buttons of the spacemouse at a rate of 10Hz.
-        # The user is expected to move the spacemouse and press its buttons while the test is running.
-        # It keeps running until the user stops it.
-
-        # """
-        # TODO
-        port = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"
-        # port = None
-        gello = GelloExpert(port=port)
-        with np.printoptions(precision=3, suppress=True):
-            while True:
-                target_pos, target_quat, gripper = gello.get_action()
-                # print(f"Gello target_pos: {target_pos}, Gello target_quat: {target_quat}, Gello gripper: {gripper}")
-                time.sleep(0.1)
-
-    test_gello()
+    gello = GelloExpert(port=args.port)
+    with np.printoptions(precision=3, suppress=True):
+        while True:
+            target_pos, target_quat, gripper = gello.get_action()
+            print(
+                f"pos={target_pos}  quat={target_quat}  gripper={gripper}",
+                end="\r",
+            )
+            time.sleep(0.1)

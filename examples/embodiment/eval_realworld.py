@@ -45,6 +45,7 @@ import numpy as np
 import torch
 
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
+from rlinf.envs.wrappers.collect_episode import CollectEpisode
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
 logger = logging.getLogger(__name__)
@@ -222,6 +223,65 @@ def format_obs_for_policy(
 
 
 # ---------------------------------------------------------------------------
+# EvalCollectEpisode — records eval episodes into LeRobot datasets
+# ---------------------------------------------------------------------------
+
+class EvalCollectEpisode(CollectEpisode):
+    """CollectEpisode variant for eval that infers success from terminal reward.
+
+    Works with ``keyboard_reward_wrapper`` (single_stage) where the operator
+    presses ``c`` (success, reward=+1) or ``a`` (failure, reward=-1) to end
+    each episode.  Falls back to reward-based success detection when no
+    explicit success flag is found in info.
+    """
+
+    def _get_episode_success(self, buf: dict, env_idx: int) -> bool:
+        if self._has_explicit_success_flag(buf):
+            return super()._get_episode_success(buf, env_idx)
+        if buf["rewards"]:
+            last_reward = buf["rewards"][-1]
+            r = (
+                last_reward.item()
+                if isinstance(last_reward, torch.Tensor)
+                else float(last_reward)
+            )
+            return r > 0
+        return False
+
+    @staticmethod
+    def _has_explicit_success_flag(buf: dict) -> bool:
+        for info in reversed(buf["infos"]):
+            if not isinstance(info, dict):
+                continue
+            for src in (info.get("final_info"), info.get("episode"), info):
+                if not isinstance(src, dict):
+                    continue
+                for key in ("success_once", "success_at_end", "success"):
+                    if src.get(key) is not None:
+                        return True
+        return False
+
+    def flush_if_pending(self, is_success: bool | None = None) -> None:
+        """Flush any in-progress episode that was not terminated/truncated.
+
+        Called by the eval loop when an episode ends due to step limit rather
+        than an environment signal.
+        """
+        for env_idx in range(self.num_envs):
+            buf = self._buffers[env_idx]
+            if not buf["actions"]:
+                continue
+            success = (
+                is_success
+                if is_success is not None
+                else self._get_episode_success(buf, env_idx)
+            )
+            if not self.only_success or success:
+                self._flush_episode(env_idx, success)
+            self._reset_env_buffer(env_idx)
+
+
+# ---------------------------------------------------------------------------
 # RealWorldEvaluator (Ray Worker)
 # ---------------------------------------------------------------------------
 
@@ -245,19 +305,38 @@ class RealWorldEvaluator(Worker):
         # "delta"    = policy outputs delta directly, pass through to env.step()
         self.action_type = cfg.runner.get("action_type", "absolute")
 
+        self._collect_enabled = False
         self._debug_dir = None
 
     def _build_env(self):
-        env = RealWorldEnv(
+        base_env = RealWorldEnv(
             self.cfg.env.eval,
             num_envs=1,
             seed_offset=0,
             total_num_processes=1,
             worker_info=self.worker_info,
         )
-        self._state_index_map = build_state_index_map(env.observation_space)
+        self._state_index_map = build_state_index_map(base_env.observation_space)
         self.log_info(f"State index map: {self._state_index_map}")
-        return env
+
+        collect_cfg = self.cfg.get("collect", {})
+        self._collect_enabled = collect_cfg.get("enabled", False)
+        if self._collect_enabled:
+            log_path = self.cfg.runner.logger.get("log_path", "logs")
+            save_dir = os.path.join(log_path, "lerobot_dataset")
+            base_env = EvalCollectEpisode(
+                env=base_env,
+                save_dir=save_dir,
+                num_envs=1,
+                export_format=collect_cfg.get("export_format", "lerobot"),
+                robot_type=collect_cfg.get("robot_type", "panda"),
+                fps=collect_cfg.get("fps", 10),
+                only_success=collect_cfg.get("only_success", False),
+                show_goal_site=False,
+            )
+            self.log_info(f"Data collection enabled → {save_dir}")
+
+        return base_env
 
     def _init_debug_dir(self):
         """Create debug output directory. Uses cwd (the repo root)."""
@@ -499,6 +578,9 @@ class RealWorldEvaluator(Worker):
                steps >= self.max_episode_steps:
                 break
 
+        if self._collect_enabled and hasattr(env, "flush_if_pending"):
+            env.flush_if_pending(is_success=success)
+
         return {
             "episode": ep_idx,
             "success": success,
@@ -518,6 +600,9 @@ class RealWorldEvaluator(Worker):
         self.log_info(f"  Success rate: {num_success}/{num_episodes} = {num_success / max(num_episodes, 1):.2%}")
         self.log_info(f"  Avg return:   {avg_return:.3f}")
         self.log_info(f"  Avg steps:    {avg_steps:.1f}")
+        if self._collect_enabled:
+            log_path = self.cfg.runner.logger.get("log_path", "logs")
+            self.log_info(f"  Dataset:      {os.path.join(log_path, 'lerobot_dataset')}")
         self.log_info("=" * 60)
 
 

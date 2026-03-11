@@ -656,8 +656,8 @@ install_franka_env() {
     source /opt/ros/noetic/setup.bash
     set -euo pipefail
     ROS_CATKIN_PATH=$(realpath "$VENV_DIR/franka_catkin_ws")
-    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.19.0}
-    FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.2}
+    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.15.0}
+    FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.0}
 
     mkdir -p "$ROS_CATKIN_PATH/src"
 

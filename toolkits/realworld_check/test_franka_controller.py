@@ -24,8 +24,7 @@ from rlinf.envs.realworld.franka.franka_controller import FrankaController
 
 
 def main():
-    robot_ip = os.environ.get("FRANKA_ROBOT_IP", None)
-    robot_ip = "172.16.0.2"
+    robot_ip = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
     assert robot_ip is not None, "Please set the FRANKA_ROBOT_IP environment variable."
     cluster_cfg = {
         "num_nodes": 1,

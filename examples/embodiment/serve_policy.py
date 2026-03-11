@@ -19,29 +19,23 @@ the OpenPI client protocol (``openpi_client.websocket_client_policy``).  The eva
 script (``eval_realworld.py``) or any OpenPI-compatible client can connect to this
 server to query actions.
 
-Supports both ``.safetensors`` (OpenPI native) and ``.pt`` (PyTorch) checkpoint
-formats.  When ``--checkpoint-dir`` contains a ``model.safetensors`` file the
-safetensors loader is used; when it contains ``*.pt`` files they are loaded via
-``torch.load``.  A single ``.pt`` file can also be passed directly via
-``--checkpoint-dir``.
+Checkpoint loading reuses the same logic as
+``rlinf.models.embodiment.openpi.get_model``:
+
+1. ``model_state_dict/full_weights.pt`` -- FSDP direct checkpoint
+2. ``actor/model_state_dict/full_weights.pt`` -- SFT runner checkpoint
+3. ``*.safetensors`` files -- OpenPI pre-trained weights
 
 Usage
 -----
-Serve a fine-tuned OpenPI checkpoint (safetensors)::
+Serve a fine-tuned checkpoint::
 
     python serve_policy.py \\
         --config pi0_custom \\
         --checkpoint-dir /path/to/checkpoint_dir \\
         --port 8000
 
-Serve a PyTorch ``.pt`` checkpoint::
-
-    python serve_policy.py \\
-        --config pi0_custom \\
-        --checkpoint-dir /path/to/checkpoint.pt \\
-        --port 8000
-
-Serve with a default prompt injected when the client doesn't send one::
+Serve with a default prompt::
 
     python serve_policy.py \\
         --config pi0_custom \\
@@ -179,32 +173,11 @@ class WebsocketPolicyServer:
         return None
 
 
+
 # ---------------------------------------------------------------------------
-# Policy loading — supports safetensors, .pt, and OpenPI native
+# Policy loading — reuses checkpoint logic from
+# rlinf.models.embodiment.openpi.get_model
 # ---------------------------------------------------------------------------
-
-def _resolve_checkpoint(checkpoint_dir: str) -> tuple[str, str]:
-    """Determine checkpoint directory and format.
-
-    Returns:
-        (checkpoint_dir, format)  where format is one of:
-        "safetensors", "pt_file", "pt_dir"
-    """
-    if os.path.isfile(checkpoint_dir) and checkpoint_dir.endswith(".pt"):
-        return os.path.dirname(checkpoint_dir) or ".", "pt_file"
-
-    if os.path.isdir(checkpoint_dir):
-        if os.path.exists(os.path.join(checkpoint_dir, "model.safetensors")):
-            return checkpoint_dir, "safetensors"
-        st_files = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
-        if st_files:
-            return checkpoint_dir, "safetensors"
-        pt_files = sorted(glob.glob(os.path.join(checkpoint_dir, "*.pt")))
-        if pt_files:
-            return checkpoint_dir, "pt_dir"
-
-    return checkpoint_dir, "safetensors"
-
 
 def load_policy_rlinf(
     config_name: str,
@@ -212,14 +185,14 @@ def load_policy_rlinf(
     default_prompt: str | None = None,
     num_steps: int = 10,
 ):
-    """Load a policy using RLinf's own config registry and model loading.
+    """Load an OpenPI policy for serving, reusing RLinf's weight loading.
 
-    Supports:
-    - ``.safetensors`` checkpoint directories (OpenPI native format)
-    - ``.pt`` checkpoint files / directories (RLinf training output)
+    Checkpoint detection follows the same priority as
+    ``rlinf.models.embodiment.openpi.get_model``:
 
-    The ``config_name`` should be one of the registered configs in
-    ``rlinf.models.embodiment.openpi.dataconfig``, e.g. ``pi0_custom``.
+    1. ``model_state_dict/full_weights.pt`` (FSDP direct checkpoint)
+    2. ``actor/model_state_dict/full_weights.pt`` (SFT runner checkpoint)
+    3. ``*.safetensors`` files (OpenPI pre-trained weights)
     """
     import openpi.policies.policy as _policy
     import openpi.shared.download as download
@@ -232,75 +205,57 @@ def load_policy_rlinf(
 
     train_config = get_openpi_config(config_name, model_path=checkpoint_path)
     checkpoint_dir = str(download.maybe_download(str(checkpoint_path)))
-    ckpt_dir, ckpt_fmt = _resolve_checkpoint(checkpoint_dir)
-
-    logger.info("Config: %s | Checkpoint: %s (format: %s)", config_name, ckpt_dir, ckpt_fmt)
 
     model = pi0_pytorch.PI0Pytorch(config=train_config.model)
 
-    if ckpt_fmt == "safetensors":
-        st_files = sorted(glob.glob(os.path.join(ckpt_dir, "*.safetensors")))
-        if not st_files:
-            st_files = [os.path.join(ckpt_dir, "model.safetensors")]
-        for sf in st_files:
-            logger.info("Loading safetensors: %s", sf)
-            safetensors.torch.load_model(model, sf, strict=False)
-    elif ckpt_fmt == "pt_file":
-        pt_path = checkpoint_path if checkpoint_path.endswith(".pt") else os.path.join(ckpt_dir, checkpoint_path)
-        logger.info("Loading .pt checkpoint: %s", pt_path)
-        state_dict = torch.load(pt_path, map_location="cpu", weights_only=False)
-        if "model_state_dict" in state_dict:
-            state_dict = state_dict["model_state_dict"]
-        elif "state_dict" in state_dict:
-            state_dict = state_dict["state_dict"]
+    # Weight loading — same logic as rlinf.models.embodiment.openpi.get_model
+    full_weights_path = os.path.join(
+        checkpoint_dir, "model_state_dict", "full_weights.pt"
+    )
+    actor_full_weights_path = os.path.join(
+        checkpoint_dir, "actor", "model_state_dict", "full_weights.pt"
+    )
+
+    if os.path.exists(full_weights_path):
+        logger.info("Loading FSDP checkpoint: %s", full_weights_path)
+        state_dict = torch.load(full_weights_path, map_location="cpu")
         model.load_state_dict(state_dict, strict=False)
-    elif ckpt_fmt == "pt_dir":
-        pt_files = sorted(glob.glob(os.path.join(ckpt_dir, "*.pt")))
-        for pt_path in pt_files:
-            logger.info("Loading .pt checkpoint: %s", pt_path)
-            state_dict = torch.load(pt_path, map_location="cpu", weights_only=False)
-            if "model_state_dict" in state_dict:
-                state_dict = state_dict["model_state_dict"]
-            elif "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-            model.load_state_dict(state_dict, strict=False)
+    elif os.path.exists(actor_full_weights_path):
+        logger.info("Loading SFT runner checkpoint: %s", actor_full_weights_path)
+        state_dict = torch.load(actor_full_weights_path, map_location="cpu")
+        model.load_state_dict(state_dict, strict=False)
     else:
-        raise ValueError(f"Unknown checkpoint format: {ckpt_fmt}")
+        weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
+        if not weight_paths:
+            weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+        for wp in weight_paths:
+            logger.info("Loading safetensors: %s", wp)
+            safetensors.torch.load_model(model, wp, strict=False)
 
     model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
 
+    # Data config and norm_stats — same as get_model but with fallback
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
 
     norm_stats = None
     if data_config.asset_id is not None:
-        logger.info("Looking for norm_stats (asset_id=%s) ...", data_config.asset_id)
         try:
-            norm_stats = _checkpoints.load_norm_stats(ckpt_dir, data_config.asset_id)
-            logger.info("✓ norm_stats loaded from checkpoint dir: %s", ckpt_dir)
-        except Exception:
-            logger.warning(
-                "Could not load norm_stats from %s (asset_id=%s). "
-                "Trying assets_dirs fallback ...",
-                ckpt_dir, data_config.asset_id,
+            norm_stats = _checkpoints.load_norm_stats(
+                checkpoint_dir, data_config.asset_id
             )
+            logger.info("norm_stats loaded from checkpoint dir")
+        except Exception:
+            logger.warning("norm_stats not in checkpoint dir, trying assets_dirs ...")
             try:
                 norm_stats = _checkpoints.load_norm_stats(
                     train_config.assets_dirs, data_config.asset_id
                 )
-                logger.info(
-                    "✓ norm_stats loaded from assets_dirs: %s",
-                    train_config.assets_dirs,
-                )
+                logger.info("norm_stats loaded from assets_dirs")
             except Exception:
                 logger.error(
-                    "✗ norm_stats NOT FOUND anywhere! "
-                    "Normalize/Unnormalize will be SKIPPED. "
-                    "Model output will be in raw normalized space — actions will be WRONG. "
-                    "Make sure the checkpoint directory contains "
-                    "assets/<asset_id>/norm_stats.json"
+                    "norm_stats NOT FOUND. "
+                    "Normalize/Unnormalize will be SKIPPED — actions will be WRONG."
                 )
-    else:
-        logger.warning("data_config.asset_id is None — skipping norm_stats loading.")
 
     if torch.cuda.is_available():
         device = "cuda"
@@ -341,6 +296,7 @@ def load_policy_rlinf(
     return policy
 
 
+
 def load_policy_openpi_native(
     config_name: str,
     checkpoint_dir: str,
@@ -378,8 +334,8 @@ def parse_args():
         type=str,
         required=True,
         help=(
-            "Path to the checkpoint. Can be a directory containing "
-            "*.safetensors or *.pt files, or a single .pt file path."
+            "Path to the checkpoint directory (containing "
+            "model_state_dict/full_weights.pt or *.safetensors)."
         ),
     )
     parser.add_argument(

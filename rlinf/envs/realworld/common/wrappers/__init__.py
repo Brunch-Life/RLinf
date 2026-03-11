@@ -27,7 +27,7 @@ __all__ = [
     "GripperCloseEnv",
     "RelativeFrame",
     "SpacemouseIntervention",
-    "GelloIntervention"
+    "GelloIntervention",
     "KeyboardRewardDoneWrapper",
     "KeyboardRewardDoneMultiStageWrapper",
 ]
