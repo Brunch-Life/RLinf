@@ -6,7 +6,7 @@ file that OpenPI expects under the checkpoint assets directory.
 
 Transformations applied:
   - ``state``: select dimensions specified by ``--select-state-dims``
-    (default matches ``pi0_custom``: tcp_pose(6) + gripper(1) from 19D),
+    (default matches ``pi0_realworld_pnp``: tcp_pose(6) + gripper(1) from 19D),
     then zero-pad to ``--action-dim`` (default 32).
   - ``actions``: zero-pad to ``--action-dim``.
 
@@ -41,7 +41,7 @@ def main():
         type=int,
         nargs="+",
         default=[4, 5, 6, 7, 8, 9, 0],
-        help="Indices to select from the raw state vector (default: pi0_custom mapping)",
+        help="Indices to select from the raw state vector (default: pi0_realworld_pnp mapping)",
     )
     parser.add_argument("--action-dim", type=int, default=32, help="Pi0 max action/state dim for zero-padding")
     args = parser.parse_args()

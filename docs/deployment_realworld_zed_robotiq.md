@@ -1,6 +1,6 @@
 # RLinf 真机部署文档：Franka + ZED + Robotiq (Pi0)
 
-> 本文档记录使用 RLinf 在 Franka Panda 真机环境下，基于 ZED 相机和 Robotiq 夹爪，完成**数据采集 → SFT 训练 → 真机部署评估**的完整流程。
+> 本文档记录使用 RLinf 在 Franka Panda 真机环境下，基于 ZED 相机和 Robotiq 夹爪，完成**数据采集 → SFT 训练**的完整流程。
 
 ---
 
@@ -13,7 +13,6 @@
 - [5. 训练](#5-训练)
   - [5.2 方案 A：RLinf SFT](#52-方案-a使用-rlinf-sft-训练)
   - [5.3 方案 B：OpenPI 原生 PyTorch](#53-方案-b使用-openpi-原生-pytorch-训练)
-- [6. 部署评估](#6-部署评估)
 - [附录 A：键盘控制速查表](#附录-a键盘控制速查表)
 - [附录 B：关键文件索引](#附录-b关键文件索引)
 - [附录 C：常见问题](#附录-c常见问题)
@@ -22,20 +21,24 @@
 
 ## 1. 硬件架构
 
-本方案采用三台机器协同工作：
+本方案采用以下机器协同工作：
+
+- **SFT 训练阶段**：远端 A100 服务器（仅训练，完成后将 checkpoint 传输至 4090 服务器）
+- **部署评估 / 在线 RL 阶段**：4090 服务器 + NUC 两节点部署
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  远端 A100 服务器（训练 + Policy Server）                      │
+│  远端 A100 服务器（仅 SFT 训练）                               │
 │   - 多卡 A100 GPU                                            │
 │   - Docker 容器内训练 RLinf SFT                               │
-│   - serve_policy.py 启动 policy server                       │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ SSH -L 端口转发
-┌───────────────────────────┴──────────────────────────────────┐
-│  本地 4090 服务器 (node 0, Ubuntu 22.04)                      │
+│   - 训练完成后将 checkpoint 传输至 4090 服务器                  │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  4090 服务器 (node 0, Ubuntu 22.04)                           │
 │   - 3× ZED 相机                                              │
-│   - GPU 用于图像处理 + env worker                             │
+│   - GPU 用于推理 + 训练 + env worker                          │
+│   - actor + rollout worker + env worker 全部运行在此           │
 │   - Ray Head 节点：RLINF_NODE_RANK=0                         │
 └───────────────────────────┬──────────────────────────────────┘
                             │ 局域网（直连 / 交换机）
@@ -292,7 +295,7 @@ python toolkits/convert_stats_to_norm_stats.py \
 
 - `--stats-json`：数据集的 `stats.json` 路径
 - `--output-dir`：输出 `norm_stats.json` 的目录，需与模型 checkpoint 路径下的数据集名称对应
-- `--select-state-dims`：从原始 state 向量中选取的维度索引（对应 `pi0_custom` 配置）
+- `--select-state-dims`：从原始 state 向量中选取的维度索引（对应 `pi0_realworld_pnp` 配置）
 - `--action-dim`：Pi0 最大 action/state 维度（零填充至此维度）
 
 > 如果使用 OpenPI 原生训练（方案 B），还需要将 norm_stats 复制到 OpenPI 的 assets 目录，详见 [5.3 节](#53-方案-b使用-openpi-原生-pytorch-训练)。
@@ -327,7 +330,7 @@ python toolkits/convert_stats_to_norm_stats.py \
 | -------------------------------- | ------------------------ | -------------- | ----------------------------------------------------- |
 | `data.train_data_paths`          | `"/path/to/custom-data"` | 数据集绝对路径        | 如 `"/workspace/RLinf/dataset/<DATASET_REPO_ID>"`       |
 | `actor.model.model_path`         | `"/path/to/pi0-model"`   | Pi0 预训练权重路径    | 如 `"/workspace/RLinf/checkpoints/torch/pi0_base"`      |
-| `actor.model.openpi.config_name` | `"pi0_custom"`           | `"pi0_custom"` | OpenPI 配置名                                            |
+| `actor.model.openpi.config_name` | `"pi0_realworld_pnp"`    | `"pi0_realworld_pnp"` | OpenPI 配置名（ZED+Robotiq 真机场景）                     |
 | `actor.micro_batch_size`         | `1`                      | `16`           | 每卡 batch size，根据 GPU 显存调整                             |
 | `actor.global_batch_size`        | `16`                     | `128`          | 全局 batch size（8 卡 × 16 = 128）                         |
 | `actor.optim.lr`                 | `7.91e-6`                | `2.5e-5`       | 学习率，可根据实际训练调整                                         |
@@ -390,14 +393,14 @@ cd openpi
 pip install -e .
 ```
 
-1. **对齐数据处理流程：** OpenPI 侧的 `pi0_custom` 配置需要与 RLinf 的数据处理保持一致。主要涉及以下修改（请确保你的 OpenPI 版本已包含这些改动）：
-  - `src/openpi/policies/franka_policy.py`：`FrankaEEInputs` 中的 state/action padding（7D→32D）、多相机 slot 映射
-  - `src/openpi/training/config.py`：`pi0_custom` 的 `select_state_dims`、`extra_image_keys`、`pi0_slot_keys` 等参数
+1. **对齐数据处理流程：** OpenPI 侧的 `pi0_realworld_pnp` 配置需要与 RLinf 的数据处理保持一致。主要涉及以下修改（请确保你的 OpenPI 版本已包含这些改动）：
+  - `src/openpi/policies/realworld_policy.py`：`RealworldInputs` 中的 state 维度选择（19D→7D）、多相机 slot 映射
+  - `src/openpi/training/config.py`：`pi0_realworld_pnp` 的 `state_indices`、`extra_image_keys`、`pi0_slot_keys` 等参数
 2. 复制 norm_stats 到 OpenPI 的 assets 目录：
 
 ```bash
 cp <REMOTE_RLINF_PATH>/checkpoints/torch/pi0_base/<DATASET_REPO_ID>/norm_stats.json \
-   <OPENPI_PATH>/assets/pi0_custom/<DATASET_REPO_ID>/norm_stats.json
+   <OPENPI_PATH>/assets/pi0_realworld_pnp/<DATASET_REPO_ID>/norm_stats.json
 ```
 
 #### 相机 Slot 映射
@@ -425,7 +428,7 @@ export HF_HUB_OFFLINE=1
 
 # 8 卡训练
 uv run torchrun --standalone --nnodes=1 --nproc_per_node=8 \
-    scripts/train_pytorch.py pi0_custom \
+    scripts/train_pytorch.py pi0_realworld_pnp \
     --exp_name <EXPERIMENT_NAME>
 ```
 
@@ -450,60 +453,38 @@ uv run torchrun --standalone --nnodes=1 --nproc_per_node=8 \
 
 ## 6. 部署评估
 
-部署评估涉及三台机器：远端 A100（Policy Server）、本地 4090（env worker）、NUC（FrankaController）。
+部署评估采用集成 rollout worker 架构，模型推理直接运行在 4090 服务器上，无需独立的 Policy Server 或 SSH 隧道。只需两台机器：4090 服务器（actor + rollout + env worker）和 NUC（FrankaController）。
 
-### 6.1 远端 A100：启动 Policy Server
+### 6.1 传输 checkpoint 到 4090 服务器
 
-```bash
-# 在 A100 服务器上
-cd /workspace/RLinf
-
-python examples/embodiment/serve_policy.py \
-    --config pi0_custom \
-    --checkpoint-dir <checkpoint_path>/actor/model_state_dict/ \
-    --port 12345 \
-    --num-steps 10
-```
-
-参数说明：
-
-- `--config`：OpenPI 配置名，需与训练时一致（`pi0_custom`）
-- `--checkpoint-dir`：checkpoint 目录路径（包含 `.safetensors` 或 `.pt`），也可以直接指向 `.pt` 文件
-- `--port`：服务端口
-- `--num-steps`：flow-matching 推理去噪步数（默认 10）
-- `--default-prompt`：可选，设置默认 prompt（如 `"pick up the chip"`）
-
-服务启动后会先进行 warmup（默认 3 次 dummy 推理），之后监听 WebSocket 连接。
-
-### 6.2 SSH 隧道打洞
-
-在本地 4090 服务器上建立到远端 A100 的端口转发：
+将 A100 训练好的 checkpoint 同步到 4090 服务器：
 
 ```bash
-ssh -L 12345:localhost:12345 <user>@<A100服务器IP> -p <SSH端口>
+rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/actor/model_state_dict/ \
+    /path/to/RLinf/checkpoints/realworld_pnp/
 ```
 
-此命令将远端的 12345 端口映射到本地 localhost:12345，使 eval 脚本能通过 `localhost:12345` 访问 policy server。
+### 6.2 部署配置
 
-> 保持此 SSH 连接不要断开，否则隧道会关闭。
+配置文件：`examples/embodiment/config/realworld_pi0_zed_robotiq_async.yaml`
 
-### 6.3 评估配置
+该配置将 actor（训练/推理）、rollout worker（策略推理）、env worker（环境交互 + 相机）全部部署在 4090 服务器上，NUC 仅运行 FrankaController。
 
-配置文件位于 `examples/embodiment/config/realworld_eval_zed_robotiq.yaml`，关键配置项：
-
-
-| 配置项                                | 值                | 说明                     |
-| ---------------------------------- | ---------------- | ---------------------- |
-| `policy_server.host`               | `"localhost"`    | 通过 SSH 隧道访问            |
-| `policy_server.port`               | `12345`          | 与 serve_policy.py 端口一致 |
-| `policy_server.config_name`        | `"pi0_custom"`   | OpenPI 配置名             |
-| `runner.action_type`               | `"delta"`        | 动作类型：增量                |
-| `runner.num_eval_episodes`         | `20`             | 评估 episode 数           |
-| `runner.dry_run`                   | `False`          | 设为 `True` 可干跑（不动机器人）   |
-| `env.eval.keyboard_reward_wrapper` | `"single_stage"` | 键盘控制奖励的模式              |
+关键配置项：
 
 
-### 6.4 启动评估
+| 配置项                              | 默认值               | 说明                                    |
+| -------------------------------- | ----------------- | ------------------------------------- |
+| `runner.only_eval`               | `False`           | 设为 `True` 仅评估（不训练）                    |
+| `runner.ckpt_path`               | `null`            | 指向 `.pt` checkpoint 文件路径              |
+| `actor.model.model_path`         | `"/path/to/model"`| Pi0 预训练或微调后的模型路径                      |
+| `rollout.model.model_path`       | `"/path/to/model"`| 与 actor 一致                            |
+| `actor.model.openpi.config_name` | `"pi0_realworld_pnp"` | OpenPI 配置名                       |
+| `env.train.task_description`     | `null`            | 任务描述 prompt（如 `"pick up the chip"`）    |
+| `env.train.keyboard_reward_wrapper` | `"single_stage"` | 键盘控制奖励模式                           |
+
+
+### 6.3 启动部署
 
 **Step 1：NUC 端**
 
@@ -536,13 +517,19 @@ RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090服务器I
 # 5. 等待 NUC 加入集群
 ray status
 
-# 6. 启动评估
-bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
+# 6a. 仅评估模式：加载 checkpoint 运行评估
+bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
+    runner.only_eval=True \
+    runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
+
+# 6b. 在线 RL 模式：加载 SFT checkpoint 继续在线训练（SAC）
+bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
+    runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 ```
 
-### 6.5 评估时键盘控制（single_stage 模式）
+### 6.4 评估时键盘控制（single_stage 模式）
 
-评估过程中需要人工通过键盘标记每个 episode 的结果：
+评估 / 在线训练过程中需要人工通过键盘标记每个 episode 的结果：
 
 
 | 按键    | 功能                              |
@@ -554,12 +541,10 @@ bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
 
 典型工作流：
 
-1. 评估脚本自动启动，policy server 返回动作，机械臂开始执行
+1. 启动后，rollout worker 在本地进行策略推理，机械臂开始执行动作
 2. 观察机械臂执行情况
 3. 任务成功按 `c`，失败按 `a`
 4. 系统自动进入下一个 episode
-
-> **调试技巧：** 首次部署建议先将 `runner.dry_run` 设为 `True` 进行干跑测试，确认 policy server 连接正常、推理无误后再设为 `False` 实际执行。
 
 ---
 
@@ -569,7 +554,7 @@ bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
 | 场景                                                          | a           | b             | c             |
 | ----------------------------------------------------------- | ----------- | ------------- | ------------- |
 | **数据采集** (`collect_data_with_wrapper.sh`)                   | 开始录制        | 失败并结束 episode | 成功并结束 episode |
-| **评估** (`eval_realworld.sh`, single_stage)                  | 失败 (-1, 结束) | 中性 (0, 不结束)   | 成功 (+1, 结束)   |
+| **部署评估 / 在线 RL** (`run_realworld_async.sh`, single_stage) | 失败 (-1, 结束) | 中性 (0, 不结束)   | 成功 (+1, 结束)   |
 
 
 > **注意：**
@@ -586,21 +571,20 @@ bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
 | `examples/embodiment/config/realworld_collect_data.yaml`             | 数据采集配置（Replay Buffer / RL 训练用）             |
 | `examples/embodiment/config/realworld_collect_data_wrapper.yaml`     | 数据采集配置（LeRobot wrapper / 单节点基础版）           |
 | `examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml` | 数据采集配置（LeRobot wrapper / 双节点 ZED+Robotiq） |
-| `examples/embodiment/config/realworld_eval_zed_robotiq.yaml`         | 真机评估配置                                      |
+| `examples/embodiment/config/realworld_pi0_zed_robotiq_async.yaml`    | 真机部署评估 / 在线 RL 配置                          |
 | `examples/embodiment/collect_data.sh`                                | 数据采集启动脚本（Replay Buffer / `.pt` 格式）         |
 | `examples/embodiment/collect_real_data.py`                           | 数据采集 Python 入口（Replay Buffer / RL 训练用）     |
 | `examples/embodiment/collect_data_with_wrapper.sh`                   | 数据采集启动脚本（LeRobot 格式 + 键盘控制）              |
 | `examples/embodiment/collect_real_data_with_wrapper.py`              | 数据采集 Python 入口（CollectEpisode wrapper）     |
-| `examples/embodiment/eval_realworld.sh`                              | 真机评估启动脚本                                    |
-| `examples/embodiment/eval_realworld.py`                              | 真机评估 Python 入口                              |
-| `examples/embodiment/serve_policy.py`                                | Policy Server（远端部署）                         |
+| `examples/embodiment/run_realworld_async.sh`                         | 真机部署 / 在线 RL 启动脚本                           |
+| `examples/embodiment/train_async.py`                                 | 异步训练 / 部署 Python 入口                         |
 | `examples/sft/config/custom_sft_openpi.yaml`                         | RLinf Pi0 SFT 训练配置（含占位符路径，需替换）            |
 | `toolkits/convert_stats_to_norm_stats.py`                            | stats.json → norm_stats.json 转换工具           |
 | `ray_utils/realworld/setup_before_ray.sh`                            | 真机 Ray 启动前环境配置模板                            |
 | `requirements/install.sh`                                            | RLinf 依赖安装脚本                                |
-| `rlinf/models/embodiment/openpi/dataconfig/__init__.py`              | RLinf 侧 `pi0_custom` 配置定义                   |
-| `openpi/src/openpi/policies/franka_policy.py`                        | OpenPI 侧 FrankaEEInputs（需与 RLinf 对齐）        |
-| `openpi/src/openpi/training/config.py`                               | OpenPI 侧 `pi0_custom` 训练配置（需与 RLinf 对齐）     |
+| `rlinf/models/embodiment/openpi/dataconfig/__init__.py`              | RLinf 侧 `pi0_realworld_pnp` 配置定义             |
+| `openpi/src/openpi/policies/realworld_policy.py`                     | OpenPI 侧 RealworldInputs（需与 RLinf 对齐）       |
+| `openpi/src/openpi/training/config.py`                               | OpenPI 侧 `pi0_realworld_pnp` 训练配置（需与 RLinf 对齐） |
 | `openpi/scripts/train_pytorch.py`                                    | OpenPI 原生 PyTorch 训练入口                      |
 
 
@@ -625,18 +609,10 @@ source ~/RLinf/.venv/bin/activate
 RLINF_NODE_RANK=1 ray start --address=<IP>:6379
 ```
 
-### Q3: SSH 隧道断了怎么办？
+### Q3: 如何更换任务 / 初始位姿？
 
-重新建立 SSH 隧道即可：`ssh -L 12345:localhost:12345 <user>@<server> -p <port>`。评估脚本会在下一次请求时自动重连 policy server。
+修改配置文件中的 `env.train.override_cfg.target_ee_pose`，该值为 `[x, y, z, rx, ry, rz]` 格式的初始末端位姿（欧拉角表示）。
 
-### Q4: 如何更换任务 / 初始位姿？
-
-修改配置文件中的 `env.eval.override_cfg.target_ee_pose`，该值为 `[x, y, z, rx, ry, rz]` 格式的初始末端位姿（欧拉角表示）。
-
-### Q5: 如何调整安全边界？
-
-评估配置中的 `ee_pose_limit_min` 和 `ee_pose_limit_max` 定义了末端执行器的安全活动范围。如果全部设为零，系统会根据 `random_*_range` 参数自动计算。建议根据实际场景手动设置合理的范围。
-
-### Q6: 如何只做纯 SFT（不加 value head）？
+### Q4: 如何只做纯 SFT（不加 value head）？
 
 将训练配置 `custom_sft_openpi.yaml` 中的 `actor.model.add_value_head` 设为 `False`。

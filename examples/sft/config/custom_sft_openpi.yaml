@@ -48,7 +48,7 @@ actor:
     num_action_chunks: 4 # interface for the env
     add_value_head: True
     openpi:
-      config_name: "pi0_custom"
+      config_name: "pi0_realworld_pnp"
       detach_critic_input: True
 
   optim:

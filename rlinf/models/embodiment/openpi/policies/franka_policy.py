@@ -79,24 +79,6 @@ class FrankaEEInputs(transforms.DataTransformFn):
     # Whether to train actions using rotation_6d or not.
     action_train_with_rotation_6d: bool = False
 
-    # Number of extra camera images available in the dataset (0, 1, or 2).
-    # When >0, ``observation/extra_image_0`` (and ``_1``) are read from the
-    # data dict and assigned to the Pi0 wrist image slots instead of zeros.
-    num_extra_images: int = 0
-
-    # Mapping from Pi0 image slots to observation keys.  The three entries
-    # correspond to (base_0_rgb, left_wrist_0_rgb, right_wrist_0_rgb).
-    # Override this to align your camera semantics with the pre-trained
-    # model — e.g. if your main ``image`` column is a wrist camera and the
-    # extra columns are third-person views, swap them here so that the
-    # third-person view fills ``base_0_rgb`` (pre-trained on global views).
-    # ``None`` entries are padded with zeros and masked out.
-    pi0_slot_keys: tuple[str | None, str | None, str | None] = (
-        "observation/image",
-        "observation/extra_image_0",
-        "observation/extra_image_1",
-    )
-
     def __call__(self, data: dict) -> dict:
         assert data["observation/state"].shape == (7,), (
             f"Expected state shape (7,), got {data['observation/state'].shape}"
@@ -109,32 +91,30 @@ class FrankaEEInputs(transforms.DataTransformFn):
         state = data["observation/state"]
         state = transforms.pad_to_dim(state, self.action_dim)
 
-        # Resolve each Pi0 image slot from the configured observation keys.
-        slot_images: list[np.ndarray | None] = []
-        for key in self.pi0_slot_keys:
-            raw = data.get(key) if key is not None else None
-            slot_images.append(_parse_image(raw) if raw is not None else None)
-
-        # Build a reference image for zero-padding (use the first non-None).
-        ref = next((img for img in slot_images if img is not None), None)
-        if ref is None:
-            raise ValueError("At least one image must be provided.")
-
-        resolved = tuple(img if img is not None else np.zeros_like(ref) for img in slot_images)
-        masks = tuple(np.True_ if img is not None else np.False_ for img in slot_images)
+        base_image = _parse_image(data["observation/image"])
 
         if self.model_type in (_model.ModelType.PI0, _model.ModelType.PI05):
             names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
-            image_masks = masks
+            images = (
+                base_image,
+                np.zeros_like(base_image),
+                np.zeros_like(base_image),
+            )
+            image_masks = (np.True_, np.False_, np.False_)
         elif self.model_type == _model.ModelType.PI0_FAST:
             names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
+            images = (
+                base_image,
+                np.zeros_like(base_image),
+                np.zeros_like(base_image),
+            )
             image_masks = (np.True_, np.True_, np.True_)
         else:
             raise ValueError(f"Unsupported model type: {self.model_type}")
 
         inputs = {
             "state": state,
-            "image": dict(zip(names, resolved, strict=True)),
+            "image": dict(zip(names, images, strict=True)),
             "image_mask": dict(zip(names, image_masks, strict=True)),
         }
 

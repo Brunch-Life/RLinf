@@ -5,6 +5,9 @@ This document describes the end-to-end workflow for deploying RLinf on a
 Franka Panda real-world setup with ZED cameras and a Robotiq gripper:
 **Data Collection → SFT Training → Real-World Deployment & Evaluation**.
 
+- **SFT Training phase**: Remote A100 server (training only; checkpoint transferred to 4090 after training)
+- **Deployment / Online RL phase**: 4090 server + NUC two-node deployment
+
 .. contents:: Table of Contents
    :local:
    :depth: 2
@@ -14,21 +17,22 @@ Franka Panda real-world setup with ZED cameras and a Robotiq gripper:
 1. Hardware Architecture
 ------------------------
 
-The setup uses three machines working together:
+The setup uses the following machines:
 
 .. code-block:: text
 
    ┌──────────────────────────────────────────────────────────────┐
-   │  Remote A100 Server (Training + Policy Server)              │
+   │  Remote A100 Server (SFT Training Only)                     │
    │   - Multi-GPU A100                                          │
    │   - RLinf SFT training inside Docker                        │
-   │   - serve_policy.py starts the policy server                │
-   └───────────────────────────┬──────────────────────────────────┘
-                               │ SSH -L port forwarding
-   ┌───────────────────────────┴──────────────────────────────────┐
-   │  Local 4090 Server (node 0, Ubuntu 22.04)                   │
+   │   - Transfer checkpoint to 4090 server after training       │
+   └──────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────────────┐
+   │  4090 Server (node 0, Ubuntu 22.04)                         │
    │   - 3× ZED cameras                                         │
-   │   - GPU for image processing + env worker                   │
+   │   - GPU for inference + training + env worker               │
+   │   - actor + rollout worker + env worker all run here        │
    │   - Ray Head node: RLINF_NODE_RANK=0                        │
    └───────────────────────────┬──────────────────────────────────┘
                                │ LAN (direct / switch)
@@ -361,7 +365,7 @@ Arguments:
 - ``--output-dir`` — output directory for ``norm_stats.json``, should
   correspond to the dataset name under the model checkpoint path
 - ``--select-state-dims`` — dimension indices to select from the raw state
-  vector (matching the ``pi0_custom`` config)
+  vector (matching the ``pi0_realworld_pnp`` config)
 - ``--action-dim`` — maximum Pi0 action/state dimension (zero-padded to this
   size)
 
@@ -424,9 +428,9 @@ Key training parameters:
      - Pi0 pre-trained weights path
      - e.g. ``"/workspace/RLinf/checkpoints/torch/pi0_base"``
    * - ``actor.model.openpi.config_name``
-     - ``"pi0_custom"``
-     - ``"pi0_custom"``
-     - OpenPI config name
+     - ``"pi0_realworld_pnp"``
+     - ``"pi0_realworld_pnp"``
+     - OpenPI config name (ZED+Robotiq real-world)
    * - ``actor.micro_batch_size``
      - ``1``
      - ``16``
@@ -512,13 +516,13 @@ Prerequisites
    cd openpi
    pip install -e .
 
-2. **Align the data processing pipeline:** the ``pi0_custom`` config on the
+2. **Align the data processing pipeline:** the ``pi0_realworld_pnp`` config on the
    OpenPI side must be consistent with RLinf's data processing. Key files to
    check (ensure your OpenPI version includes these changes):
 
-   - ``src/openpi/policies/franka_policy.py`` — ``FrankaEEInputs`` state/action
-     padding (7D → 32D), multi-camera slot mapping
-   - ``src/openpi/training/config.py`` — ``pi0_custom`` ``select_state_dims``,
+   - ``src/openpi/policies/realworld_policy.py`` — ``RealworldInputs`` state
+     dimension selection (19D → 7D), multi-camera slot mapping
+   - ``src/openpi/training/config.py`` — ``pi0_realworld_pnp`` ``state_indices``,
      ``extra_image_keys``, ``pi0_slot_keys``, etc.
 
 3. Copy ``norm_stats`` to the OpenPI assets directory:
@@ -526,7 +530,7 @@ Prerequisites
 .. code-block:: bash
 
    cp <REMOTE_RLINF_PATH>/checkpoints/torch/pi0_base/<DATASET_REPO_ID>/norm_stats.json \
-      <OPENPI_PATH>/assets/pi0_custom/<DATASET_REPO_ID>/norm_stats.json
+      <OPENPI_PATH>/assets/pi0_realworld_pnp/<DATASET_REPO_ID>/norm_stats.json
 
 Camera Slot Mapping
 ^^^^^^^^^^^^^^^^^^^
@@ -569,7 +573,7 @@ Launch Training
 
    # 8-GPU training
    uv run torchrun --standalone --nnodes=1 --nproc_per_node=8 \
-       scripts/train_pytorch.py pi0_custom \
+       scripts/train_pytorch.py pi0_realworld_pnp \
        --exp_name <EXPERIMENT_NAME>
 
 .. note::
@@ -599,90 +603,63 @@ Use the corresponding checkpoint directory path for evaluation.
 6. Deployment & Evaluation
 --------------------------
 
-Deployment and evaluation involve three machines: the remote A100 (Policy
-Server), the local 4090 (env worker), and the NUC (FrankaController).
+Deployment uses an integrated rollout worker architecture — model inference
+runs directly on the 4090 server with no separate Policy Server or SSH tunnel
+required. Only two machines are needed: the 4090 server (actor + rollout +
+env worker) and the NUC (FrankaController).
 
-6.1 Remote A100: Start Policy Server
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+6.1 Transfer Checkpoint to the 4090 Server
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: bash
-
-   # On the A100 server
-   cd /workspace/RLinf
-
-   python examples/embodiment/serve_policy.py \
-       --config pi0_custom \
-       --checkpoint-dir <checkpoint_path>/actor/model_state_dict/ \
-       --port 12345 \
-       --num-steps 10
-
-Arguments:
-
-- ``--config`` — OpenPI config name; must match the training config
-  (``pi0_custom``)
-- ``--checkpoint-dir`` — checkpoint directory path (containing
-  ``.safetensors`` or ``.pt``); can also point directly to a ``.pt`` file
-- ``--port`` — server port
-- ``--num-steps`` — flow-matching inference denoising steps (default 10)
-- ``--default-prompt`` — optional, set a default prompt (e.g.
-  ``"pick up the chip"``)
-
-After starting, the server performs a warmup (3 dummy inferences by default),
-then listens for WebSocket connections.
-
-6.2 SSH Tunnel
-~~~~~~~~~~~~~~
-
-On the local 4090 server, establish port forwarding to the remote A100:
+Sync the trained checkpoint from the A100 to the 4090 server:
 
 .. code-block:: bash
 
-   ssh -L 12345:localhost:12345 <user>@<A100_SERVER_IP> -p <SSH_PORT>
+   rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/actor/model_state_dict/ \
+       /path/to/RLinf/checkpoints/realworld_pnp/
 
-This maps remote port 12345 to local ``localhost:12345`` so the eval script can
-reach the policy server.
-
-.. note::
-
-   Keep this SSH session open — closing it terminates the tunnel.
-
-6.3 Evaluation Config
+6.2 Deployment Config
 ~~~~~~~~~~~~~~~~~~~~~
 
-Config file: ``examples/embodiment/config/realworld_eval_zed_robotiq.yaml``
+Config file:
+``examples/embodiment/config/realworld_pi0_zed_robotiq_async.yaml``
+
+This config places the actor (training/inference), rollout worker (policy
+inference), and env worker (environment interaction + cameras) all on the
+4090 server. The NUC runs only the FrankaController.
 
 Key configuration items:
 
 .. list-table::
    :header-rows: 1
-   :widths: 35 18 47
+   :widths: 35 20 45
 
    * - Config Key
-     - Value
+     - Default
      - Description
-   * - ``policy_server.host``
-     - ``"localhost"``
-     - Access via SSH tunnel
-   * - ``policy_server.port``
-     - ``12345``
-     - Must match ``serve_policy.py`` port
-   * - ``policy_server.config_name``
-     - ``"pi0_custom"``
-     - OpenPI config name
-   * - ``runner.action_type``
-     - ``"delta"``
-     - Action type: incremental
-   * - ``runner.num_eval_episodes``
-     - ``20``
-     - Number of evaluation episodes
-   * - ``runner.dry_run``
+   * - ``runner.only_eval``
      - ``False``
-     - Set ``True`` for a dry run (robot does not move)
-   * - ``env.eval.keyboard_reward_wrapper``
+     - Set ``True`` for evaluation only (no training)
+   * - ``runner.ckpt_path``
+     - ``null``
+     - Path to ``.pt`` checkpoint file
+   * - ``actor.model.model_path``
+     - ``"/path/to/model"``
+     - Pi0 pre-trained or fine-tuned model path
+   * - ``rollout.model.model_path``
+     - ``"/path/to/model"``
+     - Same as actor
+   * - ``actor.model.openpi.config_name``
+     - ``"pi0_realworld_pnp"``
+     - OpenPI config name
+   * - ``env.train.task_description``
+     - ``null``
+     - Task description prompt (e.g. ``"pick up the chip"``)
+   * - ``env.train.keyboard_reward_wrapper``
      - ``"single_stage"``
      - Keyboard reward labeling mode
 
-6.4 Launch Evaluation
+6.3 Launch Deployment
 ~~~~~~~~~~~~~~~~~~~~~
 
 **Step 1 — NUC side:**
@@ -717,14 +694,19 @@ Key configuration items:
    # 5. Wait for the NUC to join the cluster
    ray status
 
-   # 6. Launch evaluation
-   bash examples/embodiment/eval_realworld.sh realworld_eval_zed_robotiq
+   # 6a. Evaluation only: load checkpoint and run eval
+   bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
+       runner.only_eval=True \
+       runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 
-6.5 Keyboard Controls During Evaluation (single_stage Mode)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   # 6b. Online RL: load SFT checkpoint and continue training (SAC)
+   bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
+       runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 
-During evaluation you must manually label each episode's outcome via the
-keyboard:
+6.4 Keyboard Controls (single_stage Mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+During evaluation or online training, manually label each episode's outcome:
 
 .. list-table::
    :header-rows: 1
@@ -741,17 +723,11 @@ keyboard:
 
 Typical workflow:
 
-1. The eval script starts automatically; the policy server returns actions and
-   the arm begins executing.
+1. After launch, the rollout worker performs local policy inference and the arm
+   begins executing actions.
 2. Observe the arm's behavior.
 3. Press ``c`` on success or ``a`` on failure.
 4. The system automatically advances to the next episode.
-
-.. note::
-
-   **Debugging tip:** for your first deployment, set ``runner.dry_run`` to
-   ``True`` to verify the policy-server connection and inference results before
-   setting it to ``False`` for actual execution.
 
 ----
 
@@ -770,7 +746,7 @@ Appendix A: Keyboard Control Quick Reference
      - Start recording
      - Failure, end episode
      - Success, end episode
-   * - **Evaluation** (``eval_realworld.sh``, single_stage)
+   * - **Deployment / Online RL** (``run_realworld_async.sh``, single_stage)
      - Failure (−1, end)
      - Neutral (0, no end)
      - Success (+1, end)
@@ -800,8 +776,8 @@ Appendix B: Key File Index
      - Data collection config (LeRobot wrapper / single-node base)
    * - ``examples/embodiment/config/realworld_collect_data_zed_robotiq.yaml``
      - Data collection config (LeRobot wrapper / dual-node ZED + Robotiq)
-   * - ``examples/embodiment/config/realworld_eval_zed_robotiq.yaml``
-     - Real-world evaluation config
+   * - ``examples/embodiment/config/realworld_pi0_zed_robotiq_async.yaml``
+     - Real-world deployment / online RL config
    * - ``examples/embodiment/collect_data.sh``
      - Data collection launch script (Replay Buffer / ``.pt`` format)
    * - ``examples/embodiment/collect_real_data.py``
@@ -810,12 +786,10 @@ Appendix B: Key File Index
      - Data collection launch script (LeRobot format + keyboard control)
    * - ``examples/embodiment/collect_real_data_with_wrapper.py``
      - Data collection Python entry (CollectEpisode wrapper)
-   * - ``examples/embodiment/eval_realworld.sh``
-     - Real-world evaluation launch script
-   * - ``examples/embodiment/eval_realworld.py``
-     - Real-world evaluation Python entry
-   * - ``examples/embodiment/serve_policy.py``
-     - Policy Server (remote deployment)
+   * - ``examples/embodiment/run_realworld_async.sh``
+     - Real-world deployment / online RL launch script
+   * - ``examples/embodiment/train_async.py``
+     - Async training / deployment Python entry
    * - ``examples/sft/config/custom_sft_openpi.yaml``
      - RLinf Pi0 SFT training config (**contains placeholder paths** — must be
        replaced)
@@ -826,11 +800,11 @@ Appendix B: Key File Index
    * - ``requirements/install.sh``
      - RLinf dependency installation script
    * - ``rlinf/models/embodiment/openpi/dataconfig/__init__.py``
-     - RLinf-side ``pi0_custom`` config definition
-   * - ``openpi/src/openpi/policies/franka_policy.py``
-     - OpenPI-side FrankaEEInputs (must be aligned with RLinf)
+     - RLinf-side ``pi0_realworld_pnp`` config definition
+   * - ``openpi/src/openpi/policies/realworld_policy.py``
+     - OpenPI-side RealworldInputs (must be aligned with RLinf)
    * - ``openpi/src/openpi/training/config.py``
-     - OpenPI-side ``pi0_custom`` training config (must be aligned with RLinf)
+     - OpenPI-side ``pi0_realworld_pnp`` training config (must be aligned with RLinf)
    * - ``openpi/scripts/train_pytorch.py``
      - OpenPI native PyTorch training entry
 
@@ -860,29 +834,13 @@ ROS and the virtual environment **before** running ``ray start``:
    source ~/RLinf/.venv/bin/activate
    RLINF_NODE_RANK=1 ray start --address=<IP>:6379
 
-Q3: SSH tunnel dropped?
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-Re-establish the tunnel:
-``ssh -L 12345:localhost:12345 <user>@<server> -p <port>``.
-The eval script will automatically reconnect to the policy server on the next
-request.
-
-Q4: How to change the task or initial pose?
+Q3: How to change the task or initial pose?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Modify ``env.eval.override_cfg.target_ee_pose`` in the config file. The value
+Modify ``env.train.override_cfg.target_ee_pose`` in the config file. The value
 is in ``[x, y, z, rx, ry, rz]`` format (Euler angles).
 
-Q5: How to adjust safety boundaries?
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``ee_pose_limit_min`` and ``ee_pose_limit_max`` in the evaluation config define
-the end-effector's safe operating range. If all values are set to zero, the
-system auto-computes boundaries from the ``random_*_range`` parameters. It is
-recommended to set reasonable limits manually for your specific scenario.
-
-Q6: How to do pure SFT without a value head?
+Q4: How to do pure SFT without a value head?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Set ``actor.model.add_value_head`` to ``False`` in the training config
