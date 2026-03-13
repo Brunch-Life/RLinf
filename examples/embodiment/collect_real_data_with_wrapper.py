@@ -69,6 +69,11 @@ class RealWorldCollectEpisode(CollectEpisode):
 
     def step(self, action, **kwargs):
         obs, reward, terminated, truncated, info = self.env.step(action, **kwargs)
+
+        # Discard env's automatic termination (driven by target_ee_pose /
+        # success_hold_steps); episode lifecycle is fully keyboard-controlled.
+        terminated = torch.zeros_like(terminated, dtype=torch.bool)
+
         key = self._listener.get_key()
 
         if key == "a" and not self._recording:
