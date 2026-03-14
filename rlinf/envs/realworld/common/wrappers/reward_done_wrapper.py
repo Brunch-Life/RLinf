@@ -49,6 +49,14 @@ class BaseKeyboardRewardDoneWrapper(gym.Wrapper):
 
 
 class KeyboardRewardDoneWrapper(BaseKeyboardRewardDoneWrapper):
+    """Single-stage keyboard reward/done wrapper.
+
+    Key mapping (aligned with data collection for consistency):
+        a: neutral (reward=0, no termination)
+        b: failure  (reward=-1, episode ends)
+        c: success  (reward=+1, episode ends)
+    """
+
     def _check_keypress(self) -> tuple[bool, bool, float]:
         last_intervened = False
         done = False
@@ -60,16 +68,13 @@ class KeyboardRewardDoneWrapper(BaseKeyboardRewardDoneWrapper):
 
         last_intervened = True
         if key == "a":
+            reward = 0
+        elif key == "b":
             reward = -1
             done = True
-            last_intervened = True
-        elif key == "b":
-            reward = 0
-            last_intervened = True
         elif key == "c":
             reward = 1
             done = True
-            last_intervened = True
         return last_intervened, done, reward
 
 

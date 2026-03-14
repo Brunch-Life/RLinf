@@ -58,9 +58,11 @@
 > - ZED 相机序列号（当前：`10848563`, `39651335`, `34303972`）
 > - Franka 机械臂 IP（当前：`172.16.0.2`）
 > - Robotiq 夹爪串口（当前：`/dev/ttyUSB0`）
-> - NUC 上 Python 虚拟环境路径（当前：`/home/franka/workspace/RLinf/.venv/bin/python3`）
+> - GELLO 遥操作串口（当前：`/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0`）
+> - NUC 上 `python_interpreter_path`（配置文件中的 `cluster.node_groups[].env_configs[].python_interpreter_path`）。在 NUC 上激活虚拟环境后运行 `which python3` 获取正确路径，替换配置文件中的默认值。**路径错误会导致 Ray worker 启动失败。**
 > - 4090 服务器和 NUC 的 IP 地址
 > - 远端 A100 服务器 SSH 地址和端口
+> - 初始末端位姿 `target_ee_pose`
 
 ---
 
@@ -178,18 +180,20 @@ cd /workspace/RLinf
 
 **Step 1：NUC 端启动**
 
+> **关键：环境变量必须在 `ray start` 之前设置！**
+>
+> Ray 在 `ray start` 时**一次性捕获**当前 shell 的所有环境变量（包括 `PATH`、`PYTHONPATH`、`ROS_*` 等）。之后启动的 Ray worker 进程将继承这些值。如果在 `ray start` **之后**才 source ROS 或 venv，NUC 上的 FrankaController 将找不到 ROS / Python 包，报出难以排查的 import 错误。
+
 ```bash
-# 1. 激活 ROS 环境
+# 1. 激活 ROS 环境（必须在 ray start 之前）
 source /opt/ros/noetic/setup.bash
 
-# 2. 激活 RLinf 虚拟环境
+# 2. 激活 RLinf 虚拟环境（必须在 ray start 之前）
 source ~/RLinf/.venv/bin/activate
 
 # 3. 以 Worker 身份加入 Ray 集群
 RLINF_NODE_RANK=1 ray start --address=<4090服务器IP>:6379
 ```
-
-> **重要：** 必须在 `ray start` **之前** source ROS 和虚拟环境，因为 Ray 在启动时捕获环境变量。
 
 **Step 2：4090 服务器端启动**
 
@@ -197,19 +201,17 @@ RLINF_NODE_RANK=1 ray start --address=<4090服务器IP>:6379
 # 1. 进入 RLinf 目录
 cd /path/to/RLinf
 
-# 2. 激活虚拟环境
+# 2. 激活虚拟环境（必须在 ray start 之前）
 source .venv/bin/activate
 
-# 3. 设置环境变量
-export EMBODIED_PATH="$(pwd)/examples/embodiment"
-
-# 4. 启动 Ray Head 节点
+# 3. 启动 Ray Head 节点
 RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090服务器IP>
 
-# 5. 等待 NUC 加入集群（可选检查）
+# 4. 等待 NUC 加入集群（可选检查）
 ray status
 
-# 6. 启动数据采集（LeRobot 格式 + 键盘控制）
+# 5. 启动数据采集（LeRobot 格式 + 键盘控制）
+#    脚本内部会自动设置 EMBODIED_PATH，无需手动 export
 bash examples/embodiment/collect_data_with_wrapper.sh realworld_collect_data_zed_robotiq
 ```
 
@@ -290,6 +292,21 @@ python toolkits/convert_stats_to_norm_stats.py \
     --select-state-dims 4 5 6 7 8 9 0 \
     --action-dim 32
 ```
+
+**具体示例：** 假设你的数据集标识为 `alice/pick_place_chip`，Pi0 预训练权重在 `/workspace/RLinf/checkpoints/torch/pi0_base`：
+
+```bash
+# 数据集路径：/workspace/RLinf/dataset/alice/pick_place_chip/meta/stats.json
+# norm_stats 输出：/workspace/RLinf/checkpoints/torch/pi0_base/alice/pick_place_chip/norm_stats.json
+
+python toolkits/convert_stats_to_norm_stats.py \
+    --stats-json dataset/alice/pick_place_chip/meta/stats.json \
+    --output-dir checkpoints/torch/pi0_base/alice/pick_place_chip \
+    --select-state-dims 4 5 6 7 8 9 0 \
+    --action-dim 32
+```
+
+> **路径规范：** `<DATASET_REPO_ID>` 应采用 `<用户名>/<数据集名>` 格式（如 `alice/pick_place_chip`）。`--output-dir` 必须是模型 checkpoint 路径 + `<DATASET_REPO_ID>` 子目录，OpenPI 通过这个路径约定自动查找 `norm_stats.json`。
 
 参数说明：
 
@@ -460,9 +477,12 @@ uv run torchrun --standalone --nnodes=1 --nproc_per_node=8 \
 将 A100 训练好的 checkpoint 同步到 4090 服务器：
 
 ```bash
-rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/actor/model_state_dict/ \
+# 保留目录结构，rsync 整个 global_step 目录
+rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/ \
     /path/to/RLinf/checkpoints/realworld_pnp/
 ```
+
+> **注意：** 需要从 `global_step_<N>/` 层级开始 rsync（而非 `actor/model_state_dict/`），以保留 `actor/model_state_dict/full_weights.pt` 的目录结构。代码会按 `<dir>/full_weights.pt`、`<dir>/model_state_dict/full_weights.pt`、`<dir>/actor/model_state_dict/full_weights.pt`、`<dir>/*.safetensors` 的顺序查找权重文件。
 
 ### 6.2 部署配置
 
@@ -488,11 +508,16 @@ rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/chec
 
 **Step 1：NUC 端**
 
+> **关键：** 与数据采集一样，必须在 `ray start` **之前** source ROS 和虚拟环境。如果 NUC 上已有旧的 Ray 进程，先执行 `ray stop` 清理。
+
 ```bash
-# 1. 激活 ROS 环境
+# 0. 清理旧的 Ray 进程（如果之前运行过数据采集等）
+ray stop
+
+# 1. 激活 ROS 环境（必须在 ray start 之前）
 source /opt/ros/noetic/setup.bash
 
-# 2. 激活 RLinf 虚拟环境
+# 2. 激活 RLinf 虚拟环境（必须在 ray start 之前）
 source ~/RLinf/.venv/bin/activate
 
 # 3. 以 Worker 身份加入 Ray 集群
@@ -502,27 +527,28 @@ RLINF_NODE_RANK=1 ray start --address=<4090服务器IP>:6379
 **Step 2：4090 服务器端**
 
 ```bash
+# 0. 清理旧的 Ray 进程（如果之前运行过数据采集等）
+ray stop
+
 # 1. 进入 RLinf 目录
 cd /path/to/RLinf
 
-# 2. 激活虚拟环境
+# 2. 激活虚拟环境（必须在 ray start 之前）
 source .venv/bin/activate
 
-# 3. 设置环境变量
-export EMBODIED_PATH="$(pwd)/examples/embodiment"
-
-# 4. 启动 Ray Head 节点
+# 3. 启动 Ray Head 节点
 RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090服务器IP>
 
-# 5. 等待 NUC 加入集群
+# 4. 等待 NUC 加入集群
 ray status
 
-# 6a. 仅评估模式：加载 checkpoint 运行评估
+# 5a. 仅评估模式：加载 checkpoint 运行评估
+#     脚本内部会自动设置 EMBODIED_PATH 和 PYTHONPATH，无需手动 export
 bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
     runner.only_eval=True \
     runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 
-# 6b. 在线 RL 模式：加载 SFT checkpoint 继续在线训练（SAC）
+# 5b. 在线 RL 模式：加载 SFT checkpoint 继续在线训练（SAC）
 bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
     runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 ```
@@ -534,8 +560,8 @@ bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async 
 
 | 按键    | 功能                              |
 | ----- | ------------------------------- |
-| **a** | **失败**：reward = -1，结束当前 episode |
-| **b** | **中性**：reward = 0，不结束 episode   |
+| **a** | **中性**：reward = 0，不结束 episode   |
+| **b** | **失败**：reward = -1，结束当前 episode |
 | **c** | **成功**：reward = +1，结束当前 episode |
 
 
@@ -543,7 +569,7 @@ bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async 
 
 1. 启动后，rollout worker 在本地进行策略推理，机械臂开始执行动作
 2. 观察机械臂执行情况
-3. 任务成功按 `c`，失败按 `a`
+3. 任务成功按 `c`，失败按 `b`
 4. 系统自动进入下一个 episode
 
 ---
@@ -554,11 +580,11 @@ bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async 
 | 场景                                                          | a           | b             | c             |
 | ----------------------------------------------------------- | ----------- | ------------- | ------------- |
 | **数据采集** (`collect_data_with_wrapper.sh`)                   | 开始录制        | 失败并结束 episode | 成功并结束 episode |
-| **部署评估 / 在线 RL** (`run_realworld_async.sh`, single_stage) | 失败 (-1, 结束) | 中性 (0, 不结束)   | 成功 (+1, 结束)   |
+| **部署评估 / 在线 RL** (`run_realworld_async.sh`, single_stage) | 中性 (0, 不结束) | 失败 (-1, 结束)   | 成功 (+1, 结束)   |
 
 
 > **注意：**
-> - 数据采集和评估的按键含义**不同**，请注意区分。
+> - 数据采集时 `b` = 失败，评估时 `b` = 失败，含义一致；但数据采集时 `a` = 开始录制，评估时 `a` = 中性（无操作），请留意区别。
 > - 键盘控制仅适用于 `collect_data_with_wrapper.sh`（wrapper 版本）。原始 `collect_data.sh`（Replay Buffer 版本）无键盘控制，全程自动录制。
 
 ---

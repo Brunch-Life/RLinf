@@ -154,7 +154,7 @@ class DataCollector(Worker):
         success_cnt = 0
         total_cnt = 0
         progress_bar = tqdm(
-            range(self.num_data_episodes), desc="Collecting Data Episodes:"
+            total=self.num_data_episodes, desc="Successful episodes"
         )
 
         action_dim = self.env.action_space.shape[-1]
@@ -180,13 +180,14 @@ class DataCollector(Worker):
                         r_val = r_val.item()
 
                     is_success = float(r_val) > 0
-                    success_cnt += int(is_success)
                     total_cnt += 1
+                    if is_success:
+                        success_cnt += 1
+                        progress_bar.update(1)
                     self.log_info(
                         f"Episode {total_cnt} done. Success: {is_success}. "
                         f"Successes: {success_cnt}/{self.num_data_episodes}"
                     )
-                    progress_bar.update(1)
                 else:
                     self.log_info(
                         "Episode ended without recording (no 'a' press). "

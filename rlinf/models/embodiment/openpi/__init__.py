@@ -46,7 +46,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
 
     # Check if this is a checkpoint directory (saved by FSDP)
-    # Check for model_state_dict/full_weights.pt (direct checkpoint) or actor/model_state_dict/full_weights.pt (from runner)
+    # Supported layouts:
+    #   1. <dir>/full_weights.pt                          (flat rsync of model_state_dict/)
+    #   2. <dir>/model_state_dict/full_weights.pt         (direct checkpoint)
+    #   3. <dir>/actor/model_state_dict/full_weights.pt   (checkpoint from runner)
+    #   4. <dir>/*.safetensors                            (original HuggingFace model)
+    root_full_weights_path = os.path.join(checkpoint_dir, "full_weights.pt")
     full_weights_path = os.path.join(
         checkpoint_dir, "model_state_dict", "full_weights.pt"
     )
@@ -61,20 +66,30 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     if actor_model_config.train_expert_only:
         model.freeze_vlm()
 
-    # Load weights from checkpoint if it's a checkpoint directory, otherwise load from safetensors
-    if os.path.exists(full_weights_path):
-        # Direct checkpoint directory
-        model_state_dict = torch.load(full_weights_path, map_location="cpu")
-        model.load_state_dict(model_state_dict, strict=False)
+    pt_weight_path = None
+    if os.path.exists(root_full_weights_path):
+        pt_weight_path = root_full_weights_path
+    elif os.path.exists(full_weights_path):
+        pt_weight_path = full_weights_path
     elif os.path.exists(actor_full_weights_path):
-        # Checkpoint directory from runner
-        model_state_dict = torch.load(actor_full_weights_path, map_location="cpu")
+        pt_weight_path = actor_full_weights_path
+
+    if pt_weight_path is not None:
+        model_state_dict = torch.load(pt_weight_path, map_location="cpu")
         model.load_state_dict(model_state_dict, strict=False)
     else:
-        # Original model directory with safetensors files
         weight_paths = sorted(glob.glob(os.path.join(checkpoint_dir, "*.safetensors")))
         if not weight_paths:
-            weight_paths = [os.path.join(checkpoint_dir, "model.safetensors")]
+            raise FileNotFoundError(
+                f"No model weights found in '{checkpoint_dir}'. "
+                f"Expected one of:\n"
+                f"  - {root_full_weights_path}\n"
+                f"  - {full_weights_path}\n"
+                f"  - {actor_full_weights_path}\n"
+                f"  - {checkpoint_dir}/*.safetensors\n"
+                f"Please check your 'actor.model.model_path' config and ensure "
+                f"the checkpoint was correctly transferred (rsync)."
+            )
         for weight_path in weight_paths:
             safetensors.torch.load_model(model, weight_path, strict=False)
 

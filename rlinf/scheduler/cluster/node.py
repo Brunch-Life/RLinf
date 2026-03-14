@@ -529,9 +529,16 @@ class _RemoteNodeProbe:
                 cluster_cfg.get_node_python_interpreter_path_by_rank(node_rank)
             )
             for path in cfg_python_interpreter_paths:
-                assert os.path.exists(path), (
-                    f"Python interpreter path {path} does not exist on node with node rank {node_rank}. Please check your cluster configuration."
-                )
+                if not os.path.exists(path):
+                    raise FileNotFoundError(
+                        f"Python interpreter path '{path}' does not exist on node with "
+                        f"node_rank={node_rank} (IP: {node_info['NodeManagerAddress']}). "
+                        f"This is configured via 'python_interpreter_path' in "
+                        f"cluster.node_groups[].env_configs[] of your YAML config. "
+                        f"Please update it to match the actual Python path on this node. "
+                        f"You can find the correct path by running 'which python3' in the "
+                        f"target virtual environment on that node."
+                    )
 
         self._node_info = NodeInfo(
             node_labels=node_labels,

@@ -53,9 +53,11 @@ The setup uses the following machines:
    - ZED camera serial numbers (defaults: ``10848563``, ``39651335``, ``34303972``)
    - Franka arm IP (default: ``172.16.0.2``)
    - Robotiq gripper serial port (default: ``/dev/ttyUSB0``)
-   - Python virtual-environment path on the NUC (default: ``/home/franka/workspace/RLinf/.venv/bin/python3``)
+   - GELLO teleoperation serial port (default: ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``)
+   - NUC ``python_interpreter_path`` (configured via ``cluster.node_groups[].env_configs[].python_interpreter_path`` in the YAML). Run ``which python3`` inside the activated virtual environment on the NUC to find the correct path and replace the default value in the config file. **An incorrect path will cause Ray worker startup failures.**
    - IP addresses of the 4090 server and NUC
    - Remote A100 server SSH address and port
+   - Initial end-effector pose ``target_ee_pose``
 
 ----
 
@@ -224,21 +226,22 @@ path**, and **initial end-effector pose** (``target_ee_pose``).
 
 **Step 1 — NUC side:**
 
+.. warning::
+
+   **Critical: Environment variables must be set before ray start!**
+
+   Ray **captures all environment variables once** at ``ray start`` time (including ``PATH``, ``PYTHONPATH``, ``ROS_*``, etc.). Ray worker processes launched afterwards inherit these values. If you source ROS or the venv **after** ``ray start``, the FrankaController on the NUC will not find ROS / Python packages and will report hard-to-debug import errors.
+
 .. code-block:: bash
 
-   # 1. Source the ROS environment
+   # 1. Source the ROS environment (must be before ray start)
    source /opt/ros/noetic/setup.bash
 
-   # 2. Activate the RLinf virtual environment
+   # 2. Activate the RLinf virtual environment (must be before ray start)
    source ~/RLinf/.venv/bin/activate
 
    # 3. Join the Ray cluster as a worker
    RLINF_NODE_RANK=1 ray start --address=<4090_SERVER_IP>:6379
-
-.. note::
-
-   You **must** source ROS and the virtual environment **before**
-   ``ray start``, because Ray captures environment variables at startup.
 
 **Step 2 — 4090 server side:**
 
@@ -247,19 +250,17 @@ path**, and **initial end-effector pose** (``target_ee_pose``).
    # 1. Enter the RLinf directory
    cd /path/to/RLinf
 
-   # 2. Activate the virtual environment
+   # 2. Activate the virtual environment (must be before ray start)
    source .venv/bin/activate
 
-   # 3. Set environment variables
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
-
-   # 4. Start the Ray Head node
+   # 3. Start the Ray Head node
    RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090_SERVER_IP>
 
-   # 5. (Optional) Wait for the NUC to join the cluster
+   # 4. (Optional) Wait for the NUC to join the cluster
    ray status
 
-   # 6. Start data collection (LeRobot format + keyboard control)
+   # 5. Start data collection (LeRobot format + keyboard control)
+   #    The script automatically sets EMBODIED_PATH; no manual export needed
    bash examples/embodiment/collect_data_with_wrapper.sh realworld_collect_data_zed_robotiq
 
 .. note::
@@ -358,6 +359,27 @@ server, generate it from ``stats.json``:
        --output-dir checkpoints/torch/pi0_base/<DATASET_REPO_ID> \
        --select-state-dims 4 5 6 7 8 9 0 \
        --action-dim 32
+
+**Concrete example:** Suppose your dataset identifier is ``alice/pick_place_chip``
+and the Pi0 pre-trained weights are at ``/workspace/RLinf/checkpoints/torch/pi0_base``:
+
+.. code-block:: bash
+
+   # Dataset path: /workspace/RLinf/dataset/alice/pick_place_chip/meta/stats.json
+   # norm_stats output: /workspace/RLinf/checkpoints/torch/pi0_base/alice/pick_place_chip/norm_stats.json
+
+   python toolkits/convert_stats_to_norm_stats.py \
+       --stats-json dataset/alice/pick_place_chip/meta/stats.json \
+       --output-dir checkpoints/torch/pi0_base/alice/pick_place_chip \
+       --select-state-dims 4 5 6 7 8 9 0 \
+       --action-dim 32
+
+.. note::
+
+   **Path convention:** ``<DATASET_REPO_ID>`` should use the ``<username>/<dataset_name>``
+   format (e.g. ``alice/pick_place_chip``). ``--output-dir`` must be the model checkpoint
+   path plus a ``<DATASET_REPO_ID>`` subdirectory — OpenPI locates ``norm_stats.json``
+   automatically through this path convention.
 
 Arguments:
 
@@ -615,8 +637,17 @@ Sync the trained checkpoint from the A100 to the 4090 server:
 
 .. code-block:: bash
 
-   rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/actor/model_state_dict/ \
+   # Preserve directory structure — rsync the entire global_step directory
+   rsync -avhzP <REMOTE_HOST>:<REMOTE_RLINF_PATH>/logs/<timestamp>/test_openpi/checkpoints/global_step_<N>/ \
        /path/to/RLinf/checkpoints/realworld_pnp/
+
+.. note::
+
+   Rsync from the ``global_step_<N>/`` level (not ``actor/model_state_dict/``) to
+   preserve the ``actor/model_state_dict/full_weights.pt`` directory structure. The
+   code searches for weights in this order: ``<dir>/full_weights.pt``,
+   ``<dir>/model_state_dict/full_weights.pt``,
+   ``<dir>/actor/model_state_dict/full_weights.pt``, ``<dir>/*.safetensors``.
 
 6.2 Deployment Config
 ~~~~~~~~~~~~~~~~~~~~~
@@ -664,12 +695,19 @@ Key configuration items:
 
 **Step 1 — NUC side:**
 
+.. warning::
+
+   **Critical:** As with data collection, you must source ROS and the virtual environment **before** ``ray start``. If the NUC has old Ray processes running, run ``ray stop`` first to clean up.
+
 .. code-block:: bash
 
-   # 1. Source the ROS environment
+   # 0. Clean up old Ray processes (if you previously ran data collection, etc.)
+   ray stop
+
+   # 1. Source the ROS environment (must be before ray start)
    source /opt/ros/noetic/setup.bash
 
-   # 2. Activate the RLinf virtual environment
+   # 2. Activate the RLinf virtual environment (must be before ray start)
    source ~/RLinf/.venv/bin/activate
 
    # 3. Join the Ray cluster as a worker
@@ -679,27 +717,28 @@ Key configuration items:
 
 .. code-block:: bash
 
+   # 0. Clean up old Ray processes (if you previously ran data collection, etc.)
+   ray stop
+
    # 1. Enter the RLinf directory
    cd /path/to/RLinf
 
-   # 2. Activate the virtual environment
+   # 2. Activate the virtual environment (must be before ray start)
    source .venv/bin/activate
 
-   # 3. Set environment variables
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
-
-   # 4. Start the Ray Head node
+   # 3. Start the Ray Head node
    RLINF_NODE_RANK=0 ray start --head --port=6379 --node-ip-address=<4090_SERVER_IP>
 
-   # 5. Wait for the NUC to join the cluster
+   # 4. Wait for the NUC to join the cluster
    ray status
 
-   # 6a. Evaluation only: load checkpoint and run eval
+   # 5a. Evaluation only: load checkpoint and run eval
+   #     The script automatically sets EMBODIED_PATH and PYTHONPATH; no manual export needed
    bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
        runner.only_eval=True \
        runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 
-   # 6b. Online RL: load SFT checkpoint and continue training (SAC)
+   # 5b. Online RL: load SFT checkpoint and continue training (SAC)
    bash examples/embodiment/run_realworld_async.sh realworld_pi0_zed_robotiq_async \
        runner.ckpt_path=/path/to/checkpoints/realworld_pnp/full_weights.pt
 
@@ -715,9 +754,9 @@ During evaluation or online training, manually label each episode's outcome:
    * - Key
      - Action
    * - **a**
-     - **Failure**: reward = −1, ends the current episode
-   * - **b**
      - **Neutral**: reward = 0, does **not** end the episode
+   * - **b**
+     - **Failure**: reward = −1, ends the current episode
    * - **c**
      - **Success**: reward = +1, ends the current episode
 
@@ -726,7 +765,7 @@ Typical workflow:
 1. After launch, the rollout worker performs local policy inference and the arm
    begins executing actions.
 2. Observe the arm's behavior.
-3. Press ``c`` on success or ``a`` on failure.
+3. Press ``c`` on success or ``b`` on failure.
 4. The system automatically advances to the next episode.
 
 ----
@@ -747,14 +786,13 @@ Appendix A: Keyboard Control Quick Reference
      - Failure, end episode
      - Success, end episode
    * - **Deployment / Online RL** (``run_realworld_async.sh``, single_stage)
-     - Failure (−1, end)
      - Neutral (0, no end)
+     - Failure (−1, end)
      - Success (+1, end)
 
 .. note::
 
-   - The key meanings are **different** between data collection and evaluation
-     — take care not to confuse them.
+   - During data collection ``b`` = failure; during evaluation ``b`` = failure — these are consistent. However, during data collection ``a`` = start recording, while during evaluation ``a`` = neutral (no-op). Be aware of this difference.
    - Keyboard controls apply **only** to ``collect_data_with_wrapper.sh``
      (wrapper version). The original ``collect_data.sh`` (Replay Buffer
      version) has no keyboard controls and records continuously.

@@ -4,6 +4,8 @@ export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/train_async.py"
 
+export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
 if [ -z "$1" ]; then
     CONFIG_NAME="realworld_sac_cnn"
 else
