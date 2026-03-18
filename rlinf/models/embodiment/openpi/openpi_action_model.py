@@ -422,7 +422,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
         **kwargs,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
@@ -454,7 +454,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Step 3: Extract actual actions for environment interaction
             real_actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
-            )["actions"].numpy()
+            )["actions"]
 
             # Return actual actions to environment, but forward_inputs stores noise.
             actions = real_actions
@@ -469,7 +469,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
             actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
-            )["actions"].numpy()
+            )["actions"]
             prev_logprobs = outputs["prev_logprobs"]
             prev_values = outputs["prev_values"]
             forward_action = None

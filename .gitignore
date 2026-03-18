@@ -22,3 +22,4 @@ PKG-INFO
 dataset/*
 checkpoints/*
 toolkits/gello_software/
+*.egg-info/
