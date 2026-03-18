@@ -266,11 +266,16 @@ class CollectEpisode(gym.Wrapper):
         for env_idx in range(self.num_envs):
             # Auto-reset envs store the pre-reset obs in info["final_observation"];
             # the current `obs` is the post-reset obs for the *next* episode.
+            # Similarly, info["final_info"] holds the pre-reset info; we record
+            # that instead of the post-reset info so that episode-level metadata
+            # (e.g. success flags) belongs to the completed episode.
             if isinstance(info, dict) and "final_observation" in info:
                 env_obs = self._slice_copy(info["final_observation"], env_idx)
                 self._pending_obs[env_idx] = self._slice_copy(obs, env_idx)
+                record_info = info.get("final_info", info)
             else:
                 env_obs = self._slice_copy(obs, env_idx)
+                record_info = info
 
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
@@ -278,10 +283,9 @@ class CollectEpisode(gym.Wrapper):
             buf["rewards"].append(self._slice_copy(reward, env_idx))
             buf["terminated"].append(self._slice_copy(terminated, env_idx))
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
-            buf["infos"].append(self._slice_copy(info, env_idx))
+            buf["infos"].append(self._slice_copy(record_info, env_idx))
 
-            # Update per-env success using already-sliced info (no extra copy).
-            self._update_success(env_idx, self._slice_data(info, env_idx))
+            self._update_success(env_idx, self._slice_data(record_info, env_idx))
 
     def _reset_env_buffer(self, env_idx: int) -> None:
         """Advance episode counter, clear the buffer, and carry over pending obs."""

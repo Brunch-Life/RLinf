@@ -58,14 +58,26 @@ class RealWorldCollectEpisode(CollectEpisode):
 
     @staticmethod
     def _inject_success(info: dict, success: bool) -> None:
-        """Inject a success flag into info so ``_get_episode_success`` picks it up."""
+        """Inject a success flag into info so ``_get_episode_success`` picks it up.
+
+        When the env auto-resets, the terminal info lives under
+        ``info["final_info"]``; we inject there too so that
+        ``_record_step`` (which records ``final_info``) carries the
+        operator's label.
+        """
         flag = torch.tensor(success)
-        if isinstance(info, dict):
-            ep = info.get("episode")
+        if not isinstance(info, dict):
+            return
+        targets = [info]
+        final_info = info.get("final_info")
+        if isinstance(final_info, dict):
+            targets.insert(0, final_info)
+        for target in targets:
+            ep = target.get("episode")
             if isinstance(ep, dict):
                 ep["success_once"] = flag
             else:
-                info["success"] = flag
+                target["success"] = flag
 
     def step(self, action, **kwargs):
         obs, reward, terminated, truncated, info = self.env.step(action, **kwargs)
