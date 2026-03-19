@@ -30,8 +30,8 @@ class GelloExpert:
     """
 
     def __init__(self, port: str):
-        from toolkits.gello_teleop.franka_fk import FrankaFK
-        from toolkits.gello_teleop.gello_teleop_agent import GelloTeleopAgent
+        from gello_teleop.franka_fk import FrankaFK
+        from gello_teleop.gello_teleop_agent import GelloTeleopAgent
 
         self.agent = GelloTeleopAgent(port=port)
         self.fk = FrankaFK()

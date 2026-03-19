@@ -88,6 +88,7 @@ The real-world setup requires the following hardware components:
 - **Computing Unit**: A computer with GPU support for training the CNN policy
 - **Robot Controller**: A small computer (does not require GPU) connected with the robotic arm in the same local network
 - **Space Mouse (Optional)**: For teleoperation data collection or human intervention during training.
+- **GELLO (Optional)**: A joint-level teleoperation device as an alternative to SpaceMouse, providing more intuitive control with native gripper support.
 
 .. warning::
 
@@ -353,6 +354,44 @@ During the data collection, you can manually intervene the robot using a space m
 The script will terminate after 20 episodes of data collection (can be configured with the `num_data_episodes` field in the configuration file), and the collected data will be stored in the ``logs/[running-timestamp]/data.pkl`` folder.
 
 5. After data collection, you can upload the collected data to the training/rollout nodes.
+
+Data Collection with GELLO
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+In addition to SpaceMouse, RLinf also supports using `GELLO <https://github.com/wuphilipp/gello_software>`_ for teleoperation data collection.
+GELLO is a joint-level teleoperation device that mirrors the kinematic structure of the Franka arm, providing more intuitive and precise control with full gripper support.
+
+**Prerequisites**
+
+- Install the ``gello`` and ``gello-teleop`` packages. See :doc:`franka_gello` for detailed installation instructions.
+- A GELLO device connected to the control node via USB serial.
+- Identify your GELLO serial port (e.g. ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``).
+  You can list available serial ports with:
+
+  .. code-block:: bash
+
+     ls /dev/serial/by-id/
+
+**Configuration**
+
+Use the config file ``examples/embodiment/config/realworld_collect_data_gello.yaml``.
+The key differences from the SpaceMouse config are:
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       use_spacemouse: False
+       use_gello: True
+       gello_port: "/dev/serial/by-id/usb-FTDI_..."  # Replace with your GELLO serial port
+
+**Running**
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data_gello
+
+The workflow is the same as SpaceMouse collection: use the GELLO device to demonstrate the task, and the script will automatically save successful episodes.
 
 Cluster Setup
 ~~~~~~~~~~~~~~~~~

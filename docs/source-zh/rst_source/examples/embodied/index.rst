@@ -307,6 +307,7 @@
    mlp
    dexbotic
    franka
+   franka_gello
    xsquare_turtle2
    sft_openpi
    sft_vlm
