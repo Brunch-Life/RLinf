@@ -235,6 +235,15 @@ class FrankaEnv(gym.Env):
     def num_steps(self):
         return self._num_steps
 
+    def get_tcp_pose(self) -> np.ndarray:
+        """Return the current TCP pose ``[x, y, z, qx, qy, qz, qw]``."""
+        self._franka_state = self._controller.get_state().wait()[0]
+        return self._franka_state.tcp_pose
+
+    def get_action_scale(self) -> np.ndarray:
+        """Return the action scale ``[pos_scale, ori_scale, gripper_scale]``."""
+        return self.config.action_scale
+
     def _calc_step_reward(
         self,
         observation: dict[str, np.ndarray | FrankaRobotState],

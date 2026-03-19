@@ -51,5 +51,5 @@ class VideoPlayer:
                 [v for k, v in img_array.items() if "full" not in k], axis=0
             )
 
-            cv2.imshow("RealSense Cameras", frame)
+            cv2.imshow("Cameras", frame)
             cv2.waitKey(1)
