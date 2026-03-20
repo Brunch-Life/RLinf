@@ -26,8 +26,6 @@ rest motions should still be implemented in dedicated task envs.
 from dataclasses import dataclass, field
 
 import numpy as np
-import time
-from scipy.spatial.transform import Rotation as R
 
 from ..franka_env import FrankaEnv, FrankaRobotConfig
 
@@ -149,39 +147,3 @@ class DataCollectSFTEnv(FrankaEnv):
     @property
     def task_description(self):
         return self.config.task_description
-
-    def go_to_rest(self, joint_reset=False):
-        """Move the arm back to the configured reset pose.
-
-        Compared with the base implementation, the generic collection env also
-        applies optional z-axis reset randomization so the full reset range can
-        be configured from YAML.
-        """
-        if joint_reset:
-            self._controller.reset_joint(self.config.joint_reset_qpos).wait()
-            time.sleep(0.5)
-
-        if self.config.enable_random_reset:
-            reset_pose = self._reset_pose.copy()
-            reset_pose[:2] += np.random.uniform(
-                -self.config.random_xy_range, self.config.random_xy_range, (2,)
-            )
-            reset_pose[2] += np.random.uniform(
-                -self.config.random_z_range_low, self.config.random_z_range_high
-            )
-            euler_random = self.config.target_ee_pose[3:].copy()
-            euler_random[-1] += np.random.uniform(
-                -self.config.random_rz_range, self.config.random_rz_range
-            )
-            reset_pose[3:] = R.from_euler("xyz", euler_random).as_quat()
-        else:
-            reset_pose = self._reset_pose.copy()
-
-        self._franka_state = self._controller.get_state().wait()[0]
-        cnt = 0
-        while not np.allclose(self._franka_state.tcp_pose[:3], reset_pose[:3], 0.02):
-            cnt += 1
-            self._interpolate_move(reset_pose)
-            self._franka_state = self._controller.get_state().wait()[0]
-            if cnt > 2:
-                break
