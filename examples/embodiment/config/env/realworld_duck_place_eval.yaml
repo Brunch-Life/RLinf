@@ -1,0 +1,46 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+main_image_key: wrist_1
+keyboard_reward_wrapper: single_stage
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DataCollectSFTEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "pick up the duck and put it into the container"
+  target_ee_pose: [0.53, -0.07, 0.2, 3.12, 0.19, 0.24]
+  reset_ee_pose: [0.53, -0.07, 0.3, 3.12, 0.19, 0.24]
+  use_dense_reward: false
+  max_num_steps: 300
+  step_frequency: 10.0
+  reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  binary_gripper_threshold: 0.5
+  success_hold_steps: 1
+  enable_random_reset: false
+  enable_gripper_penalty: false
+  # Match the teleoperation/data-collection action semantics used to create
+  # the Pi0 dataset. The policy outputs delta actions in that same scale.
+  action_scale: [1.0, 1.0, 1.0]
+  # Pin the workspace explicitly so deployment does not silently inherit
+  # different defaults from the generic collection env.
+  ee_pose_limit_min: [0.42, -0.19, 0.15, 2.80, -0.22, -0.50]
+  ee_pose_limit_max: [0.62, 0.18, 0.35, 3.19, 0.44, 0.67]
