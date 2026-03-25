@@ -33,9 +33,7 @@ def main():
         default="/dev/ttyUSB0",
         help="Serial port for the USB-RS485 adapter (default: /dev/ttyUSB0)",
     )
-    parser.add_argument(
-        "--baudrate", type=int, default=115200, help="Modbus baud rate"
-    )
+    parser.add_argument("--baudrate", type=int, default=115200, help="Modbus baud rate")
     args = parser.parse_args()
 
     from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
@@ -58,7 +56,9 @@ def main():
     print("[INFO] Closing gripper ...")
     gripper.close()
     time.sleep(2.0)
-    print(f"  position after close: {gripper.position:.4f} m, is_open={gripper.is_open}")
+    print(
+        f"  position after close: {gripper.position:.4f} m, is_open={gripper.is_open}"
+    )
 
     print("[INFO] Moving to mid position (128) ...")
     gripper.move(128)

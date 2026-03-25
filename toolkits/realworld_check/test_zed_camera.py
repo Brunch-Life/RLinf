@@ -39,9 +39,7 @@ def main():
     parser.add_argument(
         "--steps", type=int, default=20, help="Number of frames to capture"
     )
-    parser.add_argument(
-        "--fps", type=int, default=15, help="Requested camera FPS"
-    )
+    parser.add_argument("--fps", type=int, default=15, help="Requested camera FPS")
     args = parser.parse_args()
 
     import pyzed.sl as sl
