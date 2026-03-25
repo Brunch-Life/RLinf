@@ -91,11 +91,11 @@ def test_data_collect_sft_config_uses_safe_defaults():
     np.testing.assert_allclose(config.action_scale, np.array([0.02, 0.1, 1.0]))
     np.testing.assert_allclose(
         config.ee_pose_limit_min,
-        np.array([0.45, -0.05, 0.1, -3.15, -0.01, -np.pi / 6]),
+        np.array([0.45, -0.05, 0.1, -3.14 - np.pi / 6, -np.pi / 6, -np.pi / 6]),
     )
     np.testing.assert_allclose(
         config.ee_pose_limit_max,
-        np.array([0.55, 0.05, 0.2, -3.13, 0.01, np.pi / 6]),
+        np.array([0.55, 0.05, 0.2, -3.14 + np.pi / 6, np.pi / 6, np.pi / 6]),
     )
 
 
@@ -104,10 +104,11 @@ def test_data_collect_sft_config_computes_default_reset_and_workspace():
 
     config = DataCollectSFTConfig(
         target_ee_pose=[0.53, -0.07, 0.2, 3.12, 0.19, 0.24],
-        random_xy_range=0.05,
-        random_z_range_low=0.0,
-        random_z_range_high=0.1,
-        random_rz_range=np.pi / 6,
+        clip_x_range=0.05,
+        clip_y_range=0.05,
+        clip_z_range_low=0.0,
+        clip_z_range_high=0.1,
+        clip_rz_range=np.pi / 6,
     )
 
     assert np.array_equal(
@@ -122,8 +123,8 @@ def test_data_collect_sft_config_computes_default_reset_and_workspace():
                 0.48,
                 -0.12,
                 0.2,
-                3.11,
-                0.18,
+                3.12 - np.pi / 6,
+                0.19 - np.pi / 6,
                 0.24 - np.pi / 6,
             ]
         ),
@@ -135,8 +136,8 @@ def test_data_collect_sft_config_computes_default_reset_and_workspace():
                 0.58,
                 -0.02,
                 0.3,
-                3.13,
-                0.2,
+                3.12 + np.pi / 6,
+                0.19 + np.pi / 6,
                 0.24 + np.pi / 6,
             ]
         ),

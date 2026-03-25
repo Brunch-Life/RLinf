@@ -42,9 +42,12 @@ class DataCollectSFTConfig(FrankaRobotConfig):
         default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
     )
     random_xy_range: float = 0.05
-    random_z_range_low: float = 0.0
-    random_z_range_high: float = 0.1
     random_rz_range: float = np.pi / 6
+    clip_x_range: float = 0.05
+    clip_y_range: float = 0.05
+    clip_z_range_low: float = 0.0
+    clip_z_range_high: float = 0.1
+    clip_rz_range: float = np.pi / 6
     enable_random_reset: bool = False
     enable_gripper_penalty: bool = False
     action_scale: np.ndarray = field(
@@ -98,7 +101,7 @@ class DataCollectSFTConfig(FrankaRobotConfig):
         self.target_ee_pose = np.array(self.target_ee_pose)
         if np.allclose(np.asarray(self.reset_ee_pose), 0):
             self.reset_ee_pose = self.target_ee_pose + np.array(
-                [0.0, 0.0, self.random_z_range_high, 0.0, 0.0, 0.0]
+                [0.0, 0.0, self.clip_z_range_high, 0.0, 0.0, 0.0]
             )
         else:
             self.reset_ee_pose = np.array(self.reset_ee_pose)
@@ -112,27 +115,26 @@ class DataCollectSFTConfig(FrankaRobotConfig):
             self.ee_pose_limit_min = explicit_min
             self.ee_pose_limit_max = explicit_max
         else:
-            # Derive a conservative default workspace from the configured reset
-            # jitter ranges. Task-specific collection setups should override the
-            # limits explicitly in YAML when they need a larger or asymmetric box.
+            # Follow the existing Franka task style: clip_* defines the
+            # workspace/safety box, while random_* is reserved for random reset.
             self.ee_pose_limit_min = np.array(
                 [
-                    self.target_ee_pose[0] - self.random_xy_range,
-                    self.target_ee_pose[1] - self.random_xy_range,
-                    self.target_ee_pose[2] - self.random_z_range_low,
-                    self.target_ee_pose[3] - 0.01,
-                    self.target_ee_pose[4] - 0.01,
-                    self.target_ee_pose[5] - self.random_rz_range,
+                    self.target_ee_pose[0] - self.clip_x_range,
+                    self.target_ee_pose[1] - self.clip_y_range,
+                    self.target_ee_pose[2] - self.clip_z_range_low,
+                    self.target_ee_pose[3] - self.clip_rz_range,
+                    self.target_ee_pose[4] - self.clip_rz_range,
+                    self.target_ee_pose[5] - self.clip_rz_range,
                 ]
             )
             self.ee_pose_limit_max = np.array(
                 [
-                    self.target_ee_pose[0] + self.random_xy_range,
-                    self.target_ee_pose[1] + self.random_xy_range,
-                    self.target_ee_pose[2] + self.random_z_range_high,
-                    self.target_ee_pose[3] + 0.01,
-                    self.target_ee_pose[4] + 0.01,
-                    self.target_ee_pose[5] + self.random_rz_range,
+                    self.target_ee_pose[0] + self.clip_x_range,
+                    self.target_ee_pose[1] + self.clip_y_range,
+                    self.target_ee_pose[2] + self.clip_z_range_high,
+                    self.target_ee_pose[3] + self.clip_rz_range,
+                    self.target_ee_pose[4] + self.clip_rz_range,
+                    self.target_ee_pose[5] + self.clip_rz_range,
                 ]
             )
 

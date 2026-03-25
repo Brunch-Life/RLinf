@@ -196,7 +196,52 @@ def test_realworld_duck_place_eval_config_composes(monkeypatch: pytest.MonkeyPat
     with initialize_config_dir(
         version_base="1.1", config_dir=str(embodied_dir / "config")
     ):
-        cfg = compose(config_name="realworld_duck_place_pi0_zed_robotiq_eval")
+        cfg = compose(config_name="realworld_duck_place_eval")
+
+    hw_cfg = cfg.cluster.node_groups[0].hardware.configs[0]
+    assert hw_cfg.robot_ip == "ROBOT_IP"
+    assert hw_cfg.controller_node_rank == "CONTROLLER_NODE_RANK"
+    assert hw_cfg.camera_type == "CAMERA_TYPE"
+    assert hw_cfg.camera_serials == [
+        "CAMERA_SERIAL1",
+        "CAMERA_SERIAL2",
+        "CAMERA_SERIAL3",
+    ]
+    assert hw_cfg.gripper_type == "GRIPPER_TYPE"
+    assert hw_cfg.gripper_connection == "GRIPPER_CONNECTION"
+    assert (
+        cfg.cluster.node_groups[1].env_configs[0].python_interpreter_path
+        == "/path/to/python"
+    )
+    assert cfg.env.train.override_cfg.task_description == "TASK_DESCRIPTION"
+    assert cfg.env.eval.override_cfg.task_description == "TASK_DESCRIPTION"
+    np.testing.assert_allclose(
+        cfg.env.eval.override_cfg.target_ee_pose,
+        np.array([0.53, -0.07, 0.2, 3.12, 0.19, 0.24]),
+    )
+    np.testing.assert_allclose(
+        cfg.env.eval.override_cfg.action_scale,
+        np.array([1.0, 1.0, 1.0]),
+    )
+    assert cfg.rollout.model.model_path == "/path/to/model/openpi"
+
+    overrides = [
+        "cluster.node_groups[0].hardware.configs[0].robot_ip=172.16.0.2",
+        "cluster.node_groups[0].hardware.configs[0].controller_node_rank=1",
+        "cluster.node_groups[0].hardware.configs[0].camera_type=zed",
+        'cluster.node_groups[0].hardware.configs[0].camera_serials=["10848563","39651335","34303972"]',
+        "cluster.node_groups[0].hardware.configs[0].gripper_type=robotiq",
+        "cluster.node_groups[0].hardware.configs[0].gripper_connection=/dev/ttyUSB0",
+        "cluster.node_groups[1].env_configs[0].python_interpreter_path=/home/franka/cynws/RLinf/.venv/bin/python3",
+        "env.train.override_cfg.task_description=pick up the duck and put it into the container",
+        "env.eval.override_cfg.task_description=pick up the duck and put it into the container",
+        "rollout.model.model_path=/tmp/fake-openpi-checkpoint",
+    ]
+
+    with initialize_config_dir(
+        version_base="1.1", config_dir=str(embodied_dir / "config")
+    ):
+        cfg = compose(config_name="realworld_duck_place_eval", overrides=overrides)
 
     cfg.runner.only_eval = True
     cfg = validate_cfg(cfg)

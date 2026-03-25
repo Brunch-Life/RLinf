@@ -1,6 +1,4 @@
 defaults:
-  - env/realworld_duck_place_eval@env.train
-  - env/realworld_duck_place_eval@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -30,28 +28,25 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP
             node_rank: 0
-            controller_node_rank: 1
-            camera_type: "zed"
-            camera_serials:
-              - "10848563"
-              - "39651335"
-              - "34303972"
-            gripper_type: "robotiq"
-            gripper_connection: "/dev/ttyUSB0"
+            controller_node_rank: CONTROLLER_NODE_RANK
+            camera_type: CAMERA_TYPE
+            camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2", "CAMERA_SERIAL3"]
+            gripper_type: GRIPPER_TYPE
+            gripper_connection: GRIPPER_CONNECTION
     - label: nuc
       node_ranks: 1
       env_configs:
         - node_ranks: 1
-          python_interpreter_path: /home/franka/cynws/RLinf/.venv/bin/python3
+          python_interpreter_path: /path/to/python
 
 runner:
   task_type: embodied
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "realworld-duck-place-pi0-zed-robotiq-eval"
+    experiment_name: "realworld-duck-place-eval"
     logger_backends: ["tensorboard"]
   max_epochs: 1
   max_steps: 1
@@ -89,6 +84,45 @@ algorithm:
 env:
   group_name: "EnvGroup"
   enable_offload: False
+  train: &duck_place_env
+    env_type: realworld
+    total_num_envs: 1
+    auto_reset: False
+    ignore_terminations: False
+    reward_mode: raw
+    wrap_obs_mode: simple
+    seed: 0
+    group_size: 1
+    use_fixed_reset_state_ids: False
+    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 300
+    use_spacemouse: False
+    main_image_key: wrist_1
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      id: "DataCollectSFTEnv-v1"
+      num_envs: null
+    override_cfg:
+      is_dummy: false
+      task_description: TASK_DESCRIPTION
+      target_ee_pose: [0.53, -0.07, 0.2, 3.12, 0.19, 0.24]
+      reset_ee_pose: [0.53, -0.07, 0.3, 3.12, 0.19, 0.24]
+      use_dense_reward: false
+      max_num_steps: 300
+      step_frequency: 10.0
+      reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+      binary_gripper_threshold: 0.5
+      success_hold_steps: 1
+      enable_random_reset: false
+      enable_gripper_penalty: false
+      action_scale: [1.0, 1.0, 1.0]
+      ee_pose_limit_min: [0.42, -0.19, 0.15, 2.60, -0.33, -0.50]
+      ee_pose_limit_max: [0.62, 0.18, 0.35, 3.64, 0.71, 0.67]
+  eval:
+    <<: *duck_place_env
 
 rollout:
   group_name: "RolloutGroup"
@@ -100,7 +134,7 @@ rollout:
   collect_prev_infos: False
   sync_weight_nccl_max_ctas: 32
   model:
-    model_path: "/home/user/cyn_ws/RLinf/checkpoints/realworld_pnp/"
+    model_path: "/path/to/model/openpi"
     precision: ${actor.model.precision}
 
 actor:

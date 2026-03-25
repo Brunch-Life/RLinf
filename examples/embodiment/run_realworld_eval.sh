@@ -10,12 +10,13 @@ export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
 
-if [ $# -gt 0 ]; then
-    CONFIG_NAME=$1
-    shift
-else
-    CONFIG_NAME="realworld_duck_place_pi0_zed_robotiq_eval"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <config_name> [hydra_overrides...]" >&2
+    exit 1
 fi
+
+CONFIG_NAME=$1
+shift
 
 EXTRA_ARGS=("$@")
 
