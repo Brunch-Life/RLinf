@@ -15,6 +15,9 @@
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
+from rlinf.envs.realworld.franka.tasks.data_collect_sft_env import (
+    DataCollectSFTEnv as DataCollectSFTEnv,
+)
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
 )
@@ -33,3 +36,7 @@ register(
 )
 
 register(id="BottleEnv-v1", entry_point="rlinf.envs.realworld.franka.tasks:BottleEnv")
+register(
+    id="DataCollectSFTEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:DataCollectSFTEnv",
+)

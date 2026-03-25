@@ -1,0 +1,42 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+main_image_key: wrist_1
+
+video_cfg:
+  save_video: True
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DataCollectSFTEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "pick up the duck and put it into the container"
+  # Goal pose [x, y, z, rx, ry, rz] used by success checking and orientation clipping.
+  target_ee_pose: [0.53, -0.07, 0.2, 3.12, 0.19, 0.24]
+  # Reset pose [x, y, z, rx, ry, rz]. Keep it above the target for a safe approach.
+  reset_ee_pose: [0.53, -0.07, 0.3, 3.12, 0.19, 0.24]
+  max_num_steps: 300
+  # Position success tolerance [x, y, z, rx, ry, rz]. FrankaEnv currently checks xyz.
+  reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  # Disable extra gripper penalties for rollout-only evaluation.
+  enable_gripper_penalty: false
+  # [xyz delta scale, rpy delta scale, gripper scale]. Keep 1.0 for Pi0 realworld actions.
+  action_scale: [1.0, 1.0, 1.0]
+  # Workspace clip box [x, y, z, rx, ry, rz] used by FrankaEnv._clip_position_to_safety_box().
+  ee_pose_limit_min: [0.42, -0.19, 0.15, 2.60, -0.33, -0.50]
+  ee_pose_limit_max: [0.62, 0.18, 0.35, 3.64, 0.71, 0.67]
