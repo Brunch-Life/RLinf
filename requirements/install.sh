@@ -1028,7 +1028,7 @@ install_embodichain_env() {
 }
 
 install_dosw1_env() {
-    pip_install gymnasium numpy opencv-python-headless hydra-core "ray[default]>=2.47.0"
+    pip_install gymnasium numpy opencv-python-headless hydra-core "ray[default]>=2.47.0" imageio
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"
     pip install -e "$repo_root" --no-deps
