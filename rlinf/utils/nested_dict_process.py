@@ -15,7 +15,9 @@
 from typing import Any
 
 import torch
+from rlinf.utils.logging import get_logger
 
+logger = get_logger()
 
 def update_nested_cfg(base_cfg, override_cfg):
     for key, value in override_cfg.items():
@@ -90,8 +92,9 @@ def concat_batch(data1, data2):
                 continue
             batch[key] = torch.cat([data1[key], data2[key]], dim=0)
         elif isinstance(value, dict):
-            # XXX: added this for dealing with different keys in demo data.
+            # NOTE: added this for dealing with different keys in demo data.
             if key not in data2:
+                logger.warning(f"Key {key} not found in data2, value type: {type(value)}, skipping...")
                 continue
             batch[key] = concat_batch(data1[key], data2[key])
     return batch
