@@ -105,7 +105,9 @@ class RealWorldEnv(gym.Env):
                     "Please set env.eval.gello_port (or env.train.gello_port) to the "
                     "serial port of your GELLO device."
                 )
-            env = GelloIntervention(env, port=gello_port, gripper_enabled=gripper_enabled)
+            env = GelloIntervention(
+                env, port=gello_port, gripper_enabled=gripper_enabled
+            )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
