@@ -33,7 +33,7 @@ from pathlib import Path
 from rlinf.utils.logging import get_logger
 
 
-_DEFAULT_SOCKET_PATH = "/tmp/dosw1_keyboard.sock"
+_DEFAULT_SOCKET_PATH = "/tmp/rlinf_keyboard.sock"
 _log = get_logger()
 
 

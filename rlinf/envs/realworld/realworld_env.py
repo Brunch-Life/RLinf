@@ -84,7 +84,6 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
-        base_env = env.unwrapped
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
         use_spacemouse = self.cfg.get("use_spacemouse", True)
@@ -114,14 +113,14 @@ class RealWorldEnv(gym.Env):
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
-        state_space = getattr(base_env.observation_space, "spaces", {}).get("state")
+        state_space = getattr(env.observation_space, "spaces", {}).get("state")
         has_tcp_pose = state_space is not None and "tcp_pose" in getattr(
             state_space, "spaces", {}
         )
         use_relative_frame = (
             has_tcp_pose
             and self.cfg.get("use_relative_frame", True)
-            and getattr(base_env, "supports_relative_frame", True)
+            and getattr(env, "supports_relative_frame", True)
         )
         if use_relative_frame:
             env = RelativeFrame(env)
