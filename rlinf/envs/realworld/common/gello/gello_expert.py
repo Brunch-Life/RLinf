@@ -37,6 +37,7 @@ class GelloExpert:
         self.fk = FrankaFK()
 
         self.state_lock = threading.Lock()
+        self._ready = False
         self.latest_data = {
             "target_pos": np.zeros(3),
             "target_quat": np.zeros(4),
@@ -57,8 +58,14 @@ class GelloExpert:
                 self.latest_data["target_pos"] = target_pos
                 self.latest_data["target_quat"] = target_quat
                 self.latest_data["gripper"] = gello_gripper
+                self._ready = True
 
             time.sleep(0.001)
+
+    @property
+    def ready(self) -> bool:
+        """Whether at least one GELLO frame has been received."""
+        return self._ready
 
     def get_action(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return ``(target_pos, target_quat, gripper)`` from the latest GELLO reading."""

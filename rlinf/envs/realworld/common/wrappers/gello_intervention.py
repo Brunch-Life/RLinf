@@ -40,6 +40,9 @@ class GelloIntervention(gym.ActionWrapper):
         self.last_intervene = 0
 
     def action(self, action: np.ndarray) -> np.ndarray:
+        if not self.expert.ready:
+            return action, False
+
         target_pos, target_quat, target_gripper = self.expert.get_action()
         r_target = R.from_quat(target_quat.copy())
         tcp_pose = self.get_wrapper_attr("get_tcp_pose")()
@@ -60,14 +63,16 @@ class GelloIntervention(gym.ActionWrapper):
         expert_a = np.concatenate((delta_pos, delta_euler), axis=0)
         expert_a = np.clip(expert_a, -1.0, 1.0)
 
-        if np.linalg.norm(expert_a) > 0.001:
-            self.last_intervene = time.time()
-
+        gripper_active = False
         if self.gripper_enabled:
             target_gripper = target_gripper / action_scale[2]
             target_gripper = -(2 * target_gripper - 1.0)
             target_gripper = np.clip(target_gripper, -1.0, 1.0)
+            gripper_active = np.abs(target_gripper).item() > 0.5
             expert_a = np.concatenate((expert_a, target_gripper), axis=0)
+
+        if np.linalg.norm(expert_a[:6]) > 0.001 or gripper_active:
+            self.last_intervene = time.time()
 
         if time.time() - self.last_intervene < 0.5:
             return expert_a, True
