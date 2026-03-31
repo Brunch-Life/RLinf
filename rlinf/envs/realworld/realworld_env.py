@@ -93,8 +93,10 @@ class RealWorldEnv(gym.Env):
                 "use_spacemouse and use_gello are mutually exclusive. "
                 "Please set only one of them to True."
             )
+        no_gripper = self.cfg.get("no_gripper", True)
+        gripper_enabled = not no_gripper
         if not env.config.is_dummy and use_spacemouse:
-            env = SpacemouseIntervention(env)
+            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
         if not env.config.is_dummy and use_gello:
             gello_port = self.cfg.get("gello_port", None)
             if gello_port is None:
@@ -103,7 +105,7 @@ class RealWorldEnv(gym.Env):
                     "Please set env.eval.gello_port (or env.train.gello_port) to the "
                     "serial port of your GELLO device."
                 )
-            env = GelloIntervention(env, port=gello_port)
+            env = GelloIntervention(env, port=gello_port, gripper_enabled=gripper_enabled)
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)

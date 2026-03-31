@@ -28,15 +28,14 @@ class GelloIntervention(gym.ActionWrapper):
         env: The wrapped environment.
         port: Serial port of the GELLO device.  Must be provided
             (typically from the ``gello_port`` field in the env YAML config).
+        gripper_enabled: Whether the gripper channel is present in the action
+            space.  Determined by the ``no_gripper`` env config field.
     """
 
-    def __init__(self, env, port: str):
+    def __init__(self, env, port: str, gripper_enabled: bool = True):
         super().__init__(env)
 
-        self.gripper_enabled = True
-        if self.action_space.shape == (6,):
-            self.gripper_enabled = False
-
+        self.gripper_enabled = gripper_enabled
         self.expert = GelloExpert(port=port)
         self.last_intervene = 0
 
@@ -50,15 +49,15 @@ class GelloIntervention(gym.ActionWrapper):
         r_tcp = R.from_quat(tcp_quat.copy())
 
         r_delta = r_target * r_tcp.inv()
-        delta_rotvec = r_delta.as_rotvec()
+        delta_euler = r_delta.as_euler("xyz")
 
         delta_pos = target_pos - tcp_pos
 
         action_scale = self.get_wrapper_attr("get_action_scale")()
         delta_pos = delta_pos / action_scale[0]
-        delta_rotvec = delta_rotvec / action_scale[1]
+        delta_euler = delta_euler / action_scale[1]
 
-        expert_a = np.concatenate((delta_pos, delta_rotvec), axis=0)
+        expert_a = np.concatenate((delta_pos, delta_euler), axis=0)
         expert_a = np.clip(expert_a, -1.0, 1.0)
 
         if np.linalg.norm(expert_a) > 0.001:
