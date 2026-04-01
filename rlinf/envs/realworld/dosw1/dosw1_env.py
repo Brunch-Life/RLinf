@@ -189,11 +189,12 @@ class DOSW1Env(gym.Env):
                 "Move arms freely via leader arm. Press 's' to start episode."
             )
             self._free_teleop_loop()
-
-        if not self.config.enable_human_in_loop:
+            self.snapshot_teleop_init()
+            self.control_mode = ControlMode.TELEOP
+        else:
             self._go_to_home()
+            self.control_mode = ControlMode.MODEL
         self._num_steps = 0
-        self.control_mode = ControlMode.MODEL
         self.manual_done = False
         self.robot_state = self.sdk.get_state()
 
@@ -216,7 +217,10 @@ class DOSW1Env(gym.Env):
 
         if truncated_by_free:
             obs = self._get_observation()
-            return obs, 0.0, False, True, {"control_mode": self.control_mode.value}
+            return obs, 0.0, False, True, {
+                "control_mode": self.control_mode.value,
+                "manual_done": self.manual_done,
+            }
 
         prev_left_gripper = self.robot_state.left_gripper
         prev_right_gripper = self.robot_state.right_gripper
@@ -496,7 +500,7 @@ class DOSW1Env(gym.Env):
         if key == "d":
             self._logger.info("[DOSW1Env] Manual done (episode saved)")
             self.manual_done = True
-            return False
+            return True
 
         if key == "p" and self.control_mode in (ControlMode.MODEL, ControlMode.TELEOP):
             self._logger.info("[DOSW1Env] %s -> PAUSE", self.control_mode.name)
