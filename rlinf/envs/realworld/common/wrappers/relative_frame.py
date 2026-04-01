@@ -132,11 +132,22 @@ class RelativeFrame(gym.Wrapper):
             obs["state"]["tcp_vel"] = np.concatenate(out_vel_parts)
         return obs
 
+    def _right_arm_slice(self, action: np.ndarray) -> slice:
+        """Return the slice for the right arm's 6D motion in *action*.
+
+        With gripper channels present the layout is ``[left_6, grip, right_6, grip]``
+        (len 14, right starts at 7).  Without grippers it is ``[left_6, right_6]``
+        (len 12, right starts at 6).
+        """
+        start = 7 if len(action) == 14 else 6
+        return slice(start, start + 6)
+
     def transform_action(self, action: np.ndarray):
         action = np.array(action)
         if self._dual:
             action[:6] = self.adjoint_matrices[0] @ action[:6]
-            action[7:13] = self.adjoint_matrices[1] @ action[7:13]
+            rs = self._right_arm_slice(action)
+            action[rs] = self.adjoint_matrices[1] @ action[rs]
         else:
             action[:6] = self.adjoint_matrix @ action[:6]
         return action
@@ -145,7 +156,8 @@ class RelativeFrame(gym.Wrapper):
         action = np.array(action)
         if self._dual:
             action[:6] = np.linalg.inv(self.adjoint_matrices[0]) @ action[:6]
-            action[7:13] = np.linalg.inv(self.adjoint_matrices[1]) @ action[7:13]
+            rs = self._right_arm_slice(action)
+            action[rs] = np.linalg.inv(self.adjoint_matrices[1]) @ action[rs]
         else:
             action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
         return action
@@ -155,13 +167,20 @@ class RelativeTargetFrame(RelativeFrame):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
 
-        # Update adjoint matrix
-        self.adjoint_matrix = construct_adjoint_matrix(self.env.target_ee_pose)
-        if self.include_relative_pose:
-            # Update transformation matrix from the reset pose's relative frame to base frame
-            self.T_b_r_inv = np.linalg.inv(
-                construct_homogeneous_matrix(self.env.target_ee_pose)
-            )
+        target = self.env.target_ee_pose
+        if self._dual:
+            for arm in range(2):
+                pose7 = target[arm * 7 : arm * 7 + 7]
+                self.adjoint_matrices[arm] = construct_adjoint_matrix(pose7)
+                if self.include_relative_pose:
+                    self.T_b_r_invs[arm] = np.linalg.inv(
+                        construct_homogeneous_matrix(pose7)
+                    )
+        else:
+            self.adjoint_matrix = construct_adjoint_matrix(target)
+            if self.include_relative_pose:
+                self.T_b_r_inv = np.linalg.inv(
+                    construct_homogeneous_matrix(target)
+                )
 
-        # Transform observation to spatial frame
         return self.transform_observation(obs), info

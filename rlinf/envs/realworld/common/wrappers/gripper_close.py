@@ -51,7 +51,7 @@ class GripperCloseEnv(gym.ActionWrapper):
         if "intervene_action" in info:
             ia = info["intervene_action"]
             if self._dual:
-                info["intervene_action"] = np.concatenate([ia[:6], ia[7:13]])
+                info["intervene_action"] = np.concatenate([ia[:6], ia[7:13]]) if len(ia) == 14 else ia
             else:
                 info["intervene_action"] = ia[:6]
         return obs, rew, done, truncated, info

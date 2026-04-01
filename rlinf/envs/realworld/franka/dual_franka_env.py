@@ -631,7 +631,7 @@ class DualFrankaEnv(gym.Env):
                 "gripper_position": np.array([
                     self._left_state.gripper_position,
                     self._right_state.gripper_position,
-                ]),
+                ], dtype=np.float32),
                 "tcp_force": np.concatenate([
                     self._left_state.tcp_force, self._right_state.tcp_force,
                 ]),
