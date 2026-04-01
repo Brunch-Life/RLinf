@@ -236,7 +236,9 @@ class DOSW1Env(gym.Env):
         terminated = False
         truncated = self._num_steps >= self.config.max_num_steps
 
-        info: dict = {"control_mode": self.control_mode.value}
+        info: dict = {"control_mode": self.control_mode.value, "manual_done": self.manual_done}
+        if self.control_mode == ControlMode.TELEOP:
+            info["intervene_action"] = actual_action
         return obs, reward, terminated, truncated, info
 
     def close(self) -> None:

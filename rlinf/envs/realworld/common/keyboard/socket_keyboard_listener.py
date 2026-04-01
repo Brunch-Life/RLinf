@@ -33,14 +33,13 @@ from pathlib import Path
 from rlinf.utils.logging import get_logger
 
 
-_DEFAULT_SOCKET_PATH = "/tmp/rlinf_keyboard.sock"
 _log = get_logger()
 
 
 class SocketKeyboardListener:
     """Drop-in replacement for ``KeyboardListener`` that reads from a socket."""
 
-    def __init__(self, socket_path: str = _DEFAULT_SOCKET_PATH) -> None:
+    def __init__(self, socket_path: str) -> None:
         self.socket_path = socket_path
         self._lock = threading.Lock()
         self._latest_key: str | None = None
