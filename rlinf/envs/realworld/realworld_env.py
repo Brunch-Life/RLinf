@@ -27,6 +27,8 @@ from filelock import FileLock
 from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
+    DualGelloIntervention,
+    DualSpacemouseIntervention,
     GelloIntervention,
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
@@ -88,15 +90,22 @@ class RealWorldEnv(gym.Env):
             env = GripperCloseEnv(env)
         use_spacemouse = self.cfg.get("use_spacemouse", True)
         use_gello = self.cfg.get("use_gello", False)
-        if use_spacemouse and use_gello:
+        use_dual_spacemouse = self.cfg.get("use_dual_spacemouse", False)
+        use_dual_gello = self.cfg.get("use_dual_gello", False)
+
+        teleop_flags = [use_spacemouse, use_gello, use_dual_spacemouse, use_dual_gello]
+        if sum(bool(f) for f in teleop_flags) > 1:
             raise ValueError(
-                "use_spacemouse and use_gello are mutually exclusive. "
-                "Please set only one of them to True."
+                "Only one teleop mode can be active at a time. "
+                "Set exactly one of use_spacemouse, use_gello, "
+                "use_dual_spacemouse, use_dual_gello to True."
             )
         no_gripper = self.cfg.get("no_gripper", True)
         gripper_enabled = not no_gripper
         if not env.config.is_dummy and use_spacemouse:
             env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
+        if not env.config.is_dummy and use_dual_spacemouse:
+            env = DualSpacemouseIntervention(env, gripper_enabled=gripper_enabled)
         if not env.config.is_dummy and use_gello:
             gello_port = self.cfg.get("gello_port", None)
             if gello_port is None:
@@ -107,6 +116,20 @@ class RealWorldEnv(gym.Env):
                 )
             env = GelloIntervention(
                 env, port=gello_port, gripper_enabled=gripper_enabled
+            )
+        if not env.config.is_dummy and use_dual_gello:
+            left_port = self.cfg.get("left_gello_port", None)
+            right_port = self.cfg.get("right_gello_port", None)
+            if left_port is None or right_port is None:
+                raise ValueError(
+                    "use_dual_gello is True but left_gello_port / right_gello_port "
+                    "is not set. Please set both in the env config."
+                )
+            env = DualGelloIntervention(
+                env,
+                left_port=left_port,
+                right_port=right_port,
+                gripper_enabled=gripper_enabled,
             )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .dual_gello_intervention import DualGelloIntervention
+from .dual_spacemouse_intervention import DualSpacemouseIntervention
 from .euler_obs import Quat2EulerWrapper
 from .gello_intervention import GelloIntervention
 from .gripper_close import GripperCloseEnv
@@ -23,6 +25,8 @@ from .reward_done_wrapper import (
 from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
+    "DualGelloIntervention",
+    "DualSpacemouseIntervention",
     "GelloIntervention",
     "GripperCloseEnv",
     "KeyboardRewardDoneMultiStageWrapper",

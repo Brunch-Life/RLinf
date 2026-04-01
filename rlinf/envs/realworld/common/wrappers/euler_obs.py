@@ -19,21 +19,30 @@ from scipy.spatial.transform import Rotation as R
 
 
 class Quat2EulerWrapper(gym.ObservationWrapper):
-    """
-    Convert the quaternion representation of the tcp pose to euler angles
+    """Convert quaternion TCP pose to euler angles.
+
+    Supports single-arm ``(7,)`` -> ``(6,)`` and dual-arm ``(14,)`` -> ``(12,)``.
     """
 
     def __init__(self, env: Env):
         super().__init__(env)
-        # from xyz + quat to xyz + euler
+        pose_shape = self.observation_space["state"]["tcp_pose"].shape[0]
+        self._dual = pose_shape == 14
+        out_dim = 12 if self._dual else 6
         self.observation_space["state"]["tcp_pose"] = spaces.Box(
-            -np.inf, np.inf, shape=(6,)
+            -np.inf, np.inf, shape=(out_dim,)
         )
 
     def observation(self, observation):
-        # convert tcp pose from quat to euler
         tcp_pose = observation["state"]["tcp_pose"]
-        observation["state"]["tcp_pose"] = np.concatenate(
-            (tcp_pose[:3], R.from_quat(tcp_pose[3:].copy()).as_euler("xyz"))
-        )
+        if self._dual:
+            left = tcp_pose[:7]
+            right = tcp_pose[7:]
+            left_euler = np.concatenate([left[:3], R.from_quat(left[3:].copy()).as_euler("xyz")])
+            right_euler = np.concatenate([right[:3], R.from_quat(right[3:].copy()).as_euler("xyz")])
+            observation["state"]["tcp_pose"] = np.concatenate([left_euler, right_euler])
+        else:
+            observation["state"]["tcp_pose"] = np.concatenate(
+                (tcp_pose[:3], R.from_quat(tcp_pose[3:].copy()).as_euler("xyz"))
+            )
         return observation
