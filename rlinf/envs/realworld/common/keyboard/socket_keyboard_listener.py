@@ -101,20 +101,24 @@ class SocketKeyboardListener:
                 buf += data
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    self._process_line(line.decode("utf-8", errors="ignore").strip())
+                    self._process_line(line.decode("utf-8", errors="ignore").strip(), conn)
         except OSError:
             pass
         finally:
             _log.info("[SocketKeyboard] Relay client disconnected")
             conn.close()
 
-    def _process_line(self, line: str) -> None:
+    def _process_line(self, line: str, conn: socket.socket) -> None:
         if line.startswith("press:"):
             key = line[6:]
             with self._lock:
                 self._latest_key = key if key else None
             if key:
                 _log.info("[SocketKeyboard] Key pressed: %s", key)
+            try:
+                conn.sendall(b"ACK\n")
+            except OSError:
+                pass
         elif line == "release":
             with self._lock:
                 self._latest_key = None
