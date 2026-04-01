@@ -26,7 +26,7 @@ import cv2
 import gymnasium as gym
 import numpy as np
 
-from rlinf.envs.realworld.common.camera import Camera, CameraInfo
+from rlinf.envs.realworld.common.camera import CameraInfo, create_camera
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import WorkerInfo
 from rlinf.utils.logging import get_logger
@@ -604,7 +604,7 @@ class DOSW1Env(gym.Env):
         names = self.config.camera_names or []
         for index, serial in enumerate(serials):
             name = names[index] if index < len(names) else f"cam_{index}"
-            camera = Camera(CameraInfo(name=name, serial_number=serial))
+            camera = create_camera(CameraInfo(name=name, serial_number=serial))
             camera.open()
             self._cameras.append(camera)
 
