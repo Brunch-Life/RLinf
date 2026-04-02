@@ -21,13 +21,13 @@ cluster:
       hardware:
         type: DualFranka
         configs:
-          - left_robot_ip: LEFT_FRANKA_IP        # Replace with your left Franka IP
-            right_robot_ip: RIGHT_FRANKA_IP      # Replace with your right Franka IP
+          - left_robot_ip: 172.16.0.2        # Replace with your left Franka IP
+            right_robot_ip: 172.16.0.2      # Replace with your right Franka IP
             left_camera_serials:
-              - "ZED_SERIAL_LEFT"                 # Replace with your left ZED serial
+              - "141722079447"                  # Replace with your left RealSense serial
             right_camera_serials:
-              - "ZED_SERIAL_RIGHT"                # Replace with your right ZED serial
-            camera_type: zed
+              - "141722078696"                 # Replace with your right RealSense serial
+            camera_type: realsense
             left_controller_node_rank: 0          # Left arm controller on Machine A
             right_controller_node_rank: 1         # Right arm controller on Machine B
             node_rank: 0
