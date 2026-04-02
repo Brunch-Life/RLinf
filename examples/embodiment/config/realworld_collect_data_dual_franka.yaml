@@ -30,8 +30,8 @@ cluster:
             camera_type: realsense
             left_gripper_type: robotiq
             right_gripper_type: robotiq
-            left_gripper_connection: "/dev/ttyUSB0"    # Replace with your left Robotiq serial port
-            right_gripper_connection: "/dev/ttyUSB0"   # Replace with your right Robotiq serial port
+            left_gripper_connection: "/dev/ttyUSB0"    # RS-485 on Node 0
+            right_gripper_connection: "/dev/ttyUSB1"   # RS-485 on Node 1
             left_controller_node_rank: 0          # Left arm controller on Machine A
             right_controller_node_rank: 1         # Right arm controller on Machine B
             node_rank: 0
