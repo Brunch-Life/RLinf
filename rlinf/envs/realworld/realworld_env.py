@@ -153,19 +153,17 @@ class RealWorldEnv(gym.Env):
 
     @staticmethod
     def _proc_uses_port(proc: "psutil.Process", port: int) -> bool:
-        """Check whether *proc* is listening on or connected to *port*."""
+        """Check whether *proc* was started on *port* (cmdline-based, no root needed)."""
         try:
-            for conn in proc.net_connections(kind="inet"):
-                if conn.laddr and conn.laddr.port == port:
-                    return True
             cmdline = proc.cmdline()
-            if "-p" in cmdline:
-                idx = cmdline.index("-p")
-                if idx + 1 < len(cmdline) and cmdline[idx + 1] == str(port):
-                    return True
         except (psutil.AccessDenied, psutil.NoSuchProcess):
-            raise ValueError(f"Failed to check if process {proc.info['name']} is using port {port}")
-        return False
+            return False
+        if "-p" in cmdline:
+            idx = cmdline.index("-p")
+            if idx + 1 < len(cmdline):
+                return cmdline[idx + 1] == str(port)
+            return False
+        return port == 11311
 
     @staticmethod
     def realworld_setup():
