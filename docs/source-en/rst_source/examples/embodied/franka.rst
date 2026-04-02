@@ -463,6 +463,48 @@ Similarly, you first need to fill your robot's IP address to the field ``robot_i
 Then, change the ``model_path`` field in both ``rollout`` and ``actor`` sections to the path where you have downloaded the pretrained model.
 Change the ``data.path`` field to the path where you have uploaded the collected demo data.
 
+Headless Keyboard Reward Wrapper (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you want to label rewards from a physical keyboard by human, enable the keyboard wrapper in the real-world env config.
+
+For example, in ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async.yaml``:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       keyboard_reward_wrapper: single_stage  # or multi_stage
+
+The available modes are:
+
+- ``single_stage``: press ``a`` for failure reward, ``b`` for neutral reward, and ``c`` for success reward.
+- ``multi_stage``: press ``a`` / ``b`` / ``c`` to switch among reward stages, and press ``q`` to emit a negative reward.
+
+The keyboard listener reads Linux input devices directly, so you should export ``RLINF_KEYBOARD_DEVICE`` before starting ray on the controller node.
+
+First, list the available keyboard devices:
+
+.. code-block:: bash
+
+   ls -l /dev/input/by-id/*-event-kbd
+
+This command shows the stable keyboard name and the corresponding ``eventX`` device. For example, ``usb-Logitech_USB_Keyboard-event-kbd -> ../event20`` means the keyboard device is ``/dev/input/event20``.
+
+Before starting training, grant access to that event device:
+
+.. code-block:: bash
+
+   chmod 666 /dev/input/event20
+
+Then export the event device in your setup script or shell before ``ray start``:
+
+.. code-block:: bash
+
+   export RLINF_KEYBOARD_DEVICE=/dev/input/event20
+
+If you are using ``ray_utils/realworld/setup_before_ray.sh``, add the export there on the controller node so that all ray-launched env processes inherit it.
+
 Testing the Setup (Optional)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
