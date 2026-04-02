@@ -39,7 +39,27 @@ override_cfg:
   reward_threshold:
     - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
     - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  step_frequency: 30.0
   action_scale: [1.0, 1.0, 1.0]
+  compliance_param:
+    translational_stiffness: 2000
+    translational_damping: 89
+    rotational_stiffness: 150
+    rotational_damping: 7
+    translational_Ki: 0
+    translational_clip_x: 0.006
+    translational_clip_y: 0.006
+    translational_clip_z: 0.008
+    translational_clip_neg_x: 0.006
+    translational_clip_neg_y: 0.006
+    translational_clip_neg_z: 0.008
+    rotational_clip_x: 0.02
+    rotational_clip_y: 0.02
+    rotational_clip_z: 0.02
+    rotational_clip_neg_x: 0.02
+    rotational_clip_neg_y: 0.02
+    rotational_clip_neg_z: 0.02
+    rotational_Ki: 0
   ee_pose_limit_min:
     - [0.3, -0.4, 0.2, -3.64, -0.5, -0.5]
     - [0.3, -0.0, 0.2, -3.64, -0.5, -0.5]

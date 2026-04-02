@@ -125,11 +125,18 @@ class RealWorldEnv(gym.Env):
                     "use_dual_gello is True but left_gello_port / right_gello_port "
                     "is not set. Please set both in the env config."
                 )
+            use_joint_ctrl = self.cfg.get("gello_joint_control", True)
             env = DualGelloIntervention(
                 env,
                 left_port=left_port,
                 right_port=right_port,
                 gripper_enabled=gripper_enabled,
+                use_joint_control=use_joint_ctrl,
+                left_zmq_host=str(self.cfg.get("left_zmq_host", "127.0.0.1")),
+                right_zmq_host=str(self.cfg.get("right_zmq_host", "127.0.0.1")),
+                left_zmq_port=int(self.cfg.get("left_zmq_port", 5555)),
+                right_zmq_port=int(self.cfg.get("right_zmq_port", 5556)),
+                joint_control_hz=float(self.cfg.get("gello_joint_control_hz", 100.0)),
             )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
