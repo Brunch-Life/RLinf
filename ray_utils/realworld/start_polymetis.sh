@@ -37,13 +37,20 @@ if [ -z "$CONDA_PATH" ]; then
         echo "ERROR: conda not found. Set CONDA_PATH manually."; exit 1
     fi
 fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 if [ -z "$GELLO_SOFTWARE_PATH" ]; then
     if [ -d "$HOME/gello_software/experiments" ]; then
         GELLO_SOFTWARE_PATH="$HOME/gello_software"
     elif [ -d "/home/ubuntu/gello_software/experiments" ]; then
         GELLO_SOFTWARE_PATH="/home/ubuntu/gello_software"
+    elif [ -d "$REPO_ROOT/.venv/gello_software/experiments" ]; then
+        GELLO_SOFTWARE_PATH="$REPO_ROOT/.venv/gello_software"
     else
-        echo "ERROR: gello_software not found. Set GELLO_SOFTWARE_PATH manually."; exit 1
+        echo "ERROR: gello_software not found. Install it first:"
+        echo "  git clone https://github.com/wuphilipp/gello_software.git ~/gello_software"
+        echo "  Or set GELLO_SOFTWARE_PATH manually."
+        exit 1
     fi
 fi
 LOG_DIR="/tmp/polymetis_logs"
