@@ -187,7 +187,7 @@ class RealWorldEnv(gym.Env):
         with node_lock:
             ros_port = RealWorldEnv._get_ros_port()
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
-            for proc in psutil.process_iter(["pid", "name", "connections"]):
+            for proc in psutil.process_iter(["pid", "name"]):
                 if proc.info["name"] not in ros_proc_names:
                     continue
                 if not RealWorldEnv._proc_uses_port(proc, ros_port):
