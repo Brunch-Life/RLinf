@@ -143,6 +143,31 @@ class RealWorldEnv(gym.Env):
         return env
 
     @staticmethod
+    def _get_ros_port() -> int:
+        """Return the ROS master port from ``ROS_MASTER_URI`` (default 11311)."""
+        uri = os.environ.get("ROS_MASTER_URI", "http://localhost:11311")
+        try:
+            return int(uri.rsplit(":", 1)[-1].rstrip("/"))
+        except (ValueError, IndexError):
+            raise ValueError(f"Failed to parse ROS master port from ROS_MASTER_URI: {uri}")
+
+    @staticmethod
+    def _proc_uses_port(proc: "psutil.Process", port: int) -> bool:
+        """Check whether *proc* is listening on or connected to *port*."""
+        try:
+            for conn in proc.net_connections(kind="inet"):
+                if conn.laddr and conn.laddr.port == port:
+                    return True
+            cmdline = proc.cmdline()
+            if "-p" in cmdline:
+                idx = cmdline.index("-p")
+                if idx + 1 < len(cmdline) and cmdline[idx + 1] == str(port):
+                    return True
+        except (psutil.AccessDenied, psutil.NoSuchProcess):
+            raise ValueError(f"Failed to check if process {proc.info['name']} is using port {port}")
+        return False
+
+    @staticmethod
     def realworld_setup():
         """Setup RealWorld environment upon env class import.
 
@@ -160,11 +185,18 @@ class RealWorldEnv(gym.Env):
         node_lock = FileLock(node_lock_file)
 
         with node_lock:
+            ros_port = RealWorldEnv._get_ros_port()
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
-            for proc in psutil.process_iter():
-                if proc.name() in ros_proc_names:
+            for proc in psutil.process_iter(["pid", "name", "connections"]):
+                if proc.info["name"] not in ros_proc_names:
+                    continue
+                if not RealWorldEnv._proc_uses_port(proc, ros_port):
+                    continue
+                try:
                     proc.kill()
                     time.sleep(0.5)
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
 
     def _init_env(self):
         env_fns = [
