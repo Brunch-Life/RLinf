@@ -27,8 +27,25 @@ ROBOT_IP="${ROBOT_IP:-172.16.0.2}"
 ZMQ_PORT="${ZMQ_PORT:-5555}"
 GRIPPER_TYPE="${GRIPPER_TYPE:-robotiq_2f}"
 CONDA_ENV="${CONDA_ENV:-polymetis-local}"
-CONDA_PATH="${CONDA_PATH:-$HOME/miniconda3}"
-GELLO_SOFTWARE_PATH="${GELLO_SOFTWARE_PATH:-$HOME/gello_software}"
+# Auto-detect conda: prefer current user, fall back to /home/ubuntu
+if [ -z "$CONDA_PATH" ]; then
+    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_PATH="$HOME/miniconda3"
+    elif [ -f "/home/ubuntu/miniconda3/etc/profile.d/conda.sh" ]; then
+        CONDA_PATH="/home/ubuntu/miniconda3"
+    else
+        echo "ERROR: conda not found. Set CONDA_PATH manually."; exit 1
+    fi
+fi
+if [ -z "$GELLO_SOFTWARE_PATH" ]; then
+    if [ -d "$HOME/gello_software/experiments" ]; then
+        GELLO_SOFTWARE_PATH="$HOME/gello_software"
+    elif [ -d "/home/ubuntu/gello_software/experiments" ]; then
+        GELLO_SOFTWARE_PATH="/home/ubuntu/gello_software"
+    else
+        echo "ERROR: gello_software not found. Set GELLO_SOFTWARE_PATH manually."; exit 1
+    fi
+fi
 LOG_DIR="/tmp/polymetis_logs"
 STOP_ONLY=0
 
@@ -63,17 +80,7 @@ if [ "$STOP_ONLY" -eq 1 ]; then
 fi
 
 mkdir -p "$LOG_DIR"
-CONDA_SH="$CONDA_PATH/etc/profile.d/conda.sh"
-if [ ! -f "$CONDA_SH" ]; then
-    echo "ERROR: conda not found at $CONDA_PATH"
-    exit 1
-fi
-if [ ! -d "$GELLO_SOFTWARE_PATH/experiments" ]; then
-    echo "ERROR: gello_software not found at $GELLO_SOFTWARE_PATH"
-    exit 1
-fi
-
-ACTIVATE="source $CONDA_SH && conda activate $CONDA_ENV"
+ACTIVATE="source $CONDA_PATH/etc/profile.d/conda.sh && conda activate $CONDA_ENV"
 
 kill_existing
 
