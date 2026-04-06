@@ -28,28 +28,6 @@ from rlinf.utils.logging import get_logger
 class ROSController:
     """Controller for ROS communication. A controller is used for managing one robot."""
 
-    @staticmethod
-    def _parse_ros_port() -> int:
-        """Return the ROS master port from ``ROS_MASTER_URI`` (default 11311)."""
-        uri = os.environ.get("ROS_MASTER_URI", "http://localhost:11311")
-        try:
-            return int(uri.rsplit(":", 1)[-1].rstrip("/"))
-        except (ValueError, IndexError):
-            return 11311
-
-    @staticmethod
-    def _proc_on_port(proc: "psutil.Process", port: int) -> bool:
-        """Check whether a roscore *proc* is bound to *port*."""
-        try:
-            cmdline = proc.cmdline()
-            if "-p" in cmdline:
-                idx = cmdline.index("-p")
-                if idx + 1 < len(cmdline):
-                    return cmdline[idx + 1] == str(port)
-            return port == 11311
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            return False
-
     def __init__(self, ros_version: int = 1):
         """Initialize the ROS controller."""
         self._logger = get_logger()
@@ -64,24 +42,18 @@ class ROSController:
             ros_lock_file = os.path.join(pathlib.Path.home(), ".ros.lock")
         self._ros_lock = FileLock(ros_lock_file)
 
-        self._ros_port = self._parse_ros_port()
-
         if self._ros_version == 1:
             # roscore is removed in ROS 2
             with self._ros_lock:
                 self._ros_core = None
-                for proc in psutil.process_iter(["pid", "name"]):
-                    if proc.info["name"] == "roscore" and self._proc_on_port(
-                        proc, self._ros_port
-                    ):
+                # Check roscore state and launch roscore
+                for proc in psutil.process_iter():
+                    if proc.name() == "roscore":
                         self._ros_core = proc
 
                 if self._ros_core is None:
-                    cmd = ["roscore"]
-                    if self._ros_port != 11311:
-                        cmd += ["-p", str(self._ros_port)]
                     self._ros_core = psutil.Popen(
-                        cmd, stdout=sys.stdout, stderr=sys.stdout
+                        ["roscore"], stdout=sys.stdout, stderr=sys.stdout
                     )
                     time.sleep(1)  # Wait for roscore to start
 

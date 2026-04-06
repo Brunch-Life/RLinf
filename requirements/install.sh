@@ -746,19 +746,6 @@ install_franka_env() {
     LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.15.0}
     FRANKA_ROS_VERSION=${FRANKA_ROS_VERSION:-0.10.0}
 
-    # serl_franka_controllers requires C++20; ensure a capable compiler is used.
-    if ! echo "int main(){}" | g++ -std=c++20 -x c++ - -o /dev/null 2>/dev/null; then
-        for _gcc_ver in 14 13 12 11 10; do
-            if command -v "g++-$_gcc_ver" &>/dev/null; then
-                export CC="gcc-$_gcc_ver"
-                export CXX="g++-$_gcc_ver"
-                echo "Default g++ lacks C++20 support; using $CXX instead."
-                break
-            fi
-        done
-        unset _gcc_ver
-    fi
-
     mkdir -p "$ROS_CATKIN_PATH/src"
 
     # Clone necessary repositories
@@ -772,11 +759,6 @@ install_franka_env() {
     if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
         # Use a fork version that fixes compile issues with newer libfranka using C++17
         git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
-    fi
-    # franka_gazebo is only for Gazebo simulation and often hits protobuf
-    # version conflicts on systems with a non-stock protobuf.  Skip it.
-    if [ -d "$ROS_CATKIN_PATH/src/franka_ros/franka_gazebo" ]; then
-        touch "$ROS_CATKIN_PATH/src/franka_ros/franka_gazebo/CATKIN_IGNORE"
     fi
     popd >/dev/null
 
