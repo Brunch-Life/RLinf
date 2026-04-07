@@ -118,10 +118,11 @@ class DataCollector(Worker):
 
         current_obs_processed = self._process_obs(obs)
 
-        action_dim = self.env.action_space.shape[-1]
-
         while success_cnt < self.num_data_episodes:
-            action = np.zeros((1, action_dim))
+            if self.cfg.env.eval.get("no_gripper", True):
+                action = np.zeros((1, 6))
+            else:
+                action = np.zeros((1, 7))
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:

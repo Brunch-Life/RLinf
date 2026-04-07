@@ -45,6 +45,10 @@ NUM_ARMS = 2
 ACTION_DIM_PER_ARM = 7  # xyz_delta(3) + rpy_delta(3) + gripper(1)
 TCP_POSE_DIM = 7  # xyz(3) + quat(4)
 TCP_VEL_DIM = 6
+# Offset added to env_idx for the right arm controller to avoid Ray actor name
+# collisions when both controllers are on the same node.
+_RIGHT_ARM_ENV_IDX_OFFSET = 1000
+_MAX_CAMERA_RETRIES = 3
 
 
 @dataclass
@@ -124,6 +128,8 @@ class DualFrankaEnv(gym.Env):
     :class:`FrankaController` can live on a different Ray node.
     """
 
+    IS_DUAL_ARM: bool = True
+
     CONFIG_CLS: type[DualFrankaRobotConfig] = DualFrankaRobotConfig
 
     def __init__(
@@ -199,6 +205,12 @@ class DualFrankaEnv(gym.Env):
     def task_description(self):
         return self._task_description
 
+    def close(self):
+        if hasattr(self, "_cameras"):
+            self._close_cameras()
+        if hasattr(self, "camera_player"):
+            self.camera_player.stop()
+
     # ------------------------------------------------------------------ #
     #  Hardware setup                                                      #
     # ------------------------------------------------------------------ #
@@ -259,7 +271,7 @@ class DualFrankaEnv(gym.Env):
         )
         self._right_ctrl = FrankaController.launch_controller(
             robot_ip=self.config.right_robot_ip,
-            env_idx=self.env_idx + 100,  # unique name offset
+            env_idx=self.env_idx + _RIGHT_ARM_ENV_IDX_OFFSET,
             node_rank=right_node,
             worker_rank=self.env_worker_rank,
             gripper_type=self.config.right_gripper_type or "franka",
@@ -289,7 +301,7 @@ class DualFrankaEnv(gym.Env):
             camera.close()
         self._cameras = []
 
-    def _crop_frame(self, frame: np.ndarray, reshape_size: tuple[int, int]) -> np.ndarray:
+    def _crop_frame(self, frame: np.ndarray, reshape_size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
         h, w, _ = frame.shape
         crop_size = min(h, w)
         start_x = (w - crop_size) // 2
@@ -299,29 +311,36 @@ class DualFrankaEnv(gym.Env):
         return cropped, resized
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        frames: dict[str, np.ndarray] = {}
-        display_frames: dict[str, np.ndarray] = {}
-        for camera in self._cameras:
-            try:
-                frame = camera.get_frame()
-                reshape_size = self.observation_space["frames"][
-                    camera._camera_info.name
-                ].shape[:2][::-1]
-                cropped, resized = self._crop_frame(frame, reshape_size)
-                frames[camera._camera_info.name] = resized[..., ::-1]
-                display_frames[camera._camera_info.name] = resized
-                display_frames[f"{camera._camera_info.name}_full"] = cropped
-            except queue.Empty:
-                self._logger.warning(
-                    "Camera %s not producing frames. Retrying in 5s.",
-                    camera._camera_info.name,
-                )
-                time.sleep(5)
-                camera.close()
-                self._open_cameras()
-                return self._get_camera_frames()
-        self.camera_player.put_frame(display_frames)
-        return frames
+        for attempt in range(_MAX_CAMERA_RETRIES):
+            frames: dict[str, np.ndarray] = {}
+            display_frames: dict[str, np.ndarray] = {}
+            failed = False
+            for camera in self._cameras:
+                try:
+                    frame = camera.get_frame()
+                    reshape_size = self.observation_space["frames"][
+                        camera._camera_info.name
+                    ].shape[:2][::-1]
+                    cropped, resized = self._crop_frame(frame, reshape_size)
+                    frames[camera._camera_info.name] = resized[..., ::-1]
+                    display_frames[camera._camera_info.name] = resized
+                    display_frames[f"{camera._camera_info.name}_full"] = cropped
+                except queue.Empty:
+                    self._logger.warning(
+                        "Camera %s not producing frames (attempt %d/%d). Retrying in 5s.",
+                        camera._camera_info.name, attempt + 1, _MAX_CAMERA_RETRIES,
+                    )
+                    time.sleep(5)
+                    self._close_cameras()
+                    self._open_cameras()
+                    failed = True
+                    break
+            if not failed:
+                self.camera_player.put_frame(display_frames)
+                return frames
+        raise RuntimeError(
+            f"Cameras failed to produce frames after {_MAX_CAMERA_RETRIES} attempts."
+        )
 
     # ------------------------------------------------------------------ #
     #  Action / observation spaces                                         #

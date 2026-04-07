@@ -28,6 +28,8 @@ from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
     DualGelloIntervention,
+    DualQuat2EulerWrapper,
+    DualRelativeFrame,
     DualSpacemouseIntervention,
     GelloIntervention,
     GripperCloseEnv,
@@ -86,8 +88,11 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
-        if self.cfg.get("no_gripper", True):
+        is_dual = getattr(env.unwrapped, "IS_DUAL_ARM", False)
+
+        if self.cfg.get("no_gripper", True) and not is_dual:
             env = GripperCloseEnv(env)
+
         use_spacemouse = self.cfg.get("use_spacemouse", True)
         use_gello = self.cfg.get("use_gello", False)
         use_dual_spacemouse = self.cfg.get("use_dual_spacemouse", False)
@@ -138,32 +143,9 @@ class RealWorldEnv(gym.Env):
                 env = KeyboardRewardDoneWrapper(env)
 
         if self.cfg.get("use_relative_frame", True):
-            env = RelativeFrame(env)
-        env = Quat2EulerWrapper(env)
+            env = DualRelativeFrame(env) if is_dual else RelativeFrame(env)
+        env = DualQuat2EulerWrapper(env) if is_dual else Quat2EulerWrapper(env)
         return env
-
-    @staticmethod
-    def _get_ros_port() -> int:
-        """Return the ROS master port from ``ROS_MASTER_URI`` (default 11311)."""
-        uri = os.environ.get("ROS_MASTER_URI", "http://localhost:11311")
-        try:
-            return int(uri.rsplit(":", 1)[-1].rstrip("/"))
-        except (ValueError, IndexError):
-            raise ValueError(f"Failed to parse ROS master port from ROS_MASTER_URI: {uri}")
-
-    @staticmethod
-    def _proc_uses_port(proc: "psutil.Process", port: int) -> bool:
-        """Check whether *proc* was started on *port* (cmdline-based, no root needed)."""
-        try:
-            cmdline = proc.cmdline()
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            return False
-        if "-p" in cmdline:
-            idx = cmdline.index("-p")
-            if idx + 1 < len(cmdline):
-                return cmdline[idx + 1] == str(port)
-            return False
-        return port == 11311
 
     @staticmethod
     def realworld_setup():
@@ -183,18 +165,11 @@ class RealWorldEnv(gym.Env):
         node_lock = FileLock(node_lock_file)
 
         with node_lock:
-            ros_port = RealWorldEnv._get_ros_port()
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
-            for proc in psutil.process_iter(["pid", "name"]):
-                if proc.info["name"] not in ros_proc_names:
-                    continue
-                if not RealWorldEnv._proc_uses_port(proc, ros_port):
-                    continue
-                try:
+            for proc in psutil.process_iter():
+                if proc.name() in ros_proc_names:
                     proc.kill()
                     time.sleep(0.5)
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
 
     def _init_env(self):
         env_fns = [

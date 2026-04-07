@@ -1,4 +1,4 @@
-"""Smoke test for DualFrankaEnv in dummy mode.
+"""Smoke test for DualFrankaEnv in dummy mode and dual-arm wrappers.
 
 Run in an environment with all deps installed (e.g. .venv):
     python -m pytest tests/unit_tests/test_dual_franka_dummy.py -v
@@ -12,6 +12,11 @@ import pytest
 from rlinf.envs.realworld.franka.dual_franka_env import (
     DualFrankaEnv,
     DualFrankaRobotConfig,
+)
+from rlinf.envs.realworld.common.wrappers.dual_euler_obs import DualQuat2EulerWrapper
+from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
+    DualRelativeFrame,
+    DualRelativeTargetFrame,
 )
 
 
@@ -99,3 +104,56 @@ def test_internal_state_shapes(dummy_env):
     dummy_env.reset()
     pose = np.concatenate([dummy_env._left_state.tcp_pose, dummy_env._right_state.tcp_pose])
     assert pose.shape == (14,)
+
+
+# ------------------------------------------------------------------ #
+#  Dual wrapper tests                                                  #
+# ------------------------------------------------------------------ #
+
+
+class TestDualQuat2EulerWrapper:
+    def test_obs_shape(self, dummy_env):
+        wrapped = DualQuat2EulerWrapper(dummy_env)
+        assert wrapped.observation_space["state"]["tcp_pose"].shape == (12,)
+        obs, _ = wrapped.reset()
+        assert obs["state"]["tcp_pose"].shape == (12,)
+
+    def test_roundtrip_values(self, dummy_env):
+        """Euler conversion should preserve xyz and produce valid euler angles."""
+        wrapped = DualQuat2EulerWrapper(dummy_env)
+        obs, _ = wrapped.reset()
+        tcp = obs["state"]["tcp_pose"]
+        # Left arm xyz (first 3) and right arm xyz (indices 6-8) are preserved
+        assert tcp.shape == (12,)
+        # Each euler angle in [-pi, pi]
+        for euler in [tcp[3:6], tcp[9:12]]:
+            assert np.all(np.abs(euler) <= np.pi + 0.01)
+
+
+class TestDualRelativeFrame:
+    def test_obs_preserved_shape(self, dummy_env):
+        wrapped = DualRelativeFrame(dummy_env)
+        obs, _ = wrapped.reset()
+        assert obs["state"]["tcp_pose"].shape == (14,)
+
+    def test_action_transform_roundtrip(self, dummy_env):
+        wrapped = DualRelativeFrame(dummy_env)
+        wrapped.reset()
+        action = np.random.randn(14).astype(np.float32)
+        transformed = wrapped.transform_action(action.copy())
+        recovered = wrapped.transform_action_inv(transformed)
+        np.testing.assert_allclose(recovered, action, atol=1e-6)
+
+    def test_step(self, dummy_env):
+        wrapped = DualRelativeFrame(dummy_env)
+        wrapped.reset()
+        action = np.zeros(14, dtype=np.float32)
+        obs, rew, done, trunc, info = wrapped.step(action)
+        assert obs["state"]["tcp_pose"].shape == (14,)
+
+
+class TestDualRelativeTargetFrame:
+    def test_reset(self, dummy_env):
+        wrapped = DualRelativeTargetFrame(dummy_env)
+        obs, _ = wrapped.reset()
+        assert obs["state"]["tcp_pose"].shape == (14,)
