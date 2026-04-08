@@ -107,49 +107,53 @@ class RealWorldEnv(gym.Env):
                 )
             env = GripperCloseEnv(env)
 
+        # Single ``use_spacemouse`` / ``use_gello`` flag covers both single-arm
+        # and dual-arm: the wrapper class is picked from ``IS_DUAL_ARM`` so the
+        # user does not have to keep an extra ``use_dual_*`` flag in sync with
+        # the env type. This mirrors the existing pattern for ``RelativeFrame``
+        # / ``Quat2EulerWrapper`` below.
         use_spacemouse = self.cfg.get("use_spacemouse", True)
         use_gello = self.cfg.get("use_gello", False)
-        use_dual_spacemouse = self.cfg.get("use_dual_spacemouse", False)
-        use_dual_gello = self.cfg.get("use_dual_gello", False)
 
-        teleop_flags = [use_spacemouse, use_gello, use_dual_spacemouse, use_dual_gello]
-        if sum(bool(f) for f in teleop_flags) > 1:
+        if use_spacemouse and use_gello:
             raise ValueError(
                 "Only one teleop mode can be active at a time. "
-                "Set exactly one of use_spacemouse, use_gello, "
-                "use_dual_spacemouse, use_dual_gello to True."
+                "Set exactly one of use_spacemouse, use_gello to True."
             )
         no_gripper = self.cfg.get("no_gripper", True)
         gripper_enabled = not no_gripper
         if not env.config.is_dummy and use_spacemouse:
-            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
-        if not env.config.is_dummy and use_dual_spacemouse:
-            env = DualSpacemouseIntervention(env, gripper_enabled=gripper_enabled)
+            spacemouse_cls = (
+                DualSpacemouseIntervention if is_dual else SpacemouseIntervention
+            )
+            env = spacemouse_cls(env, gripper_enabled=gripper_enabled)
         if not env.config.is_dummy and use_gello:
-            gello_port = self.cfg.get("gello_port", None)
-            if gello_port is None:
-                raise ValueError(
-                    "use_gello is True but gello_port is not set in the env config. "
-                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
-                    "serial port of your GELLO device."
+            if is_dual:
+                left_port = self.cfg.get("left_gello_port", None)
+                right_port = self.cfg.get("right_gello_port", None)
+                if left_port is None or right_port is None:
+                    raise ValueError(
+                        "use_gello=True on a dual-arm env requires both "
+                        "left_gello_port and right_gello_port to be set in "
+                        "the env config."
+                    )
+                env = DualGelloIntervention(
+                    env,
+                    left_port=left_port,
+                    right_port=right_port,
+                    gripper_enabled=gripper_enabled,
                 )
-            env = GelloIntervention(
-                env, port=gello_port, gripper_enabled=gripper_enabled
-            )
-        if not env.config.is_dummy and use_dual_gello:
-            left_port = self.cfg.get("left_gello_port", None)
-            right_port = self.cfg.get("right_gello_port", None)
-            if left_port is None or right_port is None:
-                raise ValueError(
-                    "use_dual_gello is True but left_gello_port / right_gello_port "
-                    "is not set. Please set both in the env config."
+            else:
+                gello_port = self.cfg.get("gello_port", None)
+                if gello_port is None:
+                    raise ValueError(
+                        "use_gello is True but gello_port is not set in the env config. "
+                        "Please set env.eval.gello_port (or env.train.gello_port) to the "
+                        "serial port of your GELLO device."
+                    )
+                env = GelloIntervention(
+                    env, port=gello_port, gripper_enabled=gripper_enabled
                 )
-            env = DualGelloIntervention(
-                env,
-                left_port=left_port,
-                right_port=right_port,
-                gripper_enabled=gripper_enabled,
-            )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
@@ -179,6 +183,11 @@ class RealWorldEnv(gym.Env):
         node_lock = FileLock(node_lock_file)
 
         with node_lock:
+            # TODO(follow-up PR): wrap proc.kill() in try/except for
+            # psutil.AccessDenied / psutil.NoSuchProcess and degrade to a
+            # warning. As-is, an unkillable stale ROS proc (owned by another
+            # user, in a foreign namespace, or zombied) raises AccessDenied
+            # and aborts module import on every Ray worker on this node.
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
             for proc in psutil.process_iter():
                 if proc.name() in ros_proc_names:

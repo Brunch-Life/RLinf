@@ -330,7 +330,6 @@ def dual_realworld_env():
             "use_fixed_reset_state_ids": False,
             "max_steps_per_rollout_epoch": 100,
             "max_episode_steps": 100,
-            "use_dual_spacemouse": False,
             "use_spacemouse": False,
             "no_gripper": False,
             "main_image_key": "left_wrist_0_rgb",

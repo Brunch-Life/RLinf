@@ -131,12 +131,14 @@ class DataCollector(Worker):
             # Zero "no-op" placeholder action; teleop wrappers overwrite this
             # via info["intervene_action"] when the operator is active.
             action = np.zeros((1, self.action_dim))
-            next_obs, reward, done, _, info = self.env.step(action)
+            next_obs, reward, terminated, truncated, info = self.env.step(action)
 
             if "intervene_action" in info:
                 action = info["intervene_action"]
 
             next_obs_processed = self._process_obs(next_obs)
+
+            done = terminated | truncated
 
             # --- Construct ChunkStepResult ---
             # Prepare action tensor [1, action_dim]
@@ -163,12 +165,26 @@ class DataCollector(Worker):
             if done_tensor.ndim == 1:
                 done_tensor = done_tensor.unsqueeze(1)
 
+            if isinstance(terminated, torch.Tensor):
+                term_tensor = terminated.bool().cpu()
+            else:
+                term_tensor = torch.tensor(terminated).bool()
+            if term_tensor.ndim == 1:
+                term_tensor = term_tensor.unsqueeze(1)
+
+            if isinstance(truncated, torch.Tensor):
+                trunc_tensor = truncated.bool().cpu()
+            else:
+                trunc_tensor = torch.tensor(truncated).bool()
+            if trunc_tensor.ndim == 1:
+                trunc_tensor = trunc_tensor.unsqueeze(1)
+
             step_result = ChunkStepResult(
                 actions=action_tensor,
                 rewards=reward_tensor,
                 dones=done_tensor,
-                terminations=done_tensor,
-                truncations=torch.zeros_like(done_tensor),
+                terminations=term_tensor,
+                truncations=trunc_tensor,
                 forward_inputs={"action": action_tensor},
             )
 
@@ -206,6 +222,11 @@ class DataCollector(Worker):
                     self.buffer.add_trajectories([trajectory])
 
                     progress_bar.update(1)
+                else:
+                    self.log_info(
+                        f"Episode ended (reward={r_val:.2f}). "
+                        f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
+                    )
 
                 # Reset for next episode
                 obs, _ = self.env.reset()
