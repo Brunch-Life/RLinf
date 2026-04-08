@@ -70,6 +70,15 @@ class DataCollector(Worker):
                 ),
             )
 
+        # Resolve the per-env action dim from the wrapped env's action space.
+        # SyncVectorEnv exposes a batched space whose trailing dim is the
+        # per-env action dim, which already accounts for:
+        #   - GripperCloseEnv (single-arm, no_gripper=True) → 6
+        #   - single-arm with gripper                       → 7
+        #   - DualFrankaEnv (always)                        → 14
+        # Using the space directly avoids hardcoding shapes per robot type.
+        self.action_dim = int(self.env.action_space.shape[-1])
+
         # Initialize TrajectoryReplayBuffer
         # Change directory name to 'demos' as requested
         buffer_path = os.path.join(self.cfg.runner.logger.log_path, "demos")
@@ -119,10 +128,9 @@ class DataCollector(Worker):
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
-            if self.cfg.env.eval.get("no_gripper", True):
-                action = np.zeros((1, 6))
-            else:
-                action = np.zeros((1, 7))
+            # Zero "no-op" placeholder action; teleop wrappers overwrite this
+            # via info["intervene_action"] when the operator is active.
+            action = np.zeros((1, self.action_dim))
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:
@@ -131,7 +139,7 @@ class DataCollector(Worker):
             next_obs_processed = self._process_obs(next_obs)
 
             # --- Construct ChunkStepResult ---
-            # Prepare action tensor [1, 6]
+            # Prepare action tensor [1, action_dim]
             if isinstance(action, torch.Tensor):
                 action_tensor = action.float().cpu()
             else:

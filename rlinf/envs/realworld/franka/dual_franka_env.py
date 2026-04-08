@@ -73,22 +73,14 @@ class DualFrankaRobotConfig:
     step_frequency: float = 10.0
 
     # (2, 6) arrays: row 0 = left arm, row 1 = right arm
-    target_ee_pose: np.ndarray = field(
-        default_factory=lambda: np.zeros((2, 6))
-    )
-    reset_ee_pose: np.ndarray = field(
-        default_factory=lambda: np.zeros((2, 6))
-    )
+    target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros((2, 6)))
+    reset_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros((2, 6)))
     joint_reset_qpos: list[list[float]] = field(
         default_factory=lambda: [[0, 0, 0, -1.9, 0, 2, 0]] * 2
     )
     max_num_steps: int = 100
-    reward_threshold: np.ndarray = field(
-        default_factory=lambda: np.zeros((2, 6))
-    )
-    action_scale: np.ndarray = field(
-        default_factory=lambda: np.ones(3)
-    )
+    reward_threshold: np.ndarray = field(default_factory=lambda: np.zeros((2, 6)))
+    action_scale: np.ndarray = field(default_factory=lambda: np.ones(3))
     enable_random_reset: bool = False
     random_xy_range: float = 0.0
     random_rz_range: float = 0.0
@@ -158,10 +150,12 @@ class DualFrankaEnv(gym.Env):
             self._reset_poses = np.zeros((2, 7))
             for arm_idx in range(NUM_ARMS):
                 euler = self.config.reset_ee_pose[arm_idx]
-                self._reset_poses[arm_idx] = np.concatenate([
-                    euler[:3],
-                    R.from_euler("xyz", euler[3:].copy()).as_quat(),
-                ])
+                self._reset_poses[arm_idx] = np.concatenate(
+                    [
+                        euler[:3],
+                        R.from_euler("xyz", euler[3:].copy()).as_quat(),
+                    ]
+                )
         else:
             self._reset_poses = np.zeros((2, 7))
 
@@ -190,7 +184,8 @@ class DualFrankaEnv(gym.Env):
                 if time.time() - t0 > 30:
                     self._logger.warning(
                         "Waited %.0fs for %s Franka to be ready.",
-                        time.time() - t0, label,
+                        time.time() - t0,
+                        label,
                     )
 
         self._interpolate_move_both(self._reset_poses)
@@ -215,13 +210,28 @@ class DualFrankaEnv(gym.Env):
     #  Hardware setup                                                      #
     # ------------------------------------------------------------------ #
 
+    def _all_camera_specs(self) -> list[tuple[str, str]]:
+        """Return ``[(camera_name, serial), ...]`` with pi0/pi0.5-aligned names.
+
+        Each arm's cameras are named after the canonical pi0 image dict keys
+        (``left_wrist_0_rgb``, ``right_wrist_0_rgb``); a numeric suffix is
+        appended for the second-and-later cameras of the same arm
+        (``left_wrist_1_rgb`` …) so that downstream observation dicts can be
+        fed to a pi0/pi0.5 policy without any key remapping.
+        """
+        specs: list[tuple[str, str]] = []
+        for arm, serials in (
+            ("left", self.config.left_camera_serials),
+            ("right", self.config.right_camera_serials),
+        ):
+            if not serials:
+                continue
+            for j, serial in enumerate(serials):
+                specs.append((f"{arm}_wrist_{j}_rgb", serial))
+        return specs
+
     def _all_camera_serials(self) -> list[str]:
-        serials: list[str] = []
-        if self.config.left_camera_serials:
-            serials.extend(self.config.left_camera_serials)
-        if self.config.right_camera_serials:
-            serials.extend(self.config.right_camera_serials)
-        return serials
+        return [serial for _, serial in self._all_camera_specs()]
 
     def _setup_hardware(self):
         from .franka_controller import FrankaController
@@ -244,13 +254,21 @@ class DualFrankaEnv(gym.Env):
             if self.config.camera_type is None:
                 self.config.camera_type = getattr(hw, "camera_type", "zed")
             if self.config.left_gripper_type is None:
-                self.config.left_gripper_type = getattr(hw, "left_gripper_type", "franka")
+                self.config.left_gripper_type = getattr(
+                    hw, "left_gripper_type", "franka"
+                )
             if self.config.right_gripper_type is None:
-                self.config.right_gripper_type = getattr(hw, "right_gripper_type", "franka")
+                self.config.right_gripper_type = getattr(
+                    hw, "right_gripper_type", "franka"
+                )
             if self.config.left_gripper_connection is None:
-                self.config.left_gripper_connection = getattr(hw, "left_gripper_connection", None)
+                self.config.left_gripper_connection = getattr(
+                    hw, "left_gripper_connection", None
+                )
             if self.config.right_gripper_connection is None:
-                self.config.right_gripper_connection = getattr(hw, "right_gripper_connection", None)
+                self.config.right_gripper_connection = getattr(
+                    hw, "right_gripper_connection", None
+                )
 
         left_node = self.node_rank
         right_node = self.node_rank
@@ -285,10 +303,9 @@ class DualFrankaEnv(gym.Env):
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
         camera_type = self.config.camera_type or "zed"
-        all_serials = self._all_camera_serials()
         camera_infos = [
-            CameraInfo(name=f"wrist_{i + 1}", serial_number=s, camera_type=camera_type)
-            for i, s in enumerate(all_serials)
+            CameraInfo(name=name, serial_number=serial, camera_type=camera_type)
+            for name, serial in self._all_camera_specs()
         ]
         for info in camera_infos:
             camera = create_camera(info)
@@ -301,12 +318,14 @@ class DualFrankaEnv(gym.Env):
             camera.close()
         self._cameras = []
 
-    def _crop_frame(self, frame: np.ndarray, reshape_size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    def _crop_frame(
+        self, frame: np.ndarray, reshape_size: tuple[int, int]
+    ) -> tuple[np.ndarray, np.ndarray]:
         h, w, _ = frame.shape
         crop_size = min(h, w)
         start_x = (w - crop_size) // 2
         start_y = (h - crop_size) // 2
-        cropped = frame[start_y:start_y + crop_size, start_x:start_x + crop_size]
+        cropped = frame[start_y : start_y + crop_size, start_x : start_x + crop_size]
         resized = cv2.resize(cropped, reshape_size)
         return cropped, resized
 
@@ -328,7 +347,9 @@ class DualFrankaEnv(gym.Env):
                 except queue.Empty:
                     self._logger.warning(
                         "Camera %s not producing frames (attempt %d/%d). Retrying in 5s.",
-                        camera._camera_info.name, attempt + 1, _MAX_CAMERA_RETRIES,
+                        camera._camera_info.name,
+                        attempt + 1,
+                        _MAX_CAMERA_RETRIES,
                     )
                     time.sleep(5)
                     self._close_cameras()
@@ -351,16 +372,20 @@ class DualFrankaEnv(gym.Env):
         self._xyz_safe_spaces = []
         self._rpy_safe_spaces = []
         for arm in range(NUM_ARMS):
-            self._xyz_safe_spaces.append(gym.spaces.Box(
-                low=self.config.ee_pose_limit_min[arm, :3],
-                high=self.config.ee_pose_limit_max[arm, :3],
-                dtype=np.float64,
-            ))
-            self._rpy_safe_spaces.append(gym.spaces.Box(
-                low=self.config.ee_pose_limit_min[arm, 3:],
-                high=self.config.ee_pose_limit_max[arm, 3:],
-                dtype=np.float64,
-            ))
+            self._xyz_safe_spaces.append(
+                gym.spaces.Box(
+                    low=self.config.ee_pose_limit_min[arm, :3],
+                    high=self.config.ee_pose_limit_max[arm, :3],
+                    dtype=np.float64,
+                )
+            )
+            self._rpy_safe_spaces.append(
+                gym.spaces.Box(
+                    low=self.config.ee_pose_limit_min[arm, 3:],
+                    high=self.config.ee_pose_limit_max[arm, 3:],
+                    dtype=np.float64,
+                )
+            )
 
         total_action_dim = NUM_ARMS * ACTION_DIM_PER_ARM
         self.action_space = gym.spaces.Box(
@@ -368,26 +393,43 @@ class DualFrankaEnv(gym.Env):
             np.ones(total_action_dim, dtype=np.float32),
         )
 
-        all_serials = self._all_camera_serials()
-        self.observation_space = gym.spaces.Dict({
-            "state": gym.spaces.Dict({
-                "tcp_pose": gym.spaces.Box(
-                    -np.inf, np.inf, shape=(NUM_ARMS * TCP_POSE_DIM,),
+        camera_specs = self._all_camera_specs()
+        self.observation_space = gym.spaces.Dict(
+            {
+                "state": gym.spaces.Dict(
+                    {
+                        "tcp_pose": gym.spaces.Box(
+                            -np.inf,
+                            np.inf,
+                            shape=(NUM_ARMS * TCP_POSE_DIM,),
+                        ),
+                        "tcp_vel": gym.spaces.Box(
+                            -np.inf,
+                            np.inf,
+                            shape=(NUM_ARMS * TCP_VEL_DIM,),
+                        ),
+                        "gripper_position": gym.spaces.Box(-1, 1, shape=(NUM_ARMS,)),
+                        "tcp_force": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(NUM_ARMS * 3,)
+                        ),
+                        "tcp_torque": gym.spaces.Box(
+                            -np.inf, np.inf, shape=(NUM_ARMS * 3,)
+                        ),
+                    }
                 ),
-                "tcp_vel": gym.spaces.Box(
-                    -np.inf, np.inf, shape=(NUM_ARMS * TCP_VEL_DIM,),
+                "frames": gym.spaces.Dict(
+                    {
+                        name: gym.spaces.Box(
+                            0,
+                            255,
+                            shape=(128, 128, 3),
+                            dtype=np.uint8,
+                        )
+                        for name, _ in camera_specs
+                    }
                 ),
-                "gripper_position": gym.spaces.Box(-1, 1, shape=(NUM_ARMS,)),
-                "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(NUM_ARMS * 3,)),
-                "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(NUM_ARMS * 3,)),
-            }),
-            "frames": gym.spaces.Dict({
-                f"wrist_{k + 1}": gym.spaces.Box(
-                    0, 255, shape=(128, 128, 3), dtype=np.uint8,
-                )
-                for k in range(len(all_serials))
-            }),
-        })
+            }
+        )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     # ------------------------------------------------------------------ #
@@ -427,7 +469,9 @@ class DualFrankaEnv(gym.Env):
             for arm in range(NUM_ARMS):
                 gripper_val = actions[arm, 6] * self.config.action_scale[2]
                 is_gripper_effective[arm] = self._gripper_action(
-                    ctrls[arm], states[arm], gripper_val,
+                    ctrls[arm],
+                    states[arm],
+                    gripper_val,
                 )
 
             # Send move commands in parallel (fire both, then wait both)
@@ -508,17 +552,23 @@ class DualFrankaEnv(gym.Env):
         poses = []
         for arm in range(NUM_ARMS):
             euler = self.config.target_ee_pose[arm]
-            poses.append(np.concatenate([
-                euler[:3],
-                R.from_euler("xyz", euler[3:].copy()).as_quat(),
-            ]))
+            poses.append(
+                np.concatenate(
+                    [
+                        euler[:3],
+                        R.from_euler("xyz", euler[3:].copy()).as_quat(),
+                    ]
+                )
+            )
         return np.concatenate(poses)
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #
     # ------------------------------------------------------------------ #
 
-    def _clip_position_to_safety_box(self, position: np.ndarray, arm_idx: int) -> np.ndarray:
+    def _clip_position_to_safety_box(
+        self, position: np.ndarray, arm_idx: int
+    ) -> np.ndarray:
         position[:3] = np.clip(
             position[:3],
             self._xyz_safe_spaces[arm_idx].low,
@@ -562,8 +612,12 @@ class DualFrankaEnv(gym.Env):
 
         paths = []
         for arm in range(NUM_ARMS):
-            pos_path = np.linspace(states[arm].tcp_pose[:3], target_poses[arm, :3], num_steps + 1)
-            quat_path = quat_slerp(states[arm].tcp_pose[3:], target_poses[arm, 3:], num_steps + 1)
+            pos_path = np.linspace(
+                states[arm].tcp_pose[:3], target_poses[arm, :3], num_steps + 1
+            )
+            quat_path = quat_slerp(
+                states[arm].tcp_pose[3:], target_poses[arm, 3:], num_steps + 1
+            )
             paths.append((pos_path, quat_path))
 
         for step_i in range(1, num_steps + 1):
@@ -583,11 +637,14 @@ class DualFrankaEnv(gym.Env):
         if self.config.enable_random_reset:
             for arm in range(NUM_ARMS):
                 reset_poses[arm, :2] += np.random.uniform(
-                    -self.config.random_xy_range, self.config.random_xy_range, (2,),
+                    -self.config.random_xy_range,
+                    self.config.random_xy_range,
+                    (2,),
                 )
                 euler_random = self.config.target_ee_pose[arm, 3:].copy()
                 euler_random[-1] += np.random.uniform(
-                    -self.config.random_rz_range, self.config.random_rz_range,
+                    -self.config.random_rz_range,
+                    self.config.random_rz_range,
                 )
                 reset_poses[arm, 3:] = R.from_euler("xyz", euler_random).as_quat()
 
@@ -598,7 +655,9 @@ class DualFrankaEnv(gym.Env):
         for cnt in range(3):
             converged = True
             for arm in range(NUM_ARMS):
-                if not np.allclose(states_arr[arm].tcp_pose[:3], reset_poses[arm, :3], atol=0.02):
+                if not np.allclose(
+                    states_arr[arm].tcp_pose[:3], reset_poses[arm, :3], atol=0.02
+                ):
                     converged = False
             if converged:
                 break
@@ -641,22 +700,37 @@ class DualFrankaEnv(gym.Env):
         if not self.config.is_dummy:
             frames = self._get_camera_frames()
             state = {
-                "tcp_pose": np.concatenate([
-                    self._left_state.tcp_pose, self._right_state.tcp_pose,
-                ]),
-                "tcp_vel": np.concatenate([
-                    self._left_state.tcp_vel, self._right_state.tcp_vel,
-                ]),
-                "gripper_position": np.array([
-                    self._left_state.gripper_position,
-                    self._right_state.gripper_position,
-                ], dtype=np.float32),
-                "tcp_force": np.concatenate([
-                    self._left_state.tcp_force, self._right_state.tcp_force,
-                ]),
-                "tcp_torque": np.concatenate([
-                    self._left_state.tcp_torque, self._right_state.tcp_torque,
-                ]),
+                "tcp_pose": np.concatenate(
+                    [
+                        self._left_state.tcp_pose,
+                        self._right_state.tcp_pose,
+                    ]
+                ),
+                "tcp_vel": np.concatenate(
+                    [
+                        self._left_state.tcp_vel,
+                        self._right_state.tcp_vel,
+                    ]
+                ),
+                "gripper_position": np.array(
+                    [
+                        self._left_state.gripper_position,
+                        self._right_state.gripper_position,
+                    ],
+                    dtype=np.float32,
+                ),
+                "tcp_force": np.concatenate(
+                    [
+                        self._left_state.tcp_force,
+                        self._right_state.tcp_force,
+                    ]
+                ),
+                "tcp_torque": np.concatenate(
+                    [
+                        self._left_state.tcp_torque,
+                        self._right_state.tcp_torque,
+                    ]
+                ),
             }
             return copy.deepcopy({"state": state, "frames": frames})
         else:

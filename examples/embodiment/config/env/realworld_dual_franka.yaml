@@ -14,7 +14,7 @@ max_episode_steps: 100
 use_dual_spacemouse: True
 use_spacemouse: False
 no_gripper: False
-main_image_key: wrist_1
+main_image_key: left_wrist_0_rgb
 
 video_cfg:
   save_video: False

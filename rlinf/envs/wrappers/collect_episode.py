@@ -399,8 +399,12 @@ class CollectEpisode(gym.Wrapper):
         images: list[np.ndarray] = []
         wrist_images: list[np.ndarray] = []
         extra_view_images: list[np.ndarray] = []
+        left_wrist_images: list[np.ndarray] = []
+        right_wrist_images: list[np.ndarray] = []
         has_wrist_images = True
         has_extra_view_images = True
+        has_left_wrist_images = True
+        has_right_wrist_images = True
         states: list[np.ndarray] = []
         np_actions: list[np.ndarray] = []
         dones: list[bool] = []
@@ -408,9 +412,14 @@ class CollectEpisode(gym.Wrapper):
 
         for i, action in enumerate(actions):
             obs = obs_steps[i] if i < len(obs_steps) else None
-            image, wrist_image, extra_view_image, state = self._extract_obs_image_state(
-                obs
-            )
+            (
+                image,
+                wrist_image,
+                extra_view_image,
+                left_wrist_image,
+                right_wrist_image,
+                state,
+            ) = self._extract_obs_image_state(obs)
 
             # overwrite action with intervene action
             if "final_info" in buf["infos"][i]:
@@ -438,6 +447,14 @@ class CollectEpisode(gym.Wrapper):
                 has_extra_view_images = False
             elif has_extra_view_images:
                 extra_view_images.append(self._to_uint8(np.asarray(extra_view_image)))
+            if left_wrist_image is None:
+                has_left_wrist_images = False
+            elif has_left_wrist_images:
+                left_wrist_images.append(self._to_uint8(np.asarray(left_wrist_image)))
+            if right_wrist_image is None:
+                has_right_wrist_images = False
+            elif has_right_wrist_images:
+                right_wrist_images.append(self._to_uint8(np.asarray(right_wrist_image)))
             states.append(np.asarray(state).astype(np.float32))
             np_actions.append(np.asarray(np_action).astype(np.float32))
             dones.append(False)
@@ -459,6 +476,12 @@ class CollectEpisode(gym.Wrapper):
             "extra_view_images": (
                 extra_view_images[:end] if has_extra_view_images else None
             ),
+            "left_wrist_images": (
+                left_wrist_images[:end] if has_left_wrist_images else None
+            ),
+            "right_wrist_images": (
+                right_wrist_images[:end] if has_right_wrist_images else None
+            ),
             "states": states[:end],
             "actions": np_actions[:end],
             "dones": dones_out,
@@ -478,6 +501,8 @@ class CollectEpisode(gym.Wrapper):
                 action_dim=ep_data["actions"][0].shape[-1],
                 has_wrist_image=ep_data["wrist_images"] is not None,
                 has_extra_view_image=ep_data["extra_view_images"] is not None,
+                has_left_wrist_image=ep_data.get("left_wrist_images") is not None,
+                has_right_wrist_image=ep_data.get("right_wrist_images") is not None,
                 use_incremental_stats=True,
                 stats_sample_ratio=self.stats_sample_ratio,
             )
@@ -488,6 +513,8 @@ class CollectEpisode(gym.Wrapper):
             writer = self._ensure_lerobot_writer(ep_data)
             wrist_images = ep_data["wrist_images"]
             extra_view_images = ep_data["extra_view_images"]
+            left_wrist_images = ep_data.get("left_wrist_images")
+            right_wrist_images = ep_data.get("right_wrist_images")
             writer.add_episode(
                 images=np.stack(ep_data["images"]),
                 wrist_images=np.stack(wrist_images)
@@ -495,6 +522,12 @@ class CollectEpisode(gym.Wrapper):
                 else None,
                 extra_view_images=np.stack(extra_view_images)
                 if extra_view_images is not None
+                else None,
+                left_wrist_images=np.stack(left_wrist_images)
+                if left_wrist_images is not None
+                else None,
+                right_wrist_images=np.stack(right_wrist_images)
+                if right_wrist_images is not None
                 else None,
                 states=np.stack(ep_data["states"]),
                 actions=np.stack(ep_data["actions"]),
@@ -648,19 +681,29 @@ class CollectEpisode(gym.Wrapper):
         return "unknown task"
 
     def _extract_obs_image_state(self, obs):
-        """Return ``(image, wrist_image, extra_view_image, state)`` from an obs dict."""
+        """Return ``(image, wrist_image, extra_view_image, left_wrist_image, right_wrist_image, state)`` from an obs dict.
+
+        ``left_wrist_image`` / ``right_wrist_image`` are populated only by
+        dual-arm envs (see ``RealWorldEnv._wrap_obs``); single-arm envs return
+        ``None`` for both, leaving the legacy ``image``/``wrist_image``/
+        ``extra_view_image`` triple semantically unchanged.
+        """
         if not isinstance(obs, dict):
-            return None, None, None, None
+            return None, None, None, None, None, None
         image = obs.get("main_images", obs.get("image", obs.get("full_image")))
         wrist_image = obs.get("wrist_images", obs.get("wrist_image"))
         extra_view_image = self._extract_extra_view_image(
             obs.get("extra_view_images", obs.get("extra_view_image"))
         )
+        left_wrist_image = obs.get("left_wrist_images", obs.get("left_wrist_image"))
+        right_wrist_image = obs.get("right_wrist_images", obs.get("right_wrist_image"))
         state = obs.get("states", obs.get("state"))
         return (
             self._to_numpy(image),
             self._to_numpy(wrist_image),
             extra_view_image,
+            self._to_numpy(left_wrist_image),
+            self._to_numpy(right_wrist_image),
             self._to_numpy(state),
         )
 

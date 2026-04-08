@@ -752,6 +752,9 @@ install_franka_env() {
     pushd "$ROS_CATKIN_PATH/src"
     if [ ! -d "$ROS_CATKIN_PATH/src/serl_franka_controllers" ]; then
         git clone https://github.com/rail-berkeley/serl_franka_controllers
+        # Force C++17 instead of upstream's hardcoded C++20 (GCC on Ubuntu 20.04 doesn't support C++20)
+        sed -i 's/set(CMAKE_CXX_STANDARD 20)/set(CMAKE_CXX_STANDARD 17)/' \
+            "$ROS_CATKIN_PATH/src/serl_franka_controllers/CMakeLists.txt"
     fi
     if [ ! -d "$ROS_CATKIN_PATH/libfranka" ]; then
         git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
@@ -776,10 +779,12 @@ install_franka_env() {
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
     # Then franka_ros
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
+    # Skip franka_gazebo: it pulls in Gazebo classic 11 / Ignition msgs whose protobuf API is
+    # incompatible with the system protobuf on Ubuntu 20.04, and we don't need sim for real-world.
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build -DCATKIN_BLACKLIST_PACKAGES="franka_gazebo"
 
     # Finally serl_franka_controllers
-    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 -DCATKIN_BLACKLIST_PACKAGES="franka_gazebo" --pkg serl_franka_controllers
     popd >/dev/null
 
     echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
