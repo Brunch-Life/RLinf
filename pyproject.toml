@@ -121,6 +121,7 @@ franka = [
     "defusedxml",
     "pyspacemouse>=2.0.0",
     "pymodbus>=3.0,<4.0",
+    "pyserial",
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",

@@ -53,6 +53,7 @@ env:
     ignore_terminations: False
     auto_reset: False
     use_spacemouse: True
+    keyboard_reward_wrapper: "single_stage"
     override_cfg:
       target_ee_pose:
         - [0.5, -0.2, 0.3, -3.14, 0.0, 0.0]    # Replace with your left arm target
