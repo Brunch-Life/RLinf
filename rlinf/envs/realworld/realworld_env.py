@@ -27,6 +27,10 @@ from filelock import FileLock
 from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
+    DualGelloIntervention,
+    DualQuat2EulerWrapper,
+    DualRelativeFrame,
+    DualSpacemouseIntervention,
     GelloIntervention,
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
@@ -84,30 +88,72 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
+        is_dual = getattr(env.unwrapped, "IS_DUAL_ARM", False)
+
         if self.cfg.get("no_gripper", True):
+            if is_dual:
+                # The dual-arm path mirrors the single-arm wrapper layout, with
+                # `DualGripperCloseEnv` slated as the symmetric pad-12D-to-14D
+                # bridge between teleop wrappers and `DualFrankaEnv`. Until
+                # that wrapper lands, dual-arm envs only support
+                # `no_gripper: False`. Without this assert, the user would
+                # get an opaque `reshape(2, 7)` ValueError deep inside
+                # `DualFrankaEnv.step` when teleop produces a 12D action.
+                raise NotImplementedError(
+                    "no_gripper=True is not yet supported for dual-arm envs: "
+                    "DualGripperCloseEnv (the 12D→14D adapter mirroring "
+                    "GripperCloseEnv) is not implemented in this PR. "
+                    "Set env.eval.no_gripper=False (or env.train.no_gripper=False)."
+                )
             env = GripperCloseEnv(env)
+
+        # Single ``use_spacemouse`` / ``use_gello`` flag covers both single-arm
+        # and dual-arm: the wrapper class is picked from ``IS_DUAL_ARM`` so the
+        # user does not have to keep an extra ``use_dual_*`` flag in sync with
+        # the env type. This mirrors the existing pattern for ``RelativeFrame``
+        # / ``Quat2EulerWrapper`` below.
         use_spacemouse = self.cfg.get("use_spacemouse", True)
         use_gello = self.cfg.get("use_gello", False)
+
         if use_spacemouse and use_gello:
             raise ValueError(
-                "use_spacemouse and use_gello are mutually exclusive. "
-                "Please set only one of them to True."
+                "Only one teleop mode can be active at a time. "
+                "Set exactly one of use_spacemouse, use_gello to True."
             )
         no_gripper = self.cfg.get("no_gripper", True)
         gripper_enabled = not no_gripper
         if not env.config.is_dummy and use_spacemouse:
-            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
-        if not env.config.is_dummy and use_gello:
-            gello_port = self.cfg.get("gello_port", None)
-            if gello_port is None:
-                raise ValueError(
-                    "use_gello is True but gello_port is not set in the env config. "
-                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
-                    "serial port of your GELLO device."
-                )
-            env = GelloIntervention(
-                env, port=gello_port, gripper_enabled=gripper_enabled
+            spacemouse_cls = (
+                DualSpacemouseIntervention if is_dual else SpacemouseIntervention
             )
+            env = spacemouse_cls(env, gripper_enabled=gripper_enabled)
+        if not env.config.is_dummy and use_gello:
+            if is_dual:
+                left_port = self.cfg.get("left_gello_port", None)
+                right_port = self.cfg.get("right_gello_port", None)
+                if left_port is None or right_port is None:
+                    raise ValueError(
+                        "use_gello=True on a dual-arm env requires both "
+                        "left_gello_port and right_gello_port to be set in "
+                        "the env config."
+                    )
+                env = DualGelloIntervention(
+                    env,
+                    left_port=left_port,
+                    right_port=right_port,
+                    gripper_enabled=gripper_enabled,
+                )
+            else:
+                gello_port = self.cfg.get("gello_port", None)
+                if gello_port is None:
+                    raise ValueError(
+                        "use_gello is True but gello_port is not set in the env config. "
+                        "Please set env.eval.gello_port (or env.train.gello_port) to the "
+                        "serial port of your GELLO device."
+                    )
+                env = GelloIntervention(
+                    env, port=gello_port, gripper_enabled=gripper_enabled
+                )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
@@ -115,8 +161,8 @@ class RealWorldEnv(gym.Env):
                 env = KeyboardRewardDoneWrapper(env)
 
         if self.cfg.get("use_relative_frame", True):
-            env = RelativeFrame(env)
-        env = Quat2EulerWrapper(env)
+            env = DualRelativeFrame(env) if is_dual else RelativeFrame(env)
+        env = DualQuat2EulerWrapper(env) if is_dual else Quat2EulerWrapper(env)
         return env
 
     @staticmethod
@@ -139,9 +185,12 @@ class RealWorldEnv(gym.Env):
         with node_lock:
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
             for proc in psutil.process_iter():
-                if proc.name() in ros_proc_names:
-                    proc.kill()
-                    time.sleep(0.5)
+                try:
+                    if proc.name() in ros_proc_names:
+                        proc.kill()
+                        time.sleep(0.5)
+                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                    pass
 
     def _init_env(self):
         env_fns = [
@@ -150,6 +199,12 @@ class RealWorldEnv(gym.Env):
         ]
         self.env = NoAutoResetSyncVectorEnv(env_fns)
         self.task_descriptions = list(self.env.call("task_description"))
+        # Cached once at construction; used by _wrap_obs to take the
+        # dual-arm semantic-key path (left_wrist_images / right_wrist_images)
+        # instead of bucketing into main_images / extra_view_images.
+        self.is_dual_arm: bool = bool(
+            getattr(self.env.envs[0].unwrapped, "IS_DUAL_ARM", False)
+        )
 
     @property
     def action_space(self):
@@ -256,19 +311,48 @@ class RealWorldEnv(gym.Env):
         obs["states"] = full_states
 
         # Process images
-        if self.main_image_key not in raw_obs["frames"]:
-            available_keys = list(raw_obs["frames"].keys())
-            raise KeyError(
-                f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
-                f"Available keys: {available_keys}. "
-                f"Please set 'main_image_key' in your env config to one of the available keys."
-            )
-        obs["main_images"] = raw_obs["frames"][self.main_image_key]
-        raw_images = OrderedDict(sorted(raw_obs["frames"].items()))
-        raw_images.pop(self.main_image_key)
+        frames = raw_obs["frames"]
+        if self.is_dual_arm:
+            # Dual-arm: emit pi0/pi0.5-style semantic keys so the
+            # left/right distinction is preserved end-to-end (CollectEpisode →
+            # LeRobot columns). Each key flows through only when the env
+            # actually produced the corresponding wrist frame, which is
+            # ultimately gated by config.{left,right}_camera_serials inside
+            # DualFrankaEnv._all_camera_specs — i.e., "configured serials →
+            # has frames → has obs key → has LeRobot column" propagates
+            # automatically.
+            left_frame = frames.get("left_wrist_0_rgb")
+            right_frame = frames.get("right_wrist_0_rgb")
+            if left_frame is None and right_frame is None:
+                available = list(frames.keys())
+                raise KeyError(
+                    "Dual-arm env produced no recognised wrist frames; "
+                    f"expected 'left_wrist_0_rgb' and/or 'right_wrist_0_rgb', "
+                    f"got {available}."
+                )
+            if left_frame is not None:
+                obs["left_wrist_images"] = left_frame
+            if right_frame is not None:
+                obs["right_wrist_images"] = right_frame
+            # ``main_images`` is kept as an alias of the (left, then right)
+            # wrist for backward compatibility with downstream code that
+            # still expects this key (EmbodiedRolloutResult batch-size
+            # inference, single-arm-style policy adapters, etc.).
+            obs["main_images"] = left_frame if left_frame is not None else right_frame
+        else:
+            if self.main_image_key not in frames:
+                available_keys = list(frames.keys())
+                raise KeyError(
+                    f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
+                    f"Available keys: {available_keys}. "
+                    f"Please set 'main_image_key' in your env config to one of the available keys."
+                )
+            obs["main_images"] = frames[self.main_image_key]
+            raw_images = OrderedDict(sorted(frames.items()))
+            raw_images.pop(self.main_image_key)
 
-        if raw_images:
-            obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            if raw_images:
+                obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions

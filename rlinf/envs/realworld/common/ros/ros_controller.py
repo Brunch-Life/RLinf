@@ -14,6 +14,7 @@
 
 import os
 import pathlib
+import socket
 import sys
 import time
 from typing import Callable, Optional
@@ -23,6 +24,15 @@ import rospy
 from filelock import FileLock
 
 from rlinf.utils.logging import get_logger
+
+
+def _find_free_port(start: int = 11311, end: int = 11411) -> int:
+    """Find a free TCP port in the given range for roscore."""
+    for port in range(start, end):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("localhost", port)) != 0:
+                return port
+    raise RuntimeError(f"No free port found in range [{start}, {end})")
 
 
 class ROSController:
@@ -46,16 +56,31 @@ class ROSController:
             # roscore is removed in ROS 2
             with self._ros_lock:
                 self._ros_core = None
-                # Check roscore state and launch roscore
+                # Check if we already have our own roscore running
+                our_uri = os.environ.get("ROS_MASTER_URI", "")
                 for proc in psutil.process_iter():
-                    if proc.name() == "roscore":
-                        self._ros_core = proc
+                    try:
+                        if proc.name() == "roscore":
+                            self._ros_core = proc
+                    except (psutil.AccessDenied, psutil.NoSuchProcess):
+                        pass
 
                 if self._ros_core is None:
+                    # Find a free port to avoid conflicting with others' roscore
+                    port = _find_free_port()
+                    uri = f"http://localhost:{port}/"
+                    os.environ["ROS_MASTER_URI"] = uri
+                    self._logger.info(f"Starting roscore on port {port} (URI: {uri})")
                     self._ros_core = psutil.Popen(
-                        ["roscore"], stdout=sys.stdout, stderr=sys.stdout
+                        ["roscore", "-p", str(port)],
+                        stdout=sys.stdout,
+                        stderr=sys.stdout,
                     )
                     time.sleep(1)  # Wait for roscore to start
+                elif not our_uri:
+                    # Existing roscore found but ROS_MASTER_URI not set by us,
+                    # assume default port
+                    os.environ["ROS_MASTER_URI"] = "http://localhost:11311/"
 
         # Initialize ros node
         rospy.init_node("franka_controller", anonymous=True)

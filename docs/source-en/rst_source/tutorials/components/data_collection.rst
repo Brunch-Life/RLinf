@@ -46,6 +46,10 @@ Key Features
   shape, state dimension, and action dimension inferred automatically.
 - LeRobot export can store ``image``, ``wrist_image``, and one
   ``extra_view_image`` channel when the observation provides them.
+- For dual-arm environments (e.g. ``DualFrankaEnv``), the LeRobot export also
+  stores ``left_wrist_image`` and ``right_wrist_image`` columns when the
+  observation provides them, mirroring the pi0/pi0.5 image dict keys so a pi0
+  policy adapter can consume the dataset without any key remapping.
 - Set ``only_success=True`` to filter out failed episodes and save disk space.
 
 Constructor Arguments
@@ -222,6 +226,12 @@ Parquet column schema:
      - Wrist camera image (bytes + path), uint8; empty when no wrist camera
    * - ``extra_view_image``
      - One auxiliary camera image (bytes + path), uint8; empty when no extra view
+   * - ``left_wrist_image``
+     - Left wrist camera (dual-arm only); present when the env exposes
+       ``left_wrist_images`` in its observation dict
+   * - ``right_wrist_image``
+     - Right wrist camera (dual-arm only); present when the env exposes
+       ``right_wrist_images`` in its observation dict
    * - ``state``
      - Robot state vector, ``float32[state_dim]``
    * - ``actions``
@@ -255,6 +265,10 @@ Observation key lookup order (first match wins):
      - ``wrist_images`` → ``wrist_image``
    * - Extra-view image
      - ``extra_view_images`` (first extra view only when multiple are present) → ``extra_view_image``
+   * - Left wrist image (dual-arm)
+     - ``left_wrist_images`` → ``left_wrist_image``
+   * - Right wrist image (dual-arm)
+     - ``right_wrist_images`` → ``right_wrist_image``
    * - State
      - ``states`` → ``state``
 
