@@ -183,16 +183,14 @@ class RealWorldEnv(gym.Env):
         node_lock = FileLock(node_lock_file)
 
         with node_lock:
-            # TODO(follow-up PR): wrap proc.kill() in try/except for
-            # psutil.AccessDenied / psutil.NoSuchProcess and degrade to a
-            # warning. As-is, an unkillable stale ROS proc (owned by another
-            # user, in a foreign namespace, or zombied) raises AccessDenied
-            # and aborts module import on every Ray worker on this node.
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
             for proc in psutil.process_iter():
-                if proc.name() in ros_proc_names:
-                    proc.kill()
-                    time.sleep(0.5)
+                try:
+                    if proc.name() in ros_proc_names:
+                        proc.kill()
+                        time.sleep(0.5)
+                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                    pass
 
     def _init_env(self):
         env_fns = [
