@@ -35,17 +35,14 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
-    --franka-backend <b>   Franka control backend: ros (default), pylibfranka
-                           or franky.  Only applies when --env franka.
-                             - ros:          legacy ROS/catkin + serl controllers
-                             - pylibfranka:  direct libfranka Python bindings
-                                             (streaming readOnce/writeOnce,
-                                             kept as a fallback)
-                             - franky:       franky-control pip package with a
-                                             C++ RT thread + Ruckig smoother —
-                                             recommended; requires PREEMPT_RT
-                                             and the system tuning in
-                                             franky_install.md
+    --franka-backend <b>   Franka control backend: ros (default) or franky.
+                           Only applies when --env franka.
+                             - ros:     legacy ROS/catkin + serl controllers
+                             - franky:  franky-control pip package with a
+                                        C++ RT thread + Ruckig smoother —
+                                        recommended; requires PREEMPT_RT
+                                        and the system tuning in
+                                        franky_install.md
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -94,14 +91,14 @@ parse_args() {
                 ;;
             --franka-backend)
                 if [ -z "${2:-}" ]; then
-                    echo "--franka-backend requires an argument (ros|pylibfranka|franky)." >&2
+                    echo "--franka-backend requires an argument (ros|franky)." >&2
                     exit 1
                 fi
                 FRANKA_BACKEND="${2:-}"
                 case "$FRANKA_BACKEND" in
-                    ros|pylibfranka|franky) ;;
+                    ros|franky) ;;
                     *)
-                        echo "Invalid --franka-backend: $FRANKA_BACKEND (expected ros|pylibfranka|franky)." >&2
+                        echo "Invalid --franka-backend: $FRANKA_BACKEND (expected ros|franky)." >&2
                         exit 1
                         ;;
                 esac
@@ -689,12 +686,6 @@ install_env_only() {
                         install_franka_env
                     fi
                     ;;
-                pylibfranka)
-                    if [ "$NO_ROOT" -eq 0 ]; then
-                        bash $SCRIPT_DIR/embodied/pylibfranka_install.sh
-                    fi
-                    install_franka_pylibfranka_env
-                    ;;
                 franky)
                     if [ "$NO_ROOT" -eq 0 ]; then
                         bash $SCRIPT_DIR/embodied/franky_install.sh
@@ -871,55 +862,6 @@ install_franka_env() {
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
 }
 
-install_franka_pylibfranka_env() {
-    # ROS-free path: build libfranka from source and install the pylibfranka
-    # Python bindings via pip.  Shares the same franka_catkin_ws/libfranka/
-    # directory layout as the ROS path so both backends can coexist.
-    LIBFRANKA_VERSION=${LIBFRANKA_VERSION:-0.15.0}
-    FRANKA_WS_PATH=$(realpath "$VENV_DIR/franka_catkin_ws")
-    mkdir -p "$FRANKA_WS_PATH"
-
-    if [ ! -d "$FRANKA_WS_PATH/libfranka" ]; then
-        git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules \
-            https://github.com/frankaemika/libfranka "$FRANKA_WS_PATH/libfranka"
-    fi
-
-    # Build the C++ shared library (libfranka.so) first.
-    if [ ! -f "$FRANKA_WS_PATH/libfranka/build/libfranka.so" ]; then
-        mkdir -p "$FRANKA_WS_PATH/libfranka/build"
-        pushd "$FRANKA_WS_PATH/libfranka/build" >/dev/null
-        cmake -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake \
-              -DBUILD_TESTS=OFF ..
-        make -j$(nproc)
-        popd >/dev/null
-    fi
-
-    # Ensure pybind11 is available in the venv so CMake can find the modern
-    # header layout (the Ubuntu 20.04 apt pybind11 is 2.4.3 and breaks on
-    # Python 3.11; pylibfranka_install.sh purges it).
-    uv pip install "pybind11>=2.11"
-
-    local venv_pybind11_cmake
-    venv_pybind11_cmake=$(python -c "import pybind11; print(pybind11.get_cmake_dir())")
-
-    # Build + install pylibfranka.  We force CMAKE_PREFIX_PATH to start with
-    # the venv pybind11 + local libfranka build so CMake does NOT pick up any
-    # /opt/ros/noetic/pybind11_catkin that may be present on ROS boxes —
-    # that package has a non-standard header layout incompatible with the
-    # upstream pybind11 includes used inside pylibfranka.  /opt/openrobots is
-    # appended so pinocchio (from robotpkg) is still discoverable.
-    (
-        set -euo pipefail
-        export CMAKE_PREFIX_PATH="$venv_pybind11_cmake:$FRANKA_WS_PATH/libfranka/build:/opt/openrobots"
-        export pybind11_DIR="$venv_pybind11_cmake"
-        export LD_LIBRARY_PATH="$FRANKA_WS_PATH/libfranka/build:/opt/openrobots/lib:${LD_LIBRARY_PATH:-}"
-        uv pip install --no-build-isolation "$FRANKA_WS_PATH/libfranka/"
-    )
-
-    echo "export LD_LIBRARY_PATH=$FRANKA_WS_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
-}
-
 install_franka_franky_env() {
     # Franky backend: a C++ RT thread runs robot.control() with Ruckig
     # inside franky's std::thread, and all pybind11 bindings release the
@@ -927,16 +869,16 @@ install_franka_franky_env() {
     # rlinf/envs/realworld/franka/franky_controller.py and
     # franky_install.md for details.
     #
-    # franky-control ships pre-built wheels on PyPI for common Python
-    # + libfranka combinations.  If the wheel matches the host, this is
-    # a one-liner.  On a mismatched host it falls back to source build,
-    # which needs libfranka headers + pinocchio (same deps the
-    # pylibfranka path installs; see franky_install.sh).
+    # franky-control ships pre-built wheels on PyPI for common Python +
+    # libfranka combinations.  If the wheel matches the host this is a
+    # one-liner; on a mismatched host pip falls back to a source build
+    # that needs libfranka headers + pinocchio (installed by
+    # requirements/embodied/franky_install.sh).
     uv pip install "franky-control>=0.15.0"
 
-    # If there is already a libfranka build from the pylibfranka path,
-    # make sure its .so is on the runtime loader path so both backends
-    # can coexist.  Harmless if the directory doesn't exist.
+    # If a libfranka build already exists on disk (e.g. under
+    # $VENV_DIR/franka_catkin_ws/libfranka/build), make its .so
+    # discoverable at runtime.  Harmless if the directory doesn't exist.
     local FRANKA_WS_PATH
     FRANKA_WS_PATH=$(realpath "$VENV_DIR/franka_catkin_ws" 2>/dev/null || echo "")
     if [ -n "$FRANKA_WS_PATH" ] && [ -d "$FRANKA_WS_PATH/libfranka/build" ]; then

@@ -33,8 +33,7 @@ def create_gripper(
 
     Args:
         gripper_type: ``"franka"`` (ROS-based), ``"robotiq"`` (Modbus RTU),
-            ``"franky"`` (libfranka via Franky) or ``"pylibfranka"``
-            (libfranka via pylibfranka, legacy fallback).
+            or ``"franky"`` (libfranka via Franky).
         ros: :class:`ROSController` instance — required for ``"franka"``.
         port: Serial device path (e.g. ``"/dev/ttyUSB0"``) — required for
             ``"robotiq"``.
@@ -70,16 +69,7 @@ def create_gripper(
         from .franky_gripper import FrankyGripper
 
         return FrankyGripper(robot_gripper=robot_gripper, **kwargs)
-    if gt == "pylibfranka":
-        robot_ip = kwargs.pop("robot_ip", None)
-        if robot_ip is None:
-            raise ValueError(
-                "robot_ip must be specified for pylibfranka gripper."
-            )
-        from .pylibfranka_gripper import PylibfrankaGripper
-
-        return PylibfrankaGripper(robot_ip=robot_ip, **kwargs)
     raise ValueError(
         f"Unsupported gripper_type={gripper_type!r}. "
-        f"Supported types: 'franka', 'robotiq', 'franky', 'pylibfranka'."
+        f"Supported types: 'franka', 'robotiq', 'franky'."
     )

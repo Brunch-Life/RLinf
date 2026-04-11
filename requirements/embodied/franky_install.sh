@@ -16,10 +16,6 @@
 #      accidental pickup by CMake if you ever rebuild from source
 #   4. Print the per-boot RT tuning commands to run manually (NOT
 #      executed automatically, because they affect the whole host)
-#
-# This script mirrors pylibfranka_install.sh's shape so the two paths
-# can coexist — running both is fine, they only differ in which pip
-# package is installed.
 
 set -eo pipefail
 
@@ -53,9 +49,10 @@ $SUDO apt-get install -y \
 
 # Pinocchio (rigid-body dynamics) — franky bundles Ruckig but pinocchio
 # is still useful if you want to compute your own Jacobians off the
-# RT path.  Installed via robotpkg (same source the pylibfranka path
-# uses); skip silently if the apt source isn't set up yet, you can
-# add it later via requirements/embodied/pylibfranka_install.sh.
+# RT path.  Installed via robotpkg; skip silently if that apt source
+# isn't configured.  See the robotpkg docs at
+# http://robotpkg.openrobots.org/debian.html for the one-time
+# source.list setup.
 if apt-cache show robotpkg-py3*-pinocchio >/dev/null 2>&1; then
     $SUDO apt-get install -y robotpkg-py3*-pinocchio || true
 fi

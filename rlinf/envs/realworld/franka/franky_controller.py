@@ -58,8 +58,8 @@ JOINT_LIMITS_UPPER = np.array(
     [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
 )
 
-# Collision thresholds (Nm / N) — conservative, identical to the
-# pylibfranka fallback so behaviour doesn't shift between backends.
+# Collision thresholds (Nm / N) — conservative defaults that let
+# deliberate streaming moves through without tripping reflexes.
 _DEFAULT_TORQUE_THRESHOLD = [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
 _DEFAULT_FORCE_THRESHOLD = [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
 
@@ -139,9 +139,7 @@ class FrankyController(Worker):
 
         # Collision + impedance configuration.  franky exposes a
         # two-argument ``set_collision_behavior(torque, force)`` that
-        # applies the same threshold to lower/upper — matches the
-        # pylibfranka fallback's defaults so behaviour doesn't jump
-        # when switching backends.
+        # applies the same threshold to lower/upper.
         try:
             self._robot.set_collision_behavior(
                 _DEFAULT_TORQUE_THRESHOLD,

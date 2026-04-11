@@ -1,29 +1,22 @@
 # Franky backend for Franka Panda — install & RT tuning
 
-这份文档是 `feat/pylibfranka-joint-control` 分支上把 Franka 控制后端从
-pylibfranka 迁移到 [franky](https://github.com/TimSchneider42/franky)
-的记录。`FrankyController`
-（`rlinf/envs/realworld/franka/franky_controller.py`）是主路径，
-`PylibfrankaController` 保留作为 fallback。
+`FrankyController`（`rlinf/envs/realworld/franka/franky_controller.py`）
+是 RLinf 里 Franka 关节空间控制的主路径，基于
+[franky](https://github.com/TimSchneider42/franky) 这个 libfranka 的 Python
+封装实现。
 
-## 为什么要迁移
+## 为什么用 franky（而不是在 Python 里自己跑 1 kHz 控制循环）
 
-pylibfranka 0.19 的 `start_joint_position_control` + `readOnce/writeOnce`
-streaming API 在 Python 里跑 1 kHz 控制循环有几个致命问题：
+任何把 libfranka 的 `readOnce/writeOnce` 直接暴露到 Python 的方案都有一个
+致命结构性问题：pybind11 bindings 如果不带
+`py::call_guard<py::gil_scoped_release>()`，阻塞调用会持有 GIL。任何其它
+Python 线程（Ray actor dispatch、gripper I/O、logging、GC）都能让 RT 线程
+错过 1 ms cycle → libfranka 有限差分看到 v/a 不连续 → internal impedance
+补偿 → 可听嗡鸣。而 Python 侧手写的 jerk-limiter 对 dt 抖动又非常敏感，
+一抖就报 `acceleration_discontinuity`。再加上上层 env 10 Hz step-hold
+输入，smoother 每个 step 边沿都 retrigger ramp，根本抗不住。
 
-1. **pylibfranka bindings 完全不释放 GIL** —— `bind` 源文件里没有任何
-   `py::call_guard<py::gil_scoped_release>()`。每次 `readOnce/writeOnce`
-   在阻塞期间持有 GIL，任何别的 Python 线程（Ray actor dispatch、gripper
-   I/O、logging、GC）都能让 RT 线程错过 1 ms cycle → libfranka
-   有限差分看到 v/a 不连续 → internal impedance 补偿 → 可听嗡鸣。
-2. **Python 侧 jerk-limiter 累积误差** —— 手写的 3-level profile
-   对 Python 的 dt 抖动非常敏感，libfranka 动不动就报
-   `acceleration_discontinuity`。
-3. **10 Hz step-hold 输入** —— 上层 env 每个 step 都给 smoother 一个新的
-   target，smoother retrigger ramp，抗不住噪声。
-4. **GELLO 1 kHz 遥操被 env 10 Hz step 砍到 10 Hz**，99% 采样被丢弃。
-
-franky 的架构直接解掉上面所有问题：
+franky 的架构直接绕开了所有这些问题：
 
 * **C++ `std::thread` 跑 `robot.control()` 回调**，真正的 1 kHz 循环在
   native 代码里，跟 Python 没关系。
@@ -133,7 +126,7 @@ FRANKA_ROBOT_IP=172.16.0.2 FRANKA_GRIPPER_TYPE=robotiq \
   python toolkits/realworld_check/test_franky_controller.py
 ```
 
-交互命令（跟 `test_pylibfranka_controller.py` 同款，方便 a/b 对比）：
+交互命令：
 
 ```
 cmd> getjoint                    # 当前关节角
@@ -182,11 +175,11 @@ cmd> q
 ## 还没解决的问题
 
 1. 如果 franky-control 的 PyPI wheel 跟你的 Python ABI / libfranka
-   版本不匹配，`pip install` 会 fallback 到源码编译，需要
-   `libfranka`、`pinocchio`、`Ruckig` 的 CMake 找得到。`franky_install.sh`
-   装了 eigen/poco/fmt 基础依赖，但 libfranka 源码仍然需要你从
-   pylibfranka 路径复用（`.venv/franka_catkin_ws/libfranka`）——见
-   `install.sh: install_franka_pylibfranka_env` 的 libfranka build 步骤。
+   版本不匹配，`pip install` 会 fallback 到源码编译，需要 libfranka
+   headers + pinocchio 的 CMake 能被找到。`franky_install.sh` 装了
+   eigen/poco/fmt 和 robotpkg pinocchio 基础依赖，但 libfranka 本身
+   源码需要你自己手动准备好（目前 franky 的 wheel 对 Python 3.11 +
+   libfranka 0.15/0.19 都有预编译版本，正常情况下不需要源码编译）。
 2. 首次 `move_joints` 调用前 franky 需要完成 `robot.recover_from_errors()`，
    这在 `__init__` 里已经做了；但如果机器启动时处于 user-stopped 状态，
    recover 会 no-op，后续 `move` 才会报错。手动按掉 user-stop 按钮再跑。

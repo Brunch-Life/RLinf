@@ -39,10 +39,8 @@ Commands (typed at the prompt):
     grip <0-255>      move gripper to discrete position
     impedance <7 ints>  set joint impedance Kq in Nm/rad
 
-This complements ``test_pylibfranka_controller.py`` — the two scripts
-have the same command surface so you can run a/b comparisons without
-relearning anything.  Run only one at a time; both hold a libfranka
-session and will refuse concurrent connections to the robot.
+Only one client at a time can hold a libfranka session — running this
+while an env is already connected to the robot will fail.
 """
 
 import os
