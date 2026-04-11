@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Franka environment with joint-space actions via pylibfranka.
+"""Franka environment with joint-space actions via Franky (libfranka).
 
 This module provides :class:`FrankaJointEnv`, a subclass of :class:`FrankaEnv`
 that operates in joint space rather than Cartesian space.  Joint position
 targets (absolute or delta) are sent directly to the robot via
-:class:`PylibfrankaController`, which streams them at 1 kHz through a
-real-time control loop.
+:class:`FrankyController`, eliminating the need for ROS and Cartesian
+impedance control.
 """
 
 import copy
@@ -31,7 +31,7 @@ import numpy as np
 from rlinf.scheduler import FrankaHWInfo
 
 from .franka_env import FrankaEnv, FrankaRobotConfig
-from .pylibfranka_controller import JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
+from .franky_controller import JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
 
 
 @dataclass
@@ -49,6 +49,14 @@ class FrankaJointRobotConfig(FrankaRobotConfig):
     joint_action_mode: str = "absolute"  # "absolute" or "delta"
     joint_action_scale: float = 0.1  # scaling for delta mode (rad per unit action)
 
+    # When True, env.step() does NOT forward joint targets to the
+    # controller — an external 1 kHz streaming loop (see
+    # GelloJointIntervention with direct_stream=True) is expected to
+    # drive the robot.  step() still computes action bookkeeping,
+    # sleeps to maintain step_frequency, and polls state for obs.
+    # Intended for GELLO data collection; leave False for RL rollouts.
+    teleop_direct_stream: bool = False
+
     def __post_init__(self):
         super().__post_init__()
         self.joint_position_limits_lower = np.array(self.joint_position_limits_lower)
@@ -56,7 +64,7 @@ class FrankaJointRobotConfig(FrankaRobotConfig):
 
 
 class FrankaJointEnv(FrankaEnv):
-    """Franka environment with joint-space actions via pylibfranka.
+    """Franka environment with joint-space actions via Franky.
 
     Action space is 8D: ``[j1, j2, j3, j4, j5, j6, j7, gripper]``.
 
@@ -68,8 +76,8 @@ class FrankaJointEnv(FrankaEnv):
     CONFIG_CLS: type[FrankaJointRobotConfig] = FrankaJointRobotConfig
 
     def _setup_hardware(self):
-        """Use PylibfrankaController instead of FrankaController."""
-        from .pylibfranka_controller import PylibfrankaController
+        """Use FrankyController instead of FrankaController."""
+        from .franky_controller import FrankyController
 
         assert self.env_idx >= 0, "env_idx must be set for FrankaJointEnv."
         assert isinstance(self.hardware_info, FrankaHWInfo), (
@@ -86,12 +94,12 @@ class FrankaJointEnv(FrankaEnv):
             )
         if self.config.gripper_type is None:
             hw_gripper = getattr(
-                self.hardware_info.config, "gripper_type", "pylibfranka"
+                self.hardware_info.config, "gripper_type", "franky"
             )
-            # FrankaConfig defaults to "franka" (ROS-based), but
-            # PylibfrankaController uses "pylibfranka" for the native gripper.
+            # FrankaConfig defaults to "franka" (ROS-based), but FrankyController
+            # uses "franky" (libfranka-based) for the native Franka gripper.
             if hw_gripper == "franka":
-                hw_gripper = "pylibfranka"
+                hw_gripper = "franky"
             self.config.gripper_type = hw_gripper
         if self.config.gripper_connection is None:
             self.config.gripper_connection = getattr(
@@ -104,12 +112,12 @@ class FrankaJointEnv(FrankaEnv):
         if controller_node_rank is None:
             controller_node_rank = self.node_rank
 
-        # Ensure gripper_type is valid for PylibfrankaController
-        gripper_type = self.config.gripper_type or "pylibfranka"
+        # Ensure gripper_type is valid for FrankyController
+        gripper_type = self.config.gripper_type or "franky"
         if gripper_type == "franka":
-            gripper_type = "pylibfranka"
+            gripper_type = "franky"
 
-        self._controller = PylibfrankaController.launch_controller(
+        self._controller = FrankyController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
             node_rank=controller_node_rank,
@@ -150,7 +158,7 @@ class FrankaJointEnv(FrankaEnv):
         else:  # delta
             act_low = np.ones(8, dtype=np.float32) * -1.0
             act_high = np.ones(8, dtype=np.float32) * 1.0
-        self.action_space = gym.spaces.Box(act_low, act_high, dtype=np.float32)
+        self.action_space = gym.spaces.Box(act_low, act_high)
 
         # Observation space: includes both Cartesian and joint information
         self.observation_space = gym.spaces.Dict(
@@ -221,8 +229,12 @@ class FrankaJointEnv(FrankaEnv):
             gripper_action_scaled = gripper_action_value * self.config.action_scale[2]
             is_gripper_action_effective = self._gripper_action(gripper_action_scaled)
 
-            # Set joint target (non-blocking — RT loop tracks it at 1 kHz)
-            self._controller.move_joints(target_joints.astype(np.float32)).wait()
+            # Send joint target — unless an external 1 kHz streamer
+            # owns the controller (GELLO teleop path).  In that case,
+            # env.step() just sleeps + reads state and leaves motion
+            # commands to the streaming daemon in the wrapper.
+            if not self.config.teleop_direct_stream:
+                self._controller.move_joints(target_joints.astype(np.float32)).wait()
         else:
             is_gripper_action_effective = True
 
@@ -290,3 +302,4 @@ class FrankaJointEnv(FrankaEnv):
             return copy.deepcopy(observation)
         else:
             return self._base_observation_space.sample()
+

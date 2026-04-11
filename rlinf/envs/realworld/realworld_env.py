@@ -98,6 +98,7 @@ class RealWorldEnv(gym.Env):
                 "use_spacemouse, use_gello, and use_gello_joint are mutually "
                 "exclusive. Please set only one of them to True."
             )
+
         no_gripper = self.cfg.get("no_gripper", True)
         gripper_enabled = not no_gripper
         if not env.config.is_dummy and use_spacemouse:
@@ -117,18 +118,23 @@ class RealWorldEnv(gym.Env):
             gello_port = self.cfg.get("gello_port", None)
             if gello_port is None:
                 raise ValueError(
-                    "use_gello_joint is True but gello_port is not set in the env config. "
-                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
-                    "serial port of your GELLO device."
+                    "use_gello_joint is True but gello_port is not set in the "
+                    "env config. Please set env.eval.gello_port (or "
+                    "env.train.gello_port) to the serial port of your GELLO device."
                 )
             use_delta = getattr(env.config, "joint_action_mode", "absolute") == "delta"
             action_scale = getattr(env.config, "joint_action_scale", 0.1)
+            # direct_stream = env config's teleop_direct_stream, which
+            # ALSO gates env.step's move_joints call.  The wrapper
+            # owns the 1 kHz pump; the env just does bookkeeping.
+            direct_stream = getattr(env.config, "teleop_direct_stream", False)
             env = GelloJointIntervention(
                 env,
                 port=gello_port,
                 gripper_enabled=gripper_enabled,
                 use_delta=use_delta,
                 action_scale=action_scale,
+                direct_stream=direct_stream,
             )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
@@ -136,7 +142,12 @@ class RealWorldEnv(gym.Env):
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
 
-        is_joint_space = getattr(env.config, "joint_action_mode", None) is not None
+        # RelativeFrame is only applicable to Cartesian control.
+        # Skip it for joint-space environments (identified by joint_action_mode
+        # in env config) since the adjoint transform is meaningless for joints.
+        is_joint_space = hasattr(env, "config") and getattr(
+            env.config, "joint_action_mode", None
+        ) is not None
         if self.cfg.get("use_relative_frame", True) and not is_joint_space:
             env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)

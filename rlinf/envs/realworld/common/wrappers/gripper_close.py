@@ -19,15 +19,17 @@ from gymnasium.spaces import Box
 
 class GripperCloseEnv(gym.ActionWrapper):
     """
-    Use this wrapper to task that requires the gripper to be closed
+    Use this wrapper to task that requires the gripper to be closed.
+
+    Strips the last action dimension (gripper) and forces it to zero.
+    Works with both 7D Cartesian actions (6+1) and 8D joint actions (7+1).
     """
 
     def __init__(self, env):
         super().__init__(env)
         ub = self.env.action_space
-        assert len(ub.shape) == 1, f"Expected 1-D action space, got shape {ub.shape}"
+        assert len(ub.shape) == 1, f"Expected 1D action space, got shape {ub.shape}"
         self._full_action_dim = ub.shape[0]
-        # Strip the last dimension (gripper) from the action space
         self.action_space = Box(ub.low[:-1], ub.high[:-1])
 
     def action(self, action: np.ndarray) -> np.ndarray:

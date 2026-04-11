@@ -15,6 +15,9 @@
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
+from rlinf.envs.realworld.franka.franka_joint_env import (
+    FrankaJointEnv as FrankaJointEnv,
+)
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
@@ -29,6 +32,11 @@ register(
 )
 
 register(
+    id="FrankaJointEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.franka_joint_env:FrankaJointEnv",
+)
+
+register(
     id="PegInsertionEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:PegInsertionEnv",
 )
@@ -39,8 +47,3 @@ register(
 )
 
 register(id="BottleEnv-v1", entry_point="rlinf.envs.realworld.franka.tasks:BottleEnv")
-
-register(
-    id="FrankaJointEnv-v1",
-    entry_point="rlinf.envs.realworld.franka.franka_joint_env:FrankaJointEnv",
-)

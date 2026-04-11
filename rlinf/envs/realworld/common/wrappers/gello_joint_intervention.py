@@ -16,8 +16,23 @@
 
 This wrapper overrides the policy's joint-space action with joint positions
 read directly from the GELLO teleoperation device.
+
+Two streaming modes:
+
+* **step-gated** (default): ``action()`` returns the GELLO joints and the
+  env's own ``step()`` forwards them to the controller at
+  ``step_frequency`` Hz.  Simple but discards most GELLO samples.
+
+* **direct-stream** (``direct_stream=True``): a daemon thread reads GELLO
+  at ~1 kHz and pushes joint targets straight to the controller via
+  ``move_joints``, bypassing env.step's rate gate.  Meant to be paired
+  with ``FrankaJointRobotConfig.teleop_direct_stream=True`` so env.step
+  does NOT also send move_joints — avoids two writers racing on
+  franky's motion queue.  Policy buffers still see actions at 10 Hz
+  from ``action()``; the stream is purely a hardware control path.
 """
 
+import threading
 import time
 
 import gymnasium as gym
@@ -43,6 +58,11 @@ class GelloJointIntervention(gym.ActionWrapper):
             absolute positions.
         action_scale: Scaling factor for delta mode (must match the env's
             ``joint_action_scale``).
+        direct_stream: If ``True``, start a background thread that streams
+            GELLO joints to the controller at ~1 kHz.  Requires
+            ``FrankaJointRobotConfig.teleop_direct_stream=True`` on the
+            underlying env so env.step does not also forward move_joints.
+        stream_period: Stream loop period in seconds (default 0.001 → 1 kHz).
     """
 
     def __init__(
@@ -52,6 +72,8 @@ class GelloJointIntervention(gym.ActionWrapper):
         gripper_enabled: bool = True,
         use_delta: bool = False,
         action_scale: float = 0.1,
+        direct_stream: bool = False,
+        stream_period: float = 0.001,
     ):
         super().__init__(env)
 
@@ -60,6 +82,98 @@ class GelloJointIntervention(gym.ActionWrapper):
         self.action_scale = action_scale
         self.expert = GelloJointExpert(port=port)
         self.last_intervene = 0
+
+        # ── direct-stream daemon ────────────────────────────────────
+        self._direct_stream = direct_stream
+        self._stream_period = stream_period
+        self._stream_thread: threading.Thread | None = None
+        self._stream_running = False
+        self._stream_last_gripper_open: bool | None = None
+
+        if self._direct_stream:
+            self._start_stream_thread()
+
+    # ═══════════════════════════════════════════════════════════════
+    #  Direct-stream daemon — bypasses env.step's 10 Hz rate gate
+    # ═══════════════════════════════════════════════════════════════
+
+    def _start_stream_thread(self) -> None:
+        """Spawn the 1 kHz GELLO → controller pump."""
+        controller = self._resolve_controller()
+        if controller is None:
+            # env still warming up; env.reset will create _controller.
+            # Defer until first step when the attribute exists.
+            return
+        self._stream_running = True
+        self._stream_thread = threading.Thread(
+            target=self._stream_loop,
+            name="GelloJointStream",
+            daemon=True,
+        )
+        self._stream_thread.start()
+
+    def _resolve_controller(self):
+        """Return the underlying FrankyController handle, or None."""
+        try:
+            return self.get_wrapper_attr("_controller")
+        except (AttributeError, Exception):
+            return None
+
+    def _stream_loop(self) -> None:
+        """Read GELLO at ~1 kHz, push joint targets to the controller.
+
+        Gripper events are batched on transitions only — gripper
+        commands are slow (~100 ms) so streaming them every 1 ms would
+        starve the serial/network channel.
+        """
+        controller = self._resolve_controller()
+        if controller is None:
+            return
+
+        period = self._stream_period
+        while self._stream_running:
+            loop_start = time.time()
+
+            if not self.expert.ready:
+                time.sleep(period)
+                continue
+
+            try:
+                q, g = self.expert.get_action()
+            except Exception:
+                time.sleep(period)
+                continue
+
+            try:
+                # move_joints is non-blocking — franky preempts the
+                # previous motion and re-plans via Ruckig.  .wait() is
+                # the Ray actor call ack, not the robot motion.
+                controller.move_joints(q.astype(np.float32)).wait()
+            except Exception:
+                pass  # best-effort streaming, env.step reads state
+
+            if self.gripper_enabled:
+                is_open_now = bool(g < 0.5)
+                if self._stream_last_gripper_open is None:
+                    self._stream_last_gripper_open = is_open_now
+                elif is_open_now != self._stream_last_gripper_open:
+                    try:
+                        if is_open_now:
+                            controller.open_gripper().wait()
+                        else:
+                            controller.close_gripper().wait()
+                    except Exception:
+                        pass
+                    self._stream_last_gripper_open = is_open_now
+
+            elapsed = time.time() - loop_start
+            sleep_for = period - elapsed
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+    # ═══════════════════════════════════════════════════════════════
+    #  Action override (policy buffer path — runs at env step rate)
+    # ═══════════════════════════════════════════════════════════════
 
     def _get_current_joint_positions(self) -> np.ndarray:
         """Read current joint positions from env state without triggering RPC.
@@ -110,8 +224,21 @@ class GelloJointIntervention(gym.ActionWrapper):
     def step(self, action):
         new_action, replaced = self.action(action)
 
+        # Lazy-start the stream thread on first step if the controller
+        # wasn't ready at __init__ time.
+        if self._direct_stream and self._stream_thread is None:
+            self._start_stream_thread()
+
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
             info["intervene_action"] = new_action
 
         return obs, rew, done, truncated, info
+
+    def close(self):
+        """Stop the stream thread before tearing down the env."""
+        self._stream_running = False
+        t = self._stream_thread
+        if t is not None and t.is_alive():
+            t.join(timeout=2.0)
+        return super().close()

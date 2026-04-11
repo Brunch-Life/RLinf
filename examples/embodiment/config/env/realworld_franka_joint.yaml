@@ -12,7 +12,11 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 300
 max_episode_steps: 300
 use_spacemouse: False
+use_gello: False
+use_gello_joint: True
+use_relative_frame: False  # Not applicable for joint-space control
 no_gripper: False
+gello_port: "/dev/serial/by-id/your-gello-serial-port"  # Replace with your GELLO serial port
 main_image_key: wrist_1
 
 video_cfg:
@@ -28,20 +32,22 @@ override_cfg:
   is_dummy: false
   # Replace with your task description.
   task_description: "pick up the object and place it into the container"
+  # Joint action mode: "absolute" for direct GELLO mapping, "delta" for RL training.
+  joint_action_mode: "absolute"
+  # Scaling factor for delta mode (rad per unit action). Ignored in absolute mode.
+  joint_action_scale: 0.1
+  # Conservative joint velocity limit (rad/s per joint) for safety.
+  joint_velocity_limit: 0.5
   # Replace with your goal pose [x, y, z, rx, ry, rz] used by success checking.
   target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
-  # Replace with your reset pose [x, y, z, rx, ry, rz]. Keep it above the target for a safe approach.
+  # Replace with your reset pose [x, y, z, rx, ry, rz].
   reset_ee_pose: [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]
   max_num_steps: 300
   # Position success tolerance [x, y, z, rx, ry, rz].
   reward_threshold: [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
   enable_gripper_penalty: false
-  # [xyz delta scale, rpy delta scale, gripper scale].
+  # [xyz delta scale, rpy delta scale, gripper scale]. gripper scale is still used.
   action_scale: [1.0, 1.0, 1.0]
-  # Workspace safety box for Cartesian reset motions.
+  # Workspace clip box (Cartesian). Used for safety even in joint-space mode.
   ee_pose_limit_min: [0.4, -0.2, 0.05, -3.64, -0.5, -0.5]
   ee_pose_limit_max: [0.6, 0.2, 0.35, -2.64, 0.5, 0.5]
-  # Joint-space control parameters.
-  joint_action_mode: "absolute"    # "absolute" or "delta"
-  joint_action_scale: 0.1          # scaling for delta mode (rad per unit action)
-  joint_velocity_limit: 0.5        # rad/s per joint (conservative)
