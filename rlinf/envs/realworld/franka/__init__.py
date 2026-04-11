@@ -14,5 +14,12 @@
 
 
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
+from .franka_joint_env import FrankaJointEnv, FrankaJointRobotConfig
 
-__all__ = ["FrankaEnv", "FrankaRobotState", "FrankaRobotConfig"]
+__all__ = [
+    "FrankaEnv",
+    "FrankaJointEnv",
+    "FrankaJointRobotConfig",
+    "FrankaRobotConfig",
+    "FrankaRobotState",
+]

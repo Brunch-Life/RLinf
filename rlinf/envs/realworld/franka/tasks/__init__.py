@@ -39,3 +39,8 @@ register(
 )
 
 register(id="BottleEnv-v1", entry_point="rlinf.envs.realworld.franka.tasks:BottleEnv")
+
+register(
+    id="FrankaJointEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.franka_joint_env:FrankaJointEnv",
+)

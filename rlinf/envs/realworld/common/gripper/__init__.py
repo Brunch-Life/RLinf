@@ -56,7 +56,16 @@ def create_gripper(
         from .franka_gripper import FrankaGripper
 
         return FrankaGripper(ros=ros, **kwargs)
+    if gt == "pylibfranka":
+        robot_ip = kwargs.pop("robot_ip", None)
+        if robot_ip is None:
+            raise ValueError(
+                "robot_ip must be specified for pylibfranka gripper."
+            )
+        from .pylibfranka_gripper import PylibfrankaGripper
+
+        return PylibfrankaGripper(robot_ip=robot_ip, **kwargs)
     raise ValueError(
         f"Unsupported gripper_type={gripper_type!r}. "
-        f"Supported types: 'franka', 'robotiq'."
+        f"Supported types: 'franka', 'robotiq', 'pylibfranka'."
     )

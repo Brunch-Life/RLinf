@@ -28,6 +28,7 @@ from omegaconf import OmegaConf
 
 from rlinf.envs.realworld.common.wrappers import (
     GelloIntervention,
+    GelloJointIntervention,
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
@@ -88,10 +89,14 @@ class RealWorldEnv(gym.Env):
             env = GripperCloseEnv(env)
         use_spacemouse = self.cfg.get("use_spacemouse", True)
         use_gello = self.cfg.get("use_gello", False)
-        if use_spacemouse and use_gello:
+        use_gello_joint = self.cfg.get("use_gello_joint", False)
+
+        # Mutual exclusion check for intervention devices
+        active_interventions = sum([use_spacemouse, use_gello, use_gello_joint])
+        if active_interventions > 1:
             raise ValueError(
-                "use_spacemouse and use_gello are mutually exclusive. "
-                "Please set only one of them to True."
+                "use_spacemouse, use_gello, and use_gello_joint are mutually "
+                "exclusive. Please set only one of them to True."
             )
         no_gripper = self.cfg.get("no_gripper", True)
         gripper_enabled = not no_gripper
@@ -108,13 +113,31 @@ class RealWorldEnv(gym.Env):
             env = GelloIntervention(
                 env, port=gello_port, gripper_enabled=gripper_enabled
             )
+        if not env.config.is_dummy and use_gello_joint:
+            gello_port = self.cfg.get("gello_port", None)
+            if gello_port is None:
+                raise ValueError(
+                    "use_gello_joint is True but gello_port is not set in the env config. "
+                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
+                    "serial port of your GELLO device."
+                )
+            use_delta = getattr(env.config, "joint_action_mode", "absolute") == "delta"
+            action_scale = getattr(env.config, "joint_action_scale", 0.1)
+            env = GelloJointIntervention(
+                env,
+                port=gello_port,
+                gripper_enabled=gripper_enabled,
+                use_delta=use_delta,
+                action_scale=action_scale,
+            )
         if not env.config.is_dummy and self.cfg.get("keyboard_reward_wrapper", None):
             if self.cfg.keyboard_reward_wrapper == "multi_stage":
                 env = KeyboardRewardDoneMultiStageWrapper(env)
             elif self.cfg.keyboard_reward_wrapper == "single_stage":
                 env = KeyboardRewardDoneWrapper(env)
 
-        if self.cfg.get("use_relative_frame", True):
+        is_joint_space = getattr(env.config, "joint_action_mode", None) is not None
+        if self.cfg.get("use_relative_frame", True) and not is_joint_space:
             env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)
         return env

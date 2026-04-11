@@ -14,6 +14,7 @@
 
 from .euler_obs import Quat2EulerWrapper
 from .gello_intervention import GelloIntervention
+from .gello_joint_intervention import GelloJointIntervention
 from .gripper_close import GripperCloseEnv
 from .relative_frame import RelativeFrame
 from .reward_done_wrapper import (
@@ -24,6 +25,7 @@ from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
     "GelloIntervention",
+    "GelloJointIntervention",
     "GripperCloseEnv",
     "KeyboardRewardDoneMultiStageWrapper",
     "KeyboardRewardDoneWrapper",
