@@ -681,7 +681,8 @@ class CollectEpisode(gym.Wrapper):
         return "unknown task"
 
     def _extract_obs_image_state(
-        self, obs: dict | None,
+        self,
+        obs: dict | None,
     ) -> tuple:
         """Return ``(image, wrist_image, extra_view_image, left_wrist_image, right_wrist_image, state)`` from an obs dict.
 

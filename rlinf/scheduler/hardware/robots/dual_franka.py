@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from ..hardware import (
@@ -145,7 +145,7 @@ class DualFrankaConfig(HardwareConfig):
     disable_validate: bool = False
     """Skip IP ping and camera serial validation."""
 
-    def __post_init__(self):
+    def __post_init__(self):  # noqa: D105
         assert isinstance(self.node_rank, int), (
             f"'node_rank' in DualFranka config must be an integer. "
             f"But got {type(self.node_rank)}."

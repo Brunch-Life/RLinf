@@ -76,7 +76,8 @@ class DualSpacemouseIntervention(gym.ActionWrapper):
         return action, False
 
     def step(
-        self, action: np.ndarray,
+        self,
+        action: np.ndarray,
     ) -> tuple[dict, float, bool, bool, dict]:
         """Run one env step, replacing the action when the operator is active."""
         new_action, replaced = self.action(action)
