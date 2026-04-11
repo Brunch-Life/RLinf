@@ -36,7 +36,11 @@ class DualQuat2EulerWrapper(gym.ObservationWrapper):
         tcp_pose = observation["state"]["tcp_pose"]
         left = tcp_pose[:7]
         right = tcp_pose[7:]
-        left_euler = np.concatenate([left[:3], R.from_quat(left[3:].copy()).as_euler("xyz")])
-        right_euler = np.concatenate([right[:3], R.from_quat(right[3:].copy()).as_euler("xyz")])
+        left_euler = np.concatenate(
+            [left[:3], R.from_quat(left[3:].copy()).as_euler("xyz")]
+        )
+        right_euler = np.concatenate(
+            [right[:3], R.from_quat(right[3:].copy()).as_euler("xyz")]
+        )
         observation["state"]["tcp_pose"] = np.concatenate([left_euler, right_euler])
         return observation

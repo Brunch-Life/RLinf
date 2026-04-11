@@ -62,9 +62,13 @@ class DualGelloIntervention(gym.ActionWrapper):
         left_a = self._compute_delta(self.left_expert, left_tcp, action_scale)
         right_a = self._compute_delta(self.right_expert, right_tcp, action_scale)
 
-        any_active = np.linalg.norm(left_a[:6]) > 0.001 or np.linalg.norm(right_a[:6]) > 0.001
+        any_active = (
+            np.linalg.norm(left_a[:6]) > 0.001 or np.linalg.norm(right_a[:6]) > 0.001
+        )
         if self.gripper_enabled:
-            any_active = any_active or np.abs(left_a[6]) > 0.5 or np.abs(right_a[6]) > 0.5
+            any_active = (
+                any_active or np.abs(left_a[6]) > 0.5 or np.abs(right_a[6]) > 0.5
+            )
 
         if any_active:
             self.last_intervene = time.time()
@@ -84,7 +88,10 @@ class DualGelloIntervention(gym.ActionWrapper):
         return obs, rew, done, truncated, info
 
     def _compute_delta(
-        self, expert: GelloExpert, tcp_pose: np.ndarray, action_scale: np.ndarray,
+        self,
+        expert: GelloExpert,
+        tcp_pose: np.ndarray,
+        action_scale: np.ndarray,
     ) -> np.ndarray:
         target_pos, target_quat, target_gripper = expert.get_action()
         r_target = R.from_quat(target_quat.copy())

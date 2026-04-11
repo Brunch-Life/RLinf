@@ -189,7 +189,11 @@ class RealWorldEnv(gym.Env):
                     if proc.name() in ros_proc_names:
                         proc.kill()
                         time.sleep(0.5)
-                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                except (
+                    psutil.AccessDenied,
+                    psutil.NoSuchProcess,
+                    psutil.ZombieProcess,
+                ):
                     pass
 
     def _init_env(self):
