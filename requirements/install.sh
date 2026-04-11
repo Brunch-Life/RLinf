@@ -910,7 +910,10 @@ install_frankasim_env() {
 }
 
 install_dosw1_env() {
-    uv pip install gymnasium numpy opencv-python-headless hydra-core "ray[default]>=2.47.0" imageio
+    # Reuse the standard embodied extra so dosw1 picks up the same
+    # transformers/imageio/gymnasium dependency set as other embodied envs.
+    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv pip install opencv-python-headless
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"
     uv pip install -e "$repo_root" --no-deps
