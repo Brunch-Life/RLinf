@@ -501,10 +501,11 @@ class DualFrankaEnv(gym.Env):
         return observation, reward, terminated, truncated, {}
 
     def reset(self, *, seed=None, options=None):
+        self._num_steps = 0
+        self._success_hold_counter = 0
+
         if self.config.is_dummy:
             return self._get_observation(), {}
-
-        self._success_hold_counter = 0
 
         for ctrl in (self._left_ctrl, self._right_ctrl):
             ctrl.reconfigure_compliance_params(self.config.compliance_param).wait()
@@ -519,7 +520,6 @@ class DualFrankaEnv(gym.Env):
 
         self._go_to_rest(joint_reset)
         self._clear_errors()
-        self._num_steps = 0
 
         left_st_f = self._left_ctrl.get_state()
         right_st_f = self._right_ctrl.get_state()
