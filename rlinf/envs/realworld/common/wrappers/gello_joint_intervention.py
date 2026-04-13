@@ -145,9 +145,8 @@ class GelloJointIntervention(gym.ActionWrapper):
                 continue
 
             try:
-                # move_joints is non-blocking — franky preempts the
-                # previous motion and re-plans via Ruckig.  .wait() is
-                # the Ray actor call ack, not the robot motion.
+                # move_joints updates the impedance tracking reference
+                # (non-blocking).  .wait() is the Ray actor RPC ack.
                 controller.move_joints(q.astype(np.float32)).wait()
             except Exception:
                 pass  # best-effort streaming, env.step reads state

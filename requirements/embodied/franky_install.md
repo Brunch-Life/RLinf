@@ -23,10 +23,10 @@ franky 的架构直接绕开了所有这些问题：
 * **所有 pybind11 bindings 都带 `py::call_guard<py::gil_scoped_release>()`**
   （见 `python/bind_robot.cpp:63,72,147,...,237`）—— Python 主线程完全
   不阻塞 C++ 控制线程。
-* **内置 Ruckig OTG**，做 jerk-constrained online trajectory
-  generation。调用 `robot.move(motion, asynchronous=True)` 立即返回，
-  再次调用时 Ruckig 在线 re-plan，从当前状态/速度/加速度平滑过渡到新
-  target —— 这就是 streaming preemption 的正确姿势。
+* **内置关节阻抗跟踪（Joint Impedance Tracking）**，
+  `JointImpedanceTrackingMotion` 在 C++ RT 线程中持续计算阻抗力矩跟踪
+  最新参考位置，Python 端只需调 `tracker.update(q)` 更新参考——无需每次
+  重规划轨迹，1 kHz 流式发送平滑无抖动。
 * **PyPI 有预编译 wheel**（`pip install franky-control`）。
 
 ## 硬件和内核前提
@@ -130,7 +130,7 @@ FRANKA_ROBOT_IP=172.16.0.2 FRANKA_GRIPPER_TYPE=robotiq \
 
 ```
 cmd> getjoint                    # 当前关节角
-cmd> home                        # 复位到 HOME_JOINTS（franky Ruckig 插值）
+cmd> home                        # 复位到 HOME_JOINTS
 cmd> hold 30                     # 静置 30 s，耳测有没有嗡鸣
 cmd> nudge 4 0.3                 # J4 +0.3 rad 单次 move_joints
 cmd> stream 4 0.001 500          # 以 1 kHz 频率发 500 条 J4 +0.001 rad（streaming preemption 压测）
@@ -164,8 +164,7 @@ cmd> q
   算 reward。
 * `GelloJointIntervention` 拉起一个 daemon 线程，以 ~1 kHz 的节奏从
   `GelloJointExpert.get_action()` 读遥操关节角，直接调
-  `controller.move_joints(q)`。franky 的 Ruckig 会 preempt + re-plan，
-  不会 race。
+  `controller.move_joints(q)` 更新阻抗跟踪参考，C++ RT 线程平滑跟踪。
 * Gripper 只在开/关状态翻转时触发一次 `open_gripper()` / `close_gripper()`，
   避免 serial/Modbus 通道被每毫秒的命令打爆。
 

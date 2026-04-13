@@ -15,19 +15,18 @@
 """Franka robot controller using Franky (libfranka) for joint-space control.
 
 Thin wrapper around the ``franky`` library.  All real-time work — 1 kHz
-``robot.control()``, Ruckig online trajectory generation, motion
-preemption — runs inside franky's C++ std::thread, and every franky
-Python binding releases the GIL via
-``py::call_guard<py::gil_scoped_release>()``.  That means this
+``robot.control()`` loop and impedance torque computation — runs inside
+franky's C++ std::thread, and every franky Python binding releases the
+GIL via ``py::call_guard<py::gil_scoped_release>()``.  That means this
 controller does no RT work in Python at all:
 
-* ``move_joints`` / ``move_arm`` just hand a ``JointMotion`` or
-  ``CartesianMotion`` to ``robot.move(..., asynchronous=True)`` and
-  return immediately.  The next call preempts the previous one and
-  Ruckig re-plans from the current state — so streaming GELLO joint
-  targets at 1 kHz works out of the box.
-* ``reset_joint`` is the one place we want a blocking wait (env
-  ``reset()`` semantics), so we submit the motion synchronously.
+* ``move_joints`` updates the impedance tracking reference via
+  ``JointImpedanceTrackingMotion``.  The C++ control thread
+  continuously computes joint torques to track the latest reference
+  at 1 kHz — no trajectory re-planning on each call, so streaming
+  GELLO joint targets at 1 kHz produces smooth, buzz-free motion.
+* ``reset_joint`` uses a synchronous ``JointMotion`` for blocking
+  resets (env ``reset()`` semantics).
 * ``get_state`` calls ``robot.read_once()`` on demand; there is no
   background state thread fighting for the GIL with Ray dispatch.
 
@@ -68,7 +67,6 @@ _DEFAULT_FORCE_THRESHOLD = [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
 # into audible buzz.  Tune via reconfigure_compliance_params at runtime.
 _DEFAULT_JOINT_IMPEDANCE = [400.0, 400.0, 400.0, 400.0, 200.0, 100.0, 40.0]
 
-# Ruckig dynamics scale.  0.15 = 15% of Franka's hard v/a/j limits.
 _DEFAULT_DYNAMICS_FACTOR = 0.15
 
 # Real-time priority for the Python main/dispatch thread.  80 is a
@@ -168,6 +166,9 @@ class FrankyController(Worker):
             gripper_type="robotiq",
             port=gripper_connection,
         )
+
+        # Impedance tracking motion handle (lazy-started on first move_joints).
+        self._tracker = None
 
         # Cached gripper state (read on get_state, not on every RT tick).
         self._cached_gripper_position: float = 0.0
@@ -349,12 +350,24 @@ class FrankyController(Worker):
     def reconfigure_compliance_params(self, params: dict[str, float]):
         """Apply runtime joint impedance updates.
 
-        Accepts a dict with an optional ``"Kq"`` key mapping to a list
-        of 7 stiffness values (Nm/rad).  Cartesian params are ignored
-        — joint-space control doesn't use them.
+        Accepts a dict with optional ``"Kq"`` (stiffness) and ``"Dq"``
+        (damping) keys, each mapping to a list of 7 values (Nm/rad or
+        Nms/rad).  If a tracker is active, gains are updated via the
+        tracker's exponential interpolation; otherwise falls back to
+        ``robot.set_joint_impedance``.
         """
         Kq = params.get("Kq", None)
-        if Kq is not None:
+        Dq = params.get("Dq", None)
+        if self._tracker is not None and (Kq is not None or Dq is not None):
+            try:
+                self._tracker.set_gains(
+                    stiffness=np.array(Kq) if Kq is not None else None,
+                    damping=np.array(Dq) if Dq is not None else None,
+                )
+                self._logger.info(f"Tracker gains updated: Kq={Kq}, Dq={Dq}")
+            except Exception as e:
+                self._logger.warning(f"Failed to set tracker gains: {e}")
+        elif Kq is not None:
             try:
                 self._robot.set_joint_impedance(list(Kq))
                 self._logger.info(f"Joint impedance updated: {list(Kq)}")
@@ -369,17 +382,34 @@ class FrankyController(Worker):
             self._logger.warning(f"Error recovery failed: {e}")
 
     # ═══════════════════════════════════════════════════════════════
-    #  Joint control (non-blocking — franky Ruckig re-plans on preempt)
+    #  Joint control (impedance tracking — buzz-free streaming)
     # ═══════════════════════════════════════════════════════════════
 
-    def move_joints(self, joint_positions: np.ndarray):
-        """Submit a new joint-space target (non-blocking).
+    def _ensure_tracking_motion(self):
+        """Start the impedance tracking motion if not already active.
 
-        Builds a ``JointMotion(target, ReferenceType.Absolute)`` and
-        calls ``robot.move(motion, asynchronous=True)``.  Successive
-        calls preempt the in-flight motion; franky's Ruckig re-plans
-        from the current state/velocity/acceleration, so streaming
-        targets at 1 kHz is fine.
+        Creates a ``JointImpedanceTracker`` which internally builds a
+        ``JointImpedanceTrackingMotion``, seeds the reference from the
+        current joint positions, and starts the async control loop.
+        Subsequent calls to ``set_target()`` update the reference that
+        the C++ RT thread tracks via impedance torques.
+        """
+        if self._tracker is not None:
+            return
+
+        self._tracker = self._franky.JointImpedanceTracker(
+            self._robot,
+            stiffness=np.array(_DEFAULT_JOINT_IMPEDANCE),
+        )
+        self._logger.info("Joint impedance tracking motion started")
+
+    def move_joints(self, joint_positions: np.ndarray):
+        """Update the impedance tracking reference (non-blocking).
+
+        Updates the target of the active ``JointImpedanceTrackingMotion``.
+        The C++ control thread continuously computes torques to track
+        the reference — no trajectory re-planning per call, so streaming
+        at 1 kHz is smooth and buzz-free.
         """
         assert len(joint_positions) == 7, (
             f"Expected 7 joint positions, got {len(joint_positions)}"
@@ -388,27 +418,34 @@ class FrankyController(Worker):
             joint_positions, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
         ).tolist()
 
-        franky = self._franky
-        motion = franky.JointMotion(
-            q, reference_type=franky.ReferenceType.Absolute
-        )
         try:
-            self._robot.move(motion, asynchronous=True)
+            self._ensure_tracking_motion()
+            self._tracker.set_target(np.array(q))
         except Exception as e:
-            self._logger.warning(f"Joint motion failed: {e}")
+            self._logger.warning(f"Joint impedance update failed: {e}")
+            self._stop_tracking_motion()
             self.clear_errors()
+
+    def _stop_tracking_motion(self):
+        """Stop the impedance tracking motion if active."""
+        if self._tracker is not None:
+            try:
+                self._tracker.stop()
+            except Exception:
+                pass
+            self._tracker = None
 
     def reset_joint(self, reset_pos: list[float]):
         """Blocking joint reset — matches env ``reset()`` semantics.
 
-        Uses franky's synchronous ``robot.move`` on a ``JointMotion``
-        so Ruckig picks a smooth duration and we return only when the
-        robot has actually arrived.  No manual ``_wait_for_joint``
-        polling needed.
+        Stops any active impedance tracking, then uses a synchronous
+        ``JointMotion`` so the robot moves smoothly to the target and
+        we return only when it has arrived.
         """
         assert len(reset_pos) == 7, (
             f"Invalid reset position, expected 7 dims but got {len(reset_pos)}"
         )
+        self._stop_tracking_motion()
         self.clear_errors()
 
         franky = self._franky
@@ -436,13 +473,13 @@ class FrankyController(Worker):
         """Submit a Cartesian target (non-blocking).
 
         Called at 10 Hz from ``FrankaEnv._interpolate_move`` during a
-        Cartesian reset.  Must be async so each 10 Hz tick completes
-        immediately; franky's Ruckig interpolates between successive
-        targets.
+        Cartesian reset.  Stops any active impedance tracking first,
+        then submits a ``CartesianMotion`` asynchronously.
         """
         assert len(position) == 7, (
             f"Invalid position, expected 7 dims but got {len(position)}"
         )
+        self._stop_tracking_motion()
         franky = self._franky
 
         translation = np.asarray(position[:3], dtype=np.float64)
@@ -486,7 +523,8 @@ class FrankyController(Worker):
     # ═══════════════════════════════════════════════════════════════
 
     def cleanup(self):
-        """Join any in-flight motion and release the Robotiq gripper handle."""
+        """Stop tracking motion, join in-flight motion, release gripper."""
+        self._stop_tracking_motion()
         try:
             self._robot.join_motion()
         except Exception:

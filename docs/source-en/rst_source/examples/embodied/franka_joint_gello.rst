@@ -26,8 +26,8 @@ control**. While effective, it has two limitations for certain use cases:
 
 The **franky** backend solves both problems:
 
-- ``franky`` runs the 1 kHz ``robot.control()`` loop and Ruckig online
-  trajectory generation entirely inside a C++ ``std::thread``.
+- ``franky`` runs the 1 kHz ``robot.control()`` loop and impedance
+  torque computation entirely inside a C++ ``std::thread``.
 - All pybind11 bindings release the GIL via
   ``py::call_guard<py::gil_scoped_release>()``, so Python threads never
   block the RT path.
@@ -139,6 +139,7 @@ Use the provided config for GELLO joint-space data collection:
 
 .. code-block:: bash
 
+   source .venv/bin/activate
    export EMBODIED_PATH=$(pwd)/examples/embodiment
    python examples/embodiment/train_embodied_agent.py \
        --config-name realworld_collect_data_gello_joint
@@ -249,10 +250,16 @@ Troubleshooting
 
 **Robot buzzes or jerks under load**
 
+``FrankyController`` uses ``JointImpedanceTrackingMotion`` for streaming,
+which computes impedance torques to smoothly track the latest reference
+without trajectory re-planning per call.  If buzz still occurs:
+
 - Ensure the CPU governor is set to ``performance``.
 - Check that ``kernel.sched_rt_runtime_us=-1`` is active.
 - Verify with ``cyclictest -p 80 -t 1 -n -i 1000 -l 10000`` that worst-case
   latency is < 100 μs.
+- Try lowering joint impedance stiffness via
+  ``controller.reconfigure_compliance_params({"Kq": [300,300,300,300,150,80,30]})``.
 
 **GELLO readings stop updating**
 
