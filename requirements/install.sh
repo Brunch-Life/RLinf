@@ -42,7 +42,7 @@ Options (for target=embodied):
                                         C++ RT thread + Ruckig smoother —
                                         recommended; requires PREEMPT_RT
                                         and the system tuning in
-                                        franky_install.md
+                                        requirements/embodied/franky_install.md
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -869,7 +869,7 @@ install_franka_franky_env() {
     # inside franky's std::thread, and all pybind11 bindings release the
     # GIL — no Python RT loop, no GIL contention with Ray actors.  See
     # rlinf/envs/realworld/franka/franky_controller.py and
-    # franky_install.md for details.
+    # requirements/embodied/franky_install.md for details.
     #
     # franky-control ships pre-built wheels on PyPI for common Python +
     # libfranka combinations.  If the wheel matches the host this is a
@@ -893,7 +893,7 @@ install_franka_franky_env() {
  franky-control installed.
 
  IMPORTANT: before running the controller, apply the per-boot
- system tuning listed in franky_install.md:
+ system tuning listed in requirements/embodied/franky_install.md:
 
    sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > "$g"; done'
    sudo sysctl -w kernel.sched_rt_runtime_us=-1

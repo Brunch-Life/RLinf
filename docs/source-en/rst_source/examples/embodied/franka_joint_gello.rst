@@ -94,7 +94,7 @@ Dependency Installation
 
 For the PREEMPT_RT kernel, CPU governor, and rtprio/memlock limits that
 franky needs for deterministic behaviour, follow the detailed guide in
-``franky_install.md`` at the repository root.
+``requirements/embodied/franky_install.md``.
 
 2. Install GELLO software
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -239,7 +239,8 @@ Troubleshooting
 **"SCHED_FIFO not granted" warning**
 
 - The per-boot RT tuning was not applied, or ``/etc/security/limits.d/``
-  does not grant your user ``rtprio >= 80``. Follow ``franky_install.md``.
+  does not grant your user ``rtprio >= 80``. Follow
+  ``requirements/embodied/franky_install.md``.
 
 **"gripper_connection must be specified" error**
 

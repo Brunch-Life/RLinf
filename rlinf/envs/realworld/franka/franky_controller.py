@@ -31,7 +31,7 @@ controller does no RT work in Python at all:
 * ``get_state`` calls ``robot.read_once()`` on demand; there is no
   background state thread fighting for the GIL with Ray dispatch.
 
-See ``franky_install.md`` for the PREEMPT_RT kernel / CPU governor /
+See ``requirements/embodied/franky_install.md`` for the PREEMPT_RT kernel / CPU governor /
 rtprio limits that must be set before this controller will behave
 deterministically.
 """
@@ -187,7 +187,7 @@ class FrankyController(Worker):
         """Lock memory, raise priority, pin affinity.
 
         Every step is best-effort: we log and continue on failure.  The
-        sudo commands in ``franky_install.md`` grant the permissions
+        sudo commands in ``requirements/embodied/franky_install.md`` grant the permissions
         these calls need; without them the calls are no-ops (the
         controller still works, just with normal OS scheduling).
         """
@@ -217,7 +217,7 @@ class FrankyController(Worker):
         except PermissionError:
             self._logger.warning(
                 "SCHED_FIFO not granted — run the one-time cap/limits "
-                "setup in franky_install.md so rtprio>=80 is allowed."
+                "setup in requirements/embodied/franky_install.md so rtprio>=80 is allowed."
             )
         except Exception as e:
             self._logger.warning(f"SCHED_FIFO setup failed: {e}")
