@@ -93,14 +93,9 @@ class FrankaJointEnv(FrankaEnv):
                 self.hardware_info.config, "camera_type", "realsense"
             )
         if self.config.gripper_type is None:
-            hw_gripper = getattr(
-                self.hardware_info.config, "gripper_type", "franky"
+            self.config.gripper_type = getattr(
+                self.hardware_info.config, "gripper_type", "robotiq"
             )
-            # FrankaConfig defaults to "franka" (ROS-based), but FrankyController
-            # uses "franky" (libfranka-based) for the native Franka gripper.
-            if hw_gripper == "franka":
-                hw_gripper = "franky"
-            self.config.gripper_type = hw_gripper
         if self.config.gripper_connection is None:
             self.config.gripper_connection = getattr(
                 self.hardware_info.config, "gripper_connection", None
@@ -112,17 +107,12 @@ class FrankaJointEnv(FrankaEnv):
         if controller_node_rank is None:
             controller_node_rank = self.node_rank
 
-        # Ensure gripper_type is valid for FrankyController
-        gripper_type = self.config.gripper_type or "franky"
-        if gripper_type == "franka":
-            gripper_type = "franky"
-
         self._controller = FrankyController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
             node_rank=controller_node_rank,
             worker_rank=self.env_worker_rank,
-            gripper_type=gripper_type,
+            gripper_type=self.config.gripper_type,
             gripper_connection=self.config.gripper_connection,
         )
 
@@ -208,7 +198,7 @@ class FrankaJointEnv(FrankaEnv):
 
         # Compute target joint positions
         if self.config.joint_action_mode == "absolute":
-            target_joints = joint_action
+            target_joints = joint_action.copy()
         else:  # delta
             target_joints = (
                 self._franka_state.arm_joint_position
@@ -248,7 +238,7 @@ class FrankaJointEnv(FrankaEnv):
 
         reward = self._calc_step_reward(observation, is_gripper_action_effective)
 
-        terminated = (reward == 1.0) and (
+        terminated = (reward >= 1.0 - 1e-6) and (
             self._success_hold_counter >= self.config.success_hold_steps
         )
         truncated = self._num_steps >= self.config.max_num_steps

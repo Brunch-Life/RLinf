@@ -26,19 +26,15 @@ def create_gripper(
     gripper_type: str = "franka",
     ros=None,
     port: Optional[str] = None,
-    robot_gripper=None,
     **kwargs,
 ) -> BaseGripper:
     """Factory that instantiates the right gripper backend.
 
     Args:
-        gripper_type: ``"franka"`` (ROS-based), ``"robotiq"`` (Modbus RTU),
-            or ``"franky"`` (libfranka via Franky).
+        gripper_type: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU).
         ros: :class:`ROSController` instance — required for ``"franka"``.
         port: Serial device path (e.g. ``"/dev/ttyUSB0"``) — required for
             ``"robotiq"``.
-        robot_gripper: A ``franky.Gripper`` instance — required for
-            ``"franky"``.
         **kwargs: Forwarded to the gripper constructor (e.g. ``max_width``,
             ``baudrate``, ``slave_id``).
     """
@@ -60,16 +56,7 @@ def create_gripper(
         from .franka_gripper import FrankaGripper
 
         return FrankaGripper(ros=ros, **kwargs)
-    if gt == "franky":
-        if robot_gripper is None:
-            raise ValueError(
-                "A franky.Gripper instance (robot.gripper) must be provided "
-                "for Franky gripper."
-            )
-        from .franky_gripper import FrankyGripper
-
-        return FrankyGripper(robot_gripper=robot_gripper, **kwargs)
     raise ValueError(
         f"Unsupported gripper_type={gripper_type!r}. "
-        f"Supported types: 'franka', 'robotiq', 'franky'."
+        f"Supported types: 'franka', 'robotiq'."
     )

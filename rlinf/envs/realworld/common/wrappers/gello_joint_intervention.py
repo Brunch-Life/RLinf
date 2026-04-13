@@ -153,7 +153,7 @@ class GelloJointIntervention(gym.ActionWrapper):
                 pass  # best-effort streaming, env.step reads state
 
             if self.gripper_enabled:
-                is_open_now = bool(g < 0.5)
+                is_open_now = g.item() < 0.5
                 if self._stream_last_gripper_open is None:
                     self._stream_last_gripper_open = is_open_now
                 elif is_open_now != self._stream_last_gripper_open:

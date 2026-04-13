@@ -54,14 +54,27 @@ class GelloJointExpert:
     def _read_gello(self):
         import time
 
-        while True:
-            gello_joints, gello_gripper = self.agent.get_action()
-            gello_gripper = np.array([gello_gripper])
+        consecutive_errors = 0
+        max_consecutive_errors = 50
 
-            with self.state_lock:
-                self.latest_data["joint_positions"] = np.array(gello_joints)
-                self.latest_data["gripper"] = gello_gripper
-                self._ready = True
+        while True:
+            try:
+                gello_joints, gello_gripper = self.agent.get_action()
+                gello_gripper = np.array([gello_gripper])
+
+                with self.state_lock:
+                    self.latest_data["joint_positions"] = np.array(gello_joints)
+                    self.latest_data["gripper"] = gello_gripper
+                    self._ready = True
+                consecutive_errors = 0
+            except Exception:
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    with self.state_lock:
+                        self._ready = False
+                backoff = min(0.1, 0.001 * (2 ** min(consecutive_errors, 7)))
+                time.sleep(backoff)
+                continue
 
             time.sleep(0.001)
 

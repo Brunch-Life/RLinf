@@ -23,6 +23,7 @@ cluster:
         configs:
           - robot_ip: ROBOT_IP    # Replace with your Franka IP
             node_rank: 0
+            gripper_connection: /dev/ttyUSB0  # Replace with your Robotiq serial port
 
 runner:
   task_type: embodied

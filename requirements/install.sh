@@ -832,12 +832,11 @@ install_franka_env() {
     if [ ! -d "$ROS_CATKIN_PATH/libfranka" ]; then
         git clone -b "${LIBFRANKA_VERSION}" --recurse-submodules https://github.com/frankaemika/libfranka $ROS_CATKIN_PATH/libfranka
     fi
+    if [ ! -d "$ROS_CATKIN_PATH/src/franka_ros" ]; then
+        # Use a fork version that fixes compile issues with newer libfranka using C++17
+        git clone -b "${FRANKA_ROS_VERSION}" --recurse-submodules https://github.com/RLinf/franka_ros
+    fi
     popd >/dev/null
-
-    # serl_franka_controllers hardcodes CXX20 in its CMakeLists.txt which breaks
-    # on GCC < 10; downgrade to CXX17 since the code is C++17-compatible.
-    sed -i 's/set(CMAKE_CXX_STANDARD 20)/set(CMAKE_CXX_STANDARD 17)/' \
-        "$ROS_CATKIN_PATH/src/serl_franka_controllers/CMakeLists.txt"
 
     # Build
     pushd "$ROS_CATKIN_PATH"
@@ -852,8 +851,11 @@ install_franka_env() {
     export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:$LD_LIBRARY_PATH
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
-    # Build serl_franka_controllers (franka_ros is provided by ros-noetic-franka-ros apt package)
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build --pkg serl_franka_controllers
+    # Then franka_ros
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
+
+    # Finally serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
     popd >/dev/null
 
     echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"

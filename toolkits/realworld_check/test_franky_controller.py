@@ -20,7 +20,7 @@ Run with::
 
 Optional env vars::
 
-    FRANKA_GRIPPER_TYPE   "franky" (default) or "robotiq"
+    FRANKA_GRIPPER_TYPE   "robotiq" (default)
     FRANKA_GRIPPER_PORT   serial path for Robotiq
 
 Commands (typed at the prompt):
@@ -82,7 +82,7 @@ def main() -> None:
         "Please set the FRANKA_ROBOT_IP environment variable."
     )
 
-    gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "franky")
+    gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "robotiq")
     gripper_connection = os.environ.get("FRANKA_GRIPPER_PORT")
 
     controller = FrankyController.launch_controller(

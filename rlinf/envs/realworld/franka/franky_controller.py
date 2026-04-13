@@ -86,11 +86,9 @@ class FrankyController(Worker):
 
     Args:
         robot_ip: IP address of the Franka robot.
-        gripper_type: ``"franky"`` (native Franka Hand via franky) or
-            ``"robotiq"`` (Modbus RTU parallel-jaw).
+        gripper_type: ``"robotiq"`` (Modbus RTU parallel-jaw).
         gripper_connection: Serial port for Robotiq (e.g.
-            ``"/dev/ttyUSB0"``).  Ignored when *gripper_type* is
-            ``"franky"``.
+            ``"/dev/ttyUSB0"``).
     """
 
     @staticmethod
@@ -99,7 +97,7 @@ class FrankyController(Worker):
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
-        gripper_type: str = "franky",
+        gripper_type: str = "robotiq",
         gripper_connection: Optional[str] = None,
     ):
         """Launch a ``FrankyController`` as a Ray actor on *node_rank*."""
@@ -116,7 +114,7 @@ class FrankyController(Worker):
     def __init__(
         self,
         robot_ip: str,
-        gripper_type: str = "franky",
+        gripper_type: str = "robotiq",
         gripper_connection: Optional[str] = None,
     ):
         super().__init__()
@@ -153,22 +151,23 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"set_joint_impedance failed: {e}")
 
-        # ── Gripper (independent libfranka channel) ─────────────────
-        if gripper_type == "franky":
-            self._gripper = create_gripper(
-                gripper_type="franky",
-                robot_gripper=self._robot.gripper,
-            )
-        elif gripper_type == "robotiq":
-            self._gripper = create_gripper(
-                gripper_type="robotiq",
-                port=gripper_connection,
-            )
-        else:
+        # ── Gripper (Robotiq Modbus RTU) ──────────────────────────────
+        if gripper_type != "robotiq":
             raise ValueError(
                 f"Unsupported gripper_type={gripper_type!r} for "
-                f"FrankyController. Supported: 'franky', 'robotiq'."
+                f"FrankyController. Currently only 'robotiq' is supported."
             )
+        if gripper_connection is None:
+            raise ValueError(
+                "gripper_connection (serial port) must be specified "
+                "for Robotiq grippers (e.g. '/dev/ttyUSB0'). "
+                "Set it in the hardware config: "
+                "cluster.node_groups[].hardware.configs[].gripper_connection"
+            )
+        self._gripper = create_gripper(
+            gripper_type="robotiq",
+            port=gripper_connection,
+        )
 
         # Cached gripper state (read on get_state, not on every RT tick).
         self._cached_gripper_position: float = 0.0
@@ -487,7 +486,7 @@ class FrankyController(Worker):
     # ═══════════════════════════════════════════════════════════════
 
     def cleanup(self):
-        """Release gripper handle.  franky's RT thread stops on del."""
+        """Join any in-flight motion and release the Robotiq gripper handle."""
         try:
             self._robot.join_motion()
         except Exception:
