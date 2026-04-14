@@ -31,6 +31,7 @@ from rlinf.envs.realworld.common.wrappers import (
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
+    LeaderFollowerKeyboardIntervention,
     Quat2EulerWrapper,
     RelativeFrame,
     SpacemouseIntervention,
@@ -84,6 +85,12 @@ class RealWorldEnv(gym.Env):
             hardware_info=hardware_info,
             env_idx=env_idx,
         )
+        if (
+            self.cfg.get("keyboard_intervention_wrapper", False)
+            and getattr(env.config, "enable_human_in_loop", False)
+            and not getattr(env.config, "is_dummy", False)
+        ):
+            env = LeaderFollowerKeyboardIntervention(env)
         if self.cfg.get("no_gripper", True):
             env = GripperCloseEnv(env)
         use_spacemouse = self.cfg.get("use_spacemouse", True)
