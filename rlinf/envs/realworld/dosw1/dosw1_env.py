@@ -20,13 +20,14 @@ import copy
 import enum
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import gymnasium as gym
 import numpy as np
 
-from rlinf.envs.realworld.common.camera import CameraInfo, create_camera
+from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
+from rlinf.envs.realworld.common.keyboard.keyboard_listener import KeyboardListener
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import WorkerInfo
 from rlinf.utils.logging import get_logger
@@ -104,7 +105,6 @@ class DOSW1Config:
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
-    keyboard_socket_path: str = "/tmp/dosw1_keyboard.sock"
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
 
@@ -116,6 +116,7 @@ class DOSW1Env(gym.Env):
 
     metadata = {"render_modes": []}
     supports_relative_frame = False
+    supports_leader_follower_keyboard_intervention = True
 
     def __init__(
         self,
@@ -147,7 +148,9 @@ class DOSW1Env(gym.Env):
 
         self.control_mode = ControlMode.MODEL
         self.in_free_teleop = False
+        self.start_episode_requested = False
         self._keyboard = None
+        self._keyboard_event_callback: Callable[[bool], object] | None = None
         self._teleop_init_lead_left: np.ndarray | None = None
         self._teleop_init_lead_right: np.ndarray | None = None
         self._teleop_init_follow_left: np.ndarray | None = None
@@ -155,16 +158,12 @@ class DOSW1Env(gym.Env):
         self.teleop_target_left_gripper: float | None = None
         self.manual_done: bool = False
         if config.enable_human_in_loop:
-            from rlinf.envs.realworld.common.keyboard.socket_keyboard_listener import (
-                SocketKeyboardListener,
-            )
-
-            self._keyboard = SocketKeyboardListener(config.keyboard_socket_path)
+            self._keyboard = KeyboardListener()
             self.in_free_teleop = True
 
         self._init_action_obs_spaces()
 
-        self._cameras: list[Camera] = []
+        self._cameras: list[BaseCamera] = []
         if not config.is_dummy:
             self._open_cameras()
         self._camera_player = VideoPlayer(config.enable_camera_player)
@@ -184,6 +183,7 @@ class DOSW1Env(gym.Env):
 
         if self.config.enable_human_in_loop:
             self.in_free_teleop = True
+            self.start_episode_requested = False
             self._logger.info(
                 "[DOSW1Env] FreeTeleop mode active. "
                 "Move arms freely via leader arm. Press 's' to start episode."
@@ -211,17 +211,6 @@ class DOSW1Env(gym.Env):
             reward = self._calc_step_reward(obs, gripper_changed=False)
             return obs, reward, False, truncated, {"control_mode": 0}
 
-        truncated_by_free = False
-        if self.config.enable_human_in_loop:
-            truncated_by_free = self._handle_keyboard()
-
-        if truncated_by_free:
-            obs = self._get_observation()
-            return obs, 0.0, False, True, {
-                "control_mode": self.control_mode.value,
-                "manual_done": self.manual_done,
-            }
-
         prev_left_gripper = self.robot_state.left_gripper
         prev_right_gripper = self.robot_state.right_gripper
         actual_action = self._dispatch_action(action)
@@ -248,13 +237,20 @@ class DOSW1Env(gym.Env):
     def close(self) -> None:
         self._close_cameras()
         if self._keyboard is not None:
-            try:
-                self._keyboard.stop()
-            except Exception:
-                pass
+            listener = getattr(self._keyboard, "listener", None)
+            if listener is not None:
+                try:
+                    listener.stop()
+                except Exception:
+                    pass
             self._keyboard = None
         if self.sdk is not None:
             self.sdk.disconnect()
+
+    def set_keyboard_event_callback(
+        self, callback: Callable[[bool], object] | None
+    ) -> None:
+        self._keyboard_event_callback = callback
 
     @property
     def task_description(self) -> str:
@@ -461,19 +457,28 @@ class DOSW1Env(gym.Env):
         self.snapshot_teleop_init()
         last_log = time.time()
         while True:
-            key = self._keyboard.get_key() if self._keyboard else None
-            if key == "s":
+            self._poll_keyboard_event(reset_phase=True)
+            if self.start_episode_requested:
+                self.start_episode_requested = False
                 self.in_free_teleop = False
                 break
             now = time.time()
             if now - last_log >= self._FREE_TELEOP_LOG_INTERVAL_S:
                 self._logger.info(
-                    "[DOSW1Env] FreeTeleop waiting for 's' key "
-                    "(connect keyboard relay if not running)"
+                    "[DOSW1Env] FreeTeleop waiting for 's' key"
                 )
                 last_log = now
             self._forward_leader_to_follower()
             time.sleep(1.0 / self.config.step_frequency)
+
+    def _poll_keyboard_event(self, reset_phase: bool = False) -> None:
+        if self._keyboard_event_callback is not None:
+            self._keyboard_event_callback(reset_phase=reset_phase)
+            return
+
+        # Fallback when wrapper is disabled: keep reset-phase "s to start".
+        if reset_phase and self._keyboard is not None and self._keyboard.get_key() == "s":
+            self.start_episode_requested = True
 
     def _forward_leader_to_follower(self) -> None:
         cur_left = self.sdk.get_left_joint()[:6]
@@ -483,37 +488,6 @@ class DOSW1Env(gym.Env):
         )
         self.sdk.left_go_joint(left_joint.tolist(), left_gripper)
         self.sdk.right_go_joint(right_joint.tolist(), right_gripper)
-
-    def _handle_keyboard(self) -> bool:
-        if self._keyboard is None:
-            return False
-
-        key = self._keyboard.get_key()
-        if key is None:
-            return False
-
-        if key == "r":
-            self._logger.info("[DOSW1Env] -> FreeTeleop (episode aborted)")
-            self.in_free_teleop = True
-            return True
-
-        if key == "d":
-            self._logger.info("[DOSW1Env] Manual done (episode saved)")
-            self.manual_done = True
-            return True
-
-        if key == "p" and self.control_mode in (ControlMode.MODEL, ControlMode.TELEOP):
-            self._logger.info("[DOSW1Env] %s -> PAUSE", self.control_mode.name)
-            self.control_mode = ControlMode.PAUSE
-        elif key == "t" and self.control_mode == ControlMode.PAUSE:
-            self._logger.info("[DOSW1Env] PAUSE -> TELEOP")
-            self.snapshot_teleop_init()
-            self.control_mode = ControlMode.TELEOP
-        elif key == "m" and self.control_mode == ControlMode.PAUSE:
-            self._logger.info("[DOSW1Env] PAUSE -> MODEL")
-            self.control_mode = ControlMode.MODEL
-
-        return False
 
     def _get_observation(self) -> dict:
         if self.config.is_dummy:

@@ -12,6 +12,7 @@ use_fixed_reset_state_ids: False
 max_steps_per_rollout_epoch: 100
 max_episode_steps: 100
 use_spacemouse: False
+keyboard_intervention_wrapper: False
 no_gripper: False
 main_image_key: cam_left
 

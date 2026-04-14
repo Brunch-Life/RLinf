@@ -112,6 +112,7 @@ env:
   group_name: "EnvGroup"
 
   train:
+    keyboard_intervention_wrapper: True
     ignore_terminations: False
     total_num_envs: 1
     override_cfg:
@@ -138,7 +139,6 @@ env:
 
       # support human-in-the-loop teleop
       enable_human_in_loop: True
-      keyboard_socket_path: "/tmp/dosw1_keyboard.sock"
 
   eval:
     total_num_envs: 1

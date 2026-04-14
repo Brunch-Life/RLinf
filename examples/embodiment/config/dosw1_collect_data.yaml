@@ -34,10 +34,10 @@ seed: 1234
 env:
   group_name: "EnvGroup"
   eval:
+    keyboard_intervention_wrapper: True
     no_gripper: False
     use_spacemouse: False
     ignore_terminations: False
     auto_reset: False
     override_cfg:
       enable_human_in_loop: True
-      keyboard_socket_path: "/tmp/dosw1_keyboard.sock"
