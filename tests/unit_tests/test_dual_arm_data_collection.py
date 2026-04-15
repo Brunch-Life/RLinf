@@ -17,16 +17,21 @@
 These tests cover the schema and data flow added to support dual-arm
 Franka environments end-to-end:
 
-* ``LeRobotDatasetWriter`` schema for single-arm and dual-arm.
+* ``CollectEpisode._expand_multi_view_images`` fan-out of multi-view
+  wrist cameras into per-view frame keys (``wrist_image-0``,
+  ``wrist_image-1``).
+* ``CollectEpisode._collect_image_keys`` schema detection for the
+  ``LeRobotDatasetWriter.create()`` call.
 * ``CollectEpisode`` integration that auto-detects wrist images from
-  the obs dict and forwards them to the writer.
+  the obs dict and forwards them to the writer as correctly keyed
+  per-step frame dicts.
 * ``RealWorldEnv._wrap_obs`` dual branch that stacks left/right wrist
   cameras into ``wrist_images`` (alphabetical order) and puts the base
   (third-person) camera into ``main_images``.
 
 Single-arm regression checks live alongside each test to ensure that the
-default flag set produces a parquet schema byte-identical to the legacy
-single-arm output.
+default path produces frame dicts identical to the legacy single-arm
+output.
 
 Run with::
 
@@ -35,138 +40,117 @@ Run with::
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
-from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 from rlinf.envs.wrappers import CollectEpisode
 
 # --------------------------------------------------------------------- #
-#  LeRobotDatasetWriter schema tests                                       #
+#  _expand_multi_view_images unit tests                                    #
 # --------------------------------------------------------------------- #
 
 
-def _make_episode(
-    T: int, image_shape: tuple[int, int, int], state_dim: int, action_dim: int
-) -> dict[str, np.ndarray]:
-    return {
-        "images": np.random.randint(0, 255, (T,) + image_shape, dtype=np.uint8),
-        "states": np.random.randn(T, state_dim).astype(np.float32),
-        "actions": np.random.randn(T, action_dim).astype(np.float32),
+def test_expand_multi_view_images_none():
+    """None input returns an empty dict."""
+    result = CollectEpisode._expand_multi_view_images("wrist_image", None)
+    assert result == {}
+
+
+def test_expand_multi_view_images_single_view_3d():
+    """A single [H, W, C] image maps to {base_key: img}."""
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    result = CollectEpisode._expand_multi_view_images("wrist_image", img)
+    assert set(result.keys()) == {"wrist_image"}
+    assert result["wrist_image"].shape == (64, 64, 3)
+
+
+def test_expand_multi_view_images_single_view_4d():
+    """A single [1, H, W, C] image collapses to {base_key: img[0]}."""
+    img = np.zeros((1, 64, 64, 3), dtype=np.uint8)
+    result = CollectEpisode._expand_multi_view_images("wrist_image", img)
+    assert set(result.keys()) == {"wrist_image"}
+    assert result["wrist_image"].shape == (64, 64, 3)
+
+
+def test_expand_multi_view_images_dual_view():
+    """[2, H, W, C] fans out to wrist_image-0, wrist_image-1."""
+    left = np.full((64, 64, 3), 100, dtype=np.uint8)
+    right = np.full((64, 64, 3), 200, dtype=np.uint8)
+    img = np.stack([left, right], axis=0)
+    result = CollectEpisode._expand_multi_view_images("wrist_image", img)
+    assert set(result.keys()) == {"wrist_image-0", "wrist_image-1"}
+    assert result["wrist_image-0"].shape == (64, 64, 3)
+    assert result["wrist_image-1"].shape == (64, 64, 3)
+    np.testing.assert_array_equal(result["wrist_image-0"], left)
+    np.testing.assert_array_equal(result["wrist_image-1"], right)
+
+
+def test_expand_multi_view_images_triple_view():
+    """[3, H, W, C] fans out to three indexed keys."""
+    img = np.zeros((3, 64, 64, 3), dtype=np.uint8)
+    result = CollectEpisode._expand_multi_view_images("extra_view_image", img)
+    assert set(result.keys()) == {
+        "extra_view_image-0",
+        "extra_view_image-1",
+        "extra_view_image-2",
     }
 
 
-def test_lerobot_writer_single_arm_schema_unchanged(tmp_path):
-    """Default flags must produce a legacy single-arm schema (no dual columns)."""
-    writer = LeRobotDatasetWriter(
-        root_dir=str(tmp_path),
-        robot_type="panda",
-        fps=10,
-        image_shape=(64, 64, 3),
-        state_dim=19,
-        action_dim=7,
-        has_wrist_image=False,
-        has_extra_view_image=True,
-        # has_left_wrist_image / has_right_wrist_image default to False;
-        # passing them implicitly verifies the documented default.
-        use_incremental_stats=True,
-    )
-    ep = _make_episode(T=4, image_shape=(64, 64, 3), state_dim=19, action_dim=7)
-    extra = np.random.randint(0, 255, (4, 64, 64, 3), dtype=np.uint8)
-    writer.add_episode(
-        images=ep["images"],
-        wrist_images=None,
-        extra_view_images=extra,
-        states=ep["states"],
-        actions=ep["actions"],
-        task="single arm",
-        is_success=True,
-    )
-    writer.finalize()
-
-    table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
-    cols = set(table.column_names)
-    assert "image" in cols
-    assert "extra_view_image" in cols
-    assert "left_wrist_image" not in cols, (
-        "single-arm writer must not introduce dual-arm columns"
-    )
-    assert "right_wrist_image" not in cols, (
-        "single-arm writer must not introduce dual-arm columns"
-    )
-
-    info = json.loads((tmp_path / "meta" / "info.json").read_text())
-    assert "left_wrist_image" not in info["features"]
-    assert "right_wrist_image" not in info["features"]
-
-    stats = json.loads((tmp_path / "meta" / "stats.json").read_text())
-    assert "left_wrist_image" not in stats
-    assert "right_wrist_image" not in stats
+# --------------------------------------------------------------------- #
+#  _collect_image_keys unit tests                                          #
+# --------------------------------------------------------------------- #
 
 
-def test_lerobot_writer_dual_arm_schema(tmp_path):
-    """Dual-arm uses wrist_image for stacked left/right wrist cameras."""
-    writer = LeRobotDatasetWriter(
-        root_dir=str(tmp_path),
-        robot_type="dual_panda",
-        fps=10,
-        image_shape=(64, 64, 3),
-        state_dim=38,
-        action_dim=14,
-        has_wrist_image=True,
-        has_extra_view_image=False,
-        use_incremental_stats=True,
-    )
-    T = 4
-    ep = _make_episode(T=T, image_shape=(64, 64, 3), state_dim=38, action_dim=14)
-    wrist = np.random.randint(0, 255, (T, 64, 64, 3), dtype=np.uint8)
-    writer.add_episode(
-        images=ep["images"],
-        wrist_images=wrist,
-        extra_view_images=None,
-        states=ep["states"],
-        actions=ep["actions"],
-        task="dual arm",
-        is_success=True,
-    )
-    writer.finalize()
+def test_collect_image_keys_single_wrist():
+    """Single wrist view produces {wrist_image: shape}."""
+    frame = {
+        "wrist_image": np.zeros((64, 64, 3), dtype=np.uint8),
+        "state": np.zeros(19, dtype=np.float32),
+    }
+    result = CollectEpisode._collect_image_keys(frame, "wrist_image")
+    assert result == {"wrist_image": (64, 64, 3)}
 
-    table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
-    cols = set(table.column_names)
-    assert "image" in cols
-    assert "wrist_image" in cols
-    assert "left_wrist_image" not in cols
-    assert "right_wrist_image" not in cols
-    assert "extra_view_image" not in cols
 
-    # Image structs must be PNG-decodable for HuggingFace datasets to
-    # interpret them as Image features.
-    for col in ("image", "wrist_image"):
-        first = table[col][0].as_py()
-        assert isinstance(first, dict)
-        assert "bytes" in first and "path" in first
-        assert len(first["bytes"]) > 0
+def test_collect_image_keys_dual_wrist():
+    """Dual wrist views produce {wrist_image-0: shape, wrist_image-1: shape}."""
+    frame = {
+        "wrist_image-0": np.zeros((64, 64, 3), dtype=np.uint8),
+        "wrist_image-1": np.zeros((64, 64, 3), dtype=np.uint8),
+        "state": np.zeros(38, dtype=np.float32),
+    }
+    result = CollectEpisode._collect_image_keys(frame, "wrist_image")
+    assert result == {
+        "wrist_image-0": (64, 64, 3),
+        "wrist_image-1": (64, 64, 3),
+    }
 
-    info = json.loads((tmp_path / "meta" / "info.json").read_text())
-    assert info["features"]["wrist_image"]["dtype"] == "image"
-    assert "left_wrist_image" not in info["features"]
-    assert "right_wrist_image" not in info["features"]
-    assert info["features"]["state"]["shape"] == [38]
-    assert info["features"]["actions"]["shape"] == [14]
 
-    stats = json.loads((tmp_path / "meta" / "stats.json").read_text())
-    assert "wrist_image" in stats
-    assert "left_wrist_image" not in stats
-    assert "right_wrist_image" not in stats
+def test_collect_image_keys_no_match():
+    """No matching keys returns an empty dict."""
+    frame = {
+        "image": np.zeros((64, 64, 3), dtype=np.uint8),
+        "state": np.zeros(19, dtype=np.float32),
+    }
+    result = CollectEpisode._collect_image_keys(frame, "wrist_image")
+    assert result == {}
+
+
+def test_collect_image_keys_ignores_non_3d():
+    """4-D arrays and non-ndarray values are excluded."""
+    frame = {
+        "wrist_image-0": np.zeros((64, 64, 3), dtype=np.uint8),
+        "wrist_image-1": np.zeros((2, 64, 64, 3), dtype=np.uint8),  # 4-D
+        "wrist_image-2": "not an array",
+    }
+    result = CollectEpisode._collect_image_keys(frame, "wrist_image")
+    assert result == {"wrist_image-0": (64, 64, 3)}
 
 
 # --------------------------------------------------------------------- #
-#  CollectEpisode integration tests                                        #
+#  Dummy environments                                                      #
 # --------------------------------------------------------------------- #
 
 
@@ -257,8 +241,15 @@ class _DualArmDummyEnv(gym.Env):
         )
 
 
-def test_collect_episode_single_arm_unchanged(tmp_path):
-    """Single-arm CollectEpisode → LeRobot must keep the legacy column set."""
+# --------------------------------------------------------------------- #
+#  CollectEpisode frame-format tests (no lerobot dependency)               #
+# --------------------------------------------------------------------- #
+
+
+def test_collect_episode_single_arm_frame_format(tmp_path):
+    """Single-arm obs produce frames with ``image`` only (no wrist keys)."""
+    captured: list[list[dict]] = []
+
     env = CollectEpisode(
         _SingleArmDummyEnv(),
         save_dir=str(tmp_path),
@@ -266,20 +257,42 @@ def test_collect_episode_single_arm_unchanged(tmp_path):
         robot_type="panda",
         fps=10,
     )
+    env._write_lerobot_episode = lambda ep: captured.append(ep)
+
     env.reset()
     for _ in range(4):
         env.step(np.zeros(7, dtype=np.float32))
+    env._wait_futures()
+
+    assert len(captured) == 1
+    frames = captured[0]
+    assert len(frames) == 4
+
+    first = frames[0]
+    assert "image" in first
+    assert "state" in first
+    assert "actions" in first
+    assert "task" in first
+    assert "done" in first
+    assert "is_success" in first
+    assert "wrist_image" not in first
+    assert "wrist_image-0" not in first
+    assert "wrist_image-1" not in first
+    assert "left_wrist_image" not in first
+    assert "right_wrist_image" not in first
+    assert "extra_view_image" not in first
+
+    assert frames[-1]["done"].item() is True
+    assert first["state"].shape == (19,)
+    assert first["actions"].shape == (7,)
+
     env.close()
 
-    table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
-    cols = set(table.column_names)
-    assert "image" in cols
-    assert "left_wrist_image" not in cols
-    assert "right_wrist_image" not in cols
 
+def test_collect_episode_dual_arm_frame_format(tmp_path):
+    """Dual-arm obs produce ``wrist_image-0`` and ``wrist_image-1`` frame keys."""
+    captured: list[list[dict]] = []
 
-def test_collect_episode_dual_arm_writes_wrist_image_column(tmp_path):
-    """Dual-arm obs auto-flow into LeRobot wrist_image column."""
     env = CollectEpisode(
         _DualArmDummyEnv(),
         save_dir=str(tmp_path),
@@ -287,23 +300,72 @@ def test_collect_episode_dual_arm_writes_wrist_image_column(tmp_path):
         robot_type="dual_panda",
         fps=10,
     )
+    env._write_lerobot_episode = lambda ep: captured.append(ep)
+
     env.reset()
     for _ in range(4):
         env.step(np.zeros(14, dtype=np.float32))
+    env._wait_futures()
+
+    assert len(captured) == 1
+    frames = captured[0]
+    assert len(frames) == 4
+
+    first = frames[0]
+    assert "image" in first, "base camera should map to 'image'"
+    assert "wrist_image-0" in first, "left wrist should map to 'wrist_image-0'"
+    assert "wrist_image-1" in first, "right wrist should map to 'wrist_image-1'"
+    assert "wrist_image" not in first, "multi-view should fan out, not use bare key"
+    assert "left_wrist_image" not in first
+    assert "right_wrist_image" not in first
+    assert "extra_view_image" not in first
+
+    assert first["image"].shape == (64, 64, 3)
+    assert first["wrist_image-0"].shape == (64, 64, 3)
+    assert first["wrist_image-1"].shape == (64, 64, 3)
+    assert first["state"].shape == (38,)
+    assert first["actions"].shape == (14,)
+
+    wrist_keys = CollectEpisode._collect_image_keys(first, "wrist_image")
+    assert set(wrist_keys.keys()) == {"wrist_image-0", "wrist_image-1"}
+    for shape in wrist_keys.values():
+        assert shape == (64, 64, 3)
+
+    assert frames[-1]["done"].item() is True
+
     env.close()
 
-    table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
-    cols = set(table.column_names)
-    assert "image" in cols
-    assert "wrist_image" in cols
-    assert "left_wrist_image" not in cols
-    assert "right_wrist_image" not in cols
-    assert "extra_view_image" not in cols
 
-    info = json.loads((tmp_path / "meta" / "info.json").read_text())
-    assert info["features"]["wrist_image"]["dtype"] == "image"
-    assert "left_wrist_image" not in info["features"]
-    assert "right_wrist_image" not in info["features"]
+def test_collect_episode_dual_arm_image_content(tmp_path):
+    """Verify left/right wrist pixel values survive the pipeline."""
+    captured: list[list[dict]] = []
+
+    env = CollectEpisode(
+        _DualArmDummyEnv(),
+        save_dir=str(tmp_path),
+        export_format="lerobot",
+        robot_type="dual_panda",
+        fps=10,
+    )
+    env._write_lerobot_episode = lambda ep: captured.append(ep)
+
+    env.reset()
+    for _ in range(4):
+        env.step(np.zeros(14, dtype=np.float32))
+    env._wait_futures()
+
+    first = captured[0][0]
+    np.testing.assert_array_equal(
+        first["image"], np.full((64, 64, 3), 50, dtype=np.uint8)
+    )
+    np.testing.assert_array_equal(
+        first["wrist_image-0"], np.full((64, 64, 3), 100, dtype=np.uint8)
+    )
+    np.testing.assert_array_equal(
+        first["wrist_image-1"], np.full((64, 64, 3), 200, dtype=np.uint8)
+    )
+
+    env.close()
 
 
 # --------------------------------------------------------------------- #
