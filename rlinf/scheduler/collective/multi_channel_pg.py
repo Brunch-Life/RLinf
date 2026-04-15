@@ -13,14 +13,9 @@
 # limitations under the License.
 
 import logging
-import os
-import socket
-import struct
-import time
 from datetime import timedelta
 from typing import Optional
 
-import fcntl
 import torch
 import torch.distributed as dist
 
@@ -31,51 +26,6 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
-
-def _extract_host_from_init_method(init_method: Optional[str]) -> Optional[str]:
-    if not init_method or not init_method.startswith("tcp://"):
-        return None
-    addr = init_method[len("tcp://") :]
-    if ":" not in addr:
-        return None
-    host = addr.rsplit(":", 1)[0]
-    return host.strip("[]")
-
-
-def _get_interface_ipv4_addr(if_name: str) -> Optional[str]:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            ifreq = struct.pack("256s", if_name.encode("utf-8")[:15])
-            res = fcntl.ioctl(s.fileno(), 0x8915, ifreq)
-            return socket.inet_ntoa(res[20:24])
-    except OSError:
-        return None
-
-
-def _infer_gloo_ifname(target_host: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    try:
-        target_ip = socket.gethostbyname(target_host)
-    except OSError:
-        return None, None, None
-
-    local_ip = None
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect((target_ip, 1))
-            local_ip = s.getsockname()[0]
-    except OSError:
-        pass
-
-    if local_ip is None:
-        return None, target_ip, None
-
-    for _, if_name in socket.if_nameindex():
-        if not isinstance(if_name, str):
-            continue
-        if_addr = _get_interface_ipv4_addr(if_name)
-        if if_addr == local_ip:
-            return if_name, target_ip, local_ip
-    return None, target_ip, local_ip
 
 
 class MultiChannelProcessGroup:
@@ -181,12 +131,6 @@ class MultiChannelProcessGroup:
         from ..cluster import Cluster, ClusterEnvVar
 
         self._group_name = group_name
-        if os.environ.get("GLOO_SOCKET_IFNAME") is None:
-            master_host = _extract_host_from_init_method(init_method)
-            if master_host:
-                if_name, target_ip, local_ip = _infer_gloo_ifname(master_host)
-                if if_name:
-                    os.environ["GLOO_SOCKET_IFNAME"] = if_name
         try:
             # Set default timeout to 180 minutes
             timeout = int(Cluster.get_sys_env_var(ClusterEnvVar.TIMEOUT, "180"))
@@ -710,6 +654,7 @@ class MultiChannelProcessGroup:
         if _MPI_AVAILABLE:
             from torch.distributed.distributed_c10d import ProcessGroupMPI
         import warnings
+
         if group_name in _world.pg_names.values():
             raise ValueError(
                 "The specified group name has already been "
@@ -837,12 +782,9 @@ class MultiChannelProcessGroup:
                 # TODO: remove this check after lazy initialization is supported
                 # if pg_options is not None:
                 #     raise RuntimeError("GLOO options not supported")
-                try:
-                    backend_class = ProcessGroupGloo(
-                        backend_prefix_store, group_rank, group_size, timeout=timeout
-                    )
-                except Exception as e:
-                    raise
+                backend_class = ProcessGroupGloo(
+                    backend_prefix_store, group_rank, group_size, timeout=timeout
+                )
                 backend_type = ProcessGroup.BackendType.GLOO
             elif backend_str == Backend.NCCL:
                 if not is_nccl_available():
