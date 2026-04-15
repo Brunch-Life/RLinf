@@ -21,19 +21,19 @@ cluster:
       hardware:
         type: DualFranka
         configs:
-          - left_robot_ip: 172.16.0.2
-            right_robot_ip: 172.16.0.2
+          - left_robot_ip: LEFT_ROBOT_IP
+            right_robot_ip: RIGHT_ROBOT_IP
             base_camera_serials:
-              - "941322072906"
+              - BASE_CAMERA_SERIAL
             left_camera_serials:
-              - "141722079447"
+              - LEFT_CAMERA_SERIAL
             right_camera_serials:
-              - "141722078696"
+              - RIGHT_CAMERA_SERIAL
             camera_type: realsense
             left_gripper_type: robotiq
             right_gripper_type: robotiq
-            left_gripper_connection: "/dev/ttyUSB0"    # RS-485 on Node 0
-            right_gripper_connection: "/dev/ttyUSB0"   # RS-485 on Node 1
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION # e.g. /dev/ttyUSB0
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION
             left_controller_node_rank: 0
             right_controller_node_rank: 1
             node_rank: 0
@@ -57,20 +57,13 @@ env:
     use_spacemouse: True
     keyboard_reward_wrapper: "single_stage"
     override_cfg:
-      # Safe dual-arm teleop pose: z = 0.4 m (well above table)
-      # Frame: [x, y, z, rx, ry, rz], ee pointing down (rx = -3.14)
-      target_ee_pose:
-        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]    # left arm target
-        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]    # right arm target
-      reset_ee_pose:
-        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]    # left arm reset (higher)
-        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]    # right arm reset (higher)
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
 
-  data_collection:
-    enabled: True
-    save_dir: ${runner.logger.log_path}/collected_data
-    export_format: "lerobot"
-    only_success: True
-    robot_type: "dual_panda"
-    fps: 10
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "dual_panda"
+      fps: 10
