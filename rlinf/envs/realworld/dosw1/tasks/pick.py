@@ -96,7 +96,7 @@ class PickEnv(DOSW1Env):
 
     def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
         obs, reward, terminated, truncated, info = super().step(action)
-        if self.task_success or self.manual_done:
+        if (self.task_success and not self.config.manual_episode_control_only) or self.manual_done:
             terminated = True
         return obs, reward, terminated, truncated, info
 
@@ -118,11 +118,13 @@ class PickEnv(DOSW1Env):
             gripper_closed = left_gripper <= cfg.gripper_closed_max_width
 
         reward = 0.0
+        reach_dist_sq = float(np.sum(np.square(left_joint - grasp_joint)))
+        lift_dist_sq = float(np.sum(np.square(left_joint - lift_joint)))
+        lift_distance = float(np.sqrt(lift_dist_sq))
 
         if self.phase == "reach":
-            dist_sq = float(np.sum(np.square(left_joint - grasp_joint)))
             if cfg.use_dense_reward:
-                reward = float(np.exp(-sharpness * dist_sq))
+                reward = float(np.exp(-sharpness * reach_dist_sq))
 
             if gripper_closed and gripper_changed:
                 self.holding_object = True
@@ -130,12 +132,10 @@ class PickEnv(DOSW1Env):
                 reward += cfg.grasp_bonus
 
         elif self.phase == "lift":
-            dist_sq = float(np.sum(np.square(left_joint - lift_joint)))
-            distance = float(np.sqrt(dist_sq))
             if cfg.use_dense_reward:
-                reward = float(np.exp(-sharpness * dist_sq))
+                reward = float(np.exp(-sharpness * lift_dist_sq))
 
-            if distance <= cfg.lift_threshold:
+            if lift_distance <= cfg.lift_threshold:
                 reward = 1.0
                 self.task_success = True
 

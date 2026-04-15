@@ -22,7 +22,8 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
 
     def __init__(self, env):
         super().__init__(env)
-        register_callback = getattr(self.env, "set_keyboard_event_callback", None)
+        base_env = self._base_env()
+        register_callback = getattr(base_env, "set_keyboard_event_callback", None)
         if callable(register_callback):
             register_callback(self._handle_key_event)
 
@@ -33,22 +34,29 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
         return self.env.step(action)
 
     def _handle_key_event(self, reset_phase: bool = False):
-        keyboard = getattr(self.env, "_keyboard", None)
+        base_env = self._base_env()
+        keyboard = getattr(base_env, "_keyboard", None)
         if keyboard is None:
             return None
-
+        manual_episode_control_only = bool(
+            getattr(getattr(base_env, "config", None), "manual_episode_control_only", False)
+        )
+        in_free_teleop = bool(getattr(base_env, "in_free_teleop", False))
         key = keyboard.get_key()
+
+        control_mode = getattr(base_env, "control_mode", None)
+
         if key is None:
             return None
 
         if key == "s":
-            setattr(self.env, "start_episode_requested", True)
+            if reset_phase or in_free_teleop:
+                setattr(base_env, "start_episode_requested", True)
             return None
 
         if reset_phase:
             return None
 
-        control_mode = getattr(self.env, "control_mode", None)
         if control_mode is None:
             return None
         control_mode_type = type(control_mode)
@@ -60,44 +68,54 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
 
         if key == "r":
             self._log_info("[LeaderFollowerEnv] -> FreeTeleop (episode aborted)")
-            setattr(self.env, "in_free_teleop", True)
+            setattr(base_env, "in_free_teleop", True)
             return self._build_truncated_result()
 
         if key == "d":
             self._log_info("[LeaderFollowerEnv] Manual done (episode saved)")
-            setattr(self.env, "manual_done", True)
+            setattr(base_env, "manual_done", True)
             return self._build_truncated_result()
 
+        if manual_episode_control_only and key in {"p", "t", "m"}:
+            return None
+
         if key == "p" and control_mode in (model_mode, teleop_mode):
-            self._log_info("[LeaderFollowerEnv] %s -> PAUSE", getattr(control_mode, "name", ""))
-            setattr(self.env, "control_mode", pause_mode)
+            self._log_info(
+                "[LeaderFollowerEnv] %s -> PAUSE",
+                getattr(control_mode, "name", ""),
+            )
+            setattr(base_env, "control_mode", pause_mode)
         elif key == "t" and control_mode == pause_mode:
             self._log_info("[LeaderFollowerEnv] PAUSE -> TELEOP")
-            snapshot_fn = getattr(self.env, "snapshot_teleop_init", None)
+            snapshot_fn = getattr(base_env, "snapshot_teleop_init", None)
             if callable(snapshot_fn):
                 snapshot_fn()
-            setattr(self.env, "control_mode", teleop_mode)
+            setattr(base_env, "control_mode", teleop_mode)
         elif key == "m" and control_mode == pause_mode:
             self._log_info("[LeaderFollowerEnv] PAUSE -> MODEL")
-            setattr(self.env, "control_mode", model_mode)
+            setattr(base_env, "control_mode", model_mode)
 
         return None
 
     def _build_truncated_result(self):
-        obs_fn = getattr(self.env, "_get_observation", None)
+        base_env = self._base_env()
+        obs_fn = getattr(base_env, "_get_observation", None)
         if not callable(obs_fn):
             return None
         observation = obs_fn()
-        control_mode = getattr(self.env, "control_mode", None)
+        control_mode = getattr(base_env, "control_mode", None)
         control_mode_value = (
             getattr(control_mode, "value", control_mode) if control_mode is not None else 0
         )
         return observation, 0.0, False, True, {
             "control_mode": control_mode_value,
-            "manual_done": bool(getattr(self.env, "manual_done", False)),
+            "manual_done": bool(getattr(base_env, "manual_done", False)),
         }
 
     def _log_info(self, message: str, *args) -> None:
-        logger = getattr(self.env, "_logger", None)
+        logger = getattr(self._base_env(), "_logger", None)
         if logger is not None:
             logger.info(message, *args)
+
+    def _base_env(self):
+        return getattr(self.env, "unwrapped", self.env)

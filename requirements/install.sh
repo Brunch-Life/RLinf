@@ -913,7 +913,7 @@ install_dosw1_env() {
     # Reuse the standard embodied extra so dosw1 picks up the same
     # transformers/imageio/gymnasium dependency set as other embodied envs.
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install evdev
+    uv pip install evdev opencv-python
     # install dosw1-sdk
     uv pip install ~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl
     uv pip install -e ~/dos_w1/airbot/airbot_api

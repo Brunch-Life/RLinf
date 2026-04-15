@@ -64,6 +64,9 @@ class RealWorldEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.main_image_key = cfg.main_image_key
+        self.manual_episode_control_only = bool(
+            self.override_cfg.get("manual_episode_control_only", False)
+        )
 
         self._init_env()
 
@@ -298,7 +301,9 @@ class RealWorldEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        if not self.manual_episode_control_only:
+            truncations = timeout_truncations
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)

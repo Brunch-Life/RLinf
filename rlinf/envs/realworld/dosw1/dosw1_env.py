@@ -105,6 +105,7 @@ class DOSW1Config:
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
+    manual_episode_control_only: bool = False
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
 
@@ -178,17 +179,28 @@ class DOSW1Env(gym.Env):
         options: Optional[dict] = None,
         joint_reset: bool = False,
     ) -> tuple[dict, dict]:
+        del seed, joint_reset
         if self.config.is_dummy:
             return self._get_observation(), {}
+
+        options = options or {}
+        skip_wait_for_start = bool(options.get("skip_wait_for_start", False))
 
         if self.config.enable_human_in_loop:
             self.in_free_teleop = True
             self.start_episode_requested = False
-            self._logger.info(
-                "[DOSW1Env] FreeTeleop mode active. "
-                "Move arms freely via leader arm. Press 's' to start episode."
-            )
-            self._free_teleop_loop()
+            if skip_wait_for_start:
+                self._logger.info(
+                    "[DOSW1Env] Final reset skips waiting for 's'; "
+                    "no new episode will be started."
+                )
+                self.in_free_teleop = False
+            else:
+                self._logger.info(
+                    "[DOSW1Env] FreeTeleop mode active. "
+                    "Move arms freely via leader arm. Press 's' to start episode."
+                )
+                self._free_teleop_loop()
             self.snapshot_teleop_init()
             self.control_mode = ControlMode.TELEOP
         else:
@@ -227,7 +239,11 @@ class DOSW1Env(gym.Env):
         )
         reward = self._calc_step_reward(obs, gripper_changed=gripper_changed)
         terminated = False
-        truncated = self._num_steps >= self.config.max_num_steps
+        manual_episode_control_only = bool(self.config.manual_episode_control_only)
+        truncated = (
+            (not manual_episode_control_only)
+            and self._num_steps >= self.config.max_num_steps
+        )
 
         info: dict = {"control_mode": self.control_mode.value, "manual_done": self.manual_done}
         if self.control_mode == ControlMode.TELEOP:

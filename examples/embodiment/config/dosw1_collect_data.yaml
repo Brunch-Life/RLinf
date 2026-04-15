@@ -41,3 +41,6 @@ env:
     auto_reset: False
     override_cfg:
       enable_human_in_loop: True
+      manual_episode_control_only: True
+      robot_url: "127.0.0.1"
+      camera_serials: []
