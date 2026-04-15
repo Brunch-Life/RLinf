@@ -21,7 +21,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: ROBOT_IP
+          - robot_ip: 172.16.0.2
             node_rank: 0
 
 runner:

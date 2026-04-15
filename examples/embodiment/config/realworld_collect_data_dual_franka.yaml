@@ -21,19 +21,19 @@ cluster:
       hardware:
         type: DualFranka
         configs:
-          - left_robot_ip: LEFT_ROBOT_IP
-            right_robot_ip: RIGHT_ROBOT_IP
+          - left_robot_ip: 172.16.0.2
+            right_robot_ip: 172.16.0.2
             base_camera_serials:
-              - BASE_CAMERA_SERIAL
+              - "941322072906"
             left_camera_serials:
-              - LEFT_CAMERA_SERIAL
+              - "141722079447"
             right_camera_serials:
-              - RIGHT_CAMERA_SERIAL
+              - "141722078696"
             camera_type: realsense
             left_gripper_type: robotiq
             right_gripper_type: robotiq
-            left_gripper_connection: LEFT_GRIPPER_CONNECTION # e.g. /dev/ttyUSB0
-            right_gripper_connection: RIGHT_GRIPPER_CONNECTION
+            left_gripper_connection: "/dev/ttyUSB0"    # RS-485 on Node 0
+            right_gripper_connection: "/dev/ttyUSB0"   # RS-485 on Node 1
             left_controller_node_rank: 0
             right_controller_node_rank: 1
             node_rank: 0
@@ -57,7 +57,14 @@ env:
     use_spacemouse: True
     keyboard_reward_wrapper: "single_stage"
     override_cfg:
-      target_ee_pose: TARGET_EE_POSE
+      # Safe dual-arm teleop pose: z = 0.4 m (well above table)
+      # Frame: [x, y, z, rx, ry, rz], ee pointing down (rx = -3.14)
+      target_ee_pose:
+        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]    # left arm target
+        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]    # right arm target
+      reset_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]    # left arm reset (higher)
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]    # right arm reset (higher)
       success_hold_steps: 1
 
   data_collection:
