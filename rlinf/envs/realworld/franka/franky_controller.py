@@ -397,6 +397,14 @@ class FrankyController(Worker):
         if self._tracker is not None:
             return
 
+        # Flush any lingering async motion (e.g. a failed Cartesian
+        # reset) so franky allows switching to joint impedance mode.
+        try:
+            self._robot.join_motion()
+        except Exception:
+            pass
+        self.clear_errors()
+
         self._tracker = self._franky.JointImpedanceTracker(
             self._robot,
             stiffness=np.array(_DEFAULT_JOINT_IMPEDANCE),
@@ -424,6 +432,10 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"Joint impedance update failed: {e}")
             self._stop_tracking_motion()
+            try:
+                self._robot.join_motion()
+            except Exception:
+                pass
             self.clear_errors()
 
     def _stop_tracking_motion(self):
@@ -446,6 +458,10 @@ class FrankyController(Worker):
             f"Invalid reset position, expected 7 dims but got {len(reset_pos)}"
         )
         self._stop_tracking_motion()
+        try:
+            self._robot.join_motion()
+        except Exception:
+            pass
         self.clear_errors()
 
         franky = self._franky
@@ -497,6 +513,10 @@ class FrankyController(Worker):
             self._robot.move(motion, asynchronous=True)
         except Exception as e:
             self._logger.warning(f"Cartesian motion failed: {e}")
+            try:
+                self._robot.join_motion()
+            except Exception:
+                pass
             self.clear_errors()
 
     # ═══════════════════════════════════════════════════════════════

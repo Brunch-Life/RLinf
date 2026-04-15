@@ -20,9 +20,19 @@ directly.  This is used for joint-space control where the GELLO joint
 positions map 1:1 to the robot's joint positions.
 """
 
+from __future__ import annotations
+
 import threading
 
 import numpy as np
+
+# Mid-point of each Franka Panda joint range — used as the seed for angle
+# unwrapping so that the first Dynamixel reading lands inside the valid range
+# even when it is offset by 2kπ after calibration.
+# Note: J4 centre ≈ −1.57, J6 centre ≈ 1.87 (J6 upper limit 3.75 > π).
+_FRANKA_RANGE_CENTER = np.array(
+    [0.0, 0.0, 0.0, -1.5708, 0.0, 1.8675, 0.0]
+)
 
 
 class GelloJointExpert:
@@ -32,9 +42,14 @@ class GelloJointExpert:
     exposes them directly through :meth:`get_action`, without performing
     forward kinematics.
 
+    Dynamixel readings may be offset by 2kπ from the robot's valid range.
+    To avoid dangerous discontinuities, joint angles are *unwrapped*:
+    the first reading is mapped to the nearest equivalent within each
+    joint's valid range, and every subsequent reading is kept continuous
+    with the previous one (no single-step jump > π).
+
     Args:
-        port: Serial port of the GELLO device, e.g.
-            ``"/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0"``.
+        port: Serial port of the GELLO device.
     """
 
     def __init__(self, port: str):
@@ -44,6 +59,7 @@ class GelloJointExpert:
 
         self.state_lock = threading.Lock()
         self._ready = False
+        self._prev_joints: np.ndarray | None = None
         self.latest_data = {
             "joint_positions": np.zeros(7),
             "gripper": np.zeros(1),
@@ -62,8 +78,13 @@ class GelloJointExpert:
                 gello_joints, gello_gripper = self.agent.get_action()
                 gello_gripper = np.array([gello_gripper])
 
+                joints = np.array(gello_joints)
+                ref = self._prev_joints if self._prev_joints is not None else _FRANKA_RANGE_CENTER
+                joints = ref + (joints - ref + np.pi) % (2.0 * np.pi) - np.pi
+                self._prev_joints = joints
+
                 with self.state_lock:
-                    self.latest_data["joint_positions"] = np.array(gello_joints)
+                    self.latest_data["joint_positions"] = joints.copy()
                     self.latest_data["gripper"] = gello_gripper
                     self._ready = True
                 consecutive_errors = 0

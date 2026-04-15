@@ -89,9 +89,8 @@ class GelloJointIntervention(gym.ActionWrapper):
         self._stream_thread: threading.Thread | None = None
         self._stream_running = False
         self._stream_last_gripper_open: bool | None = None
-
-        if self._direct_stream:
-            self._start_stream_thread()
+        self._stream_paused = threading.Event()
+        self._stream_paused.set()  # starts unpaused
 
     # ═══════════════════════════════════════════════════════════════
     #  Direct-stream daemon — bypasses env.step's 10 Hz rate gate
@@ -132,6 +131,10 @@ class GelloJointIntervention(gym.ActionWrapper):
 
         period = self._stream_period
         while self._stream_running:
+            self._stream_paused.wait()  # block while paused
+            if not self._stream_running:
+                break
+
             loop_start = time.time()
 
             if not self.expert.ready:
@@ -219,6 +222,18 @@ class GelloJointIntervention(gym.ActionWrapper):
             return expert_a, True
 
         return action, False
+
+    def reset(self, **kwargs):
+        """Pause streaming during reset to avoid racing with Cartesian motions."""
+        self._stream_paused.clear()  # pause
+        try:
+            result = self.env.reset(**kwargs)
+        finally:
+            self._stream_paused.set()  # resume
+            # Lazy-start the stream thread after the first reset completes.
+            if self._direct_stream and self._stream_thread is None:
+                self._start_stream_thread()
+        return result
 
     def step(self, action):
         new_action, replaced = self.action(action)
