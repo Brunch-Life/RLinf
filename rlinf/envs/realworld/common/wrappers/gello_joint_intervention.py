@@ -283,11 +283,7 @@ class GelloJointIntervention(gym.ActionWrapper):
             # Only start the 1 kHz streamer once the arm is already at
             # GELLO — otherwise defer to a future reset/step when
             # alignment can succeed (e.g. GELLO just plugged in).
-            if (
-                self._direct_stream
-                and aligned
-                and self._stream_thread is None
-            ):
+            if self._direct_stream and aligned and self._stream_thread is None:
                 self._start_stream_thread()
         return result
 

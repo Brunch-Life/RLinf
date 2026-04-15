@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Sequential per-joint GELLO ↔ Franka alignment guide.
 
 Walks the operator through aligning **one joint at a time**, J1 → J7.
@@ -41,8 +55,8 @@ from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
 from rlinf.envs.realworld.franka.utils import wrap_to_pi  # noqa: E402
 
 # ── tunables ────────────────────────────────────────────────────────────
-ALIGN_TOL = 0.10        # rad — joint considered aligned when |Δ| < this
-STABLE_TICKS = 8        # consecutive frames inside tol → advance
+ALIGN_TOL = 0.10  # rad — joint considered aligned when |Δ| < this
+STABLE_TICKS = 8  # consecutive frames inside tol → advance
 REFRESH_HZ = 10.0
 
 # The pose the robot is moved to before alignment starts.  Chosen to be
@@ -69,13 +83,13 @@ REFRESH_HZ = 10.0
 #   ALIGN_HOME="0.0,0.0,0.0,-1.5708,0.0,0.7854,0.7854" \
 #       bash examples/embodiment/gello_align.sh
 HOME_JOINTS_DEFAULT = [
-    math.pi / 4,    # J1
-    0.0,            # J2
-    0.0,            # J3
-    -math.pi / 2,   # J4
-    0.0,            # J5
-    math.pi / 2,    # J6
-    0.0,            # J7
+    math.pi / 4,  # J1
+    0.0,  # J2
+    0.0,  # J3
+    -math.pi / 2,  # J4
+    0.0,  # J5
+    math.pi / 2,  # J6
+    0.0,  # J7
 ]
 
 
@@ -191,16 +205,6 @@ def _print_home_pose(home: list[float]) -> None:
     print(colour("Alignment HOME pose:", "36;1"))
     for i, v in enumerate(home):
         print(f"  J{i + 1} = {_format_angle(v)}")
-    # Verbal description for operator visual matching
-    descriptions = [
-        "base rotation",
-        "shoulder pitch (J2)",
-        "shoulder roll (J3)",
-        "elbow pitch (J4)",
-        "forearm roll (J5)",
-        "wrist pitch (J6)",
-        "flange roll (J7)",
-    ]
     print()
     print(
         "  Geometric intent: J2 vertical, J4 at right angle (forearm\n"
@@ -382,9 +386,8 @@ def main() -> None:
             ]
             md = max(abs(d) for d in deltas)
             worst = int(np.argmax(np.abs(np.asarray(deltas))))
-            line = (
-                f"  hold: max |Δ| = {md:.3f} rad on J{worst + 1}    "
-                + ("OK " if md < 0.5 else "DRIFT ")
+            line = f"  hold: max |Δ| = {md:.3f} rad on J{worst + 1}    " + (
+                "OK " if md < 0.5 else "DRIFT "
             )
             sys.stdout.write("\r" + line)
             sys.stdout.flush()

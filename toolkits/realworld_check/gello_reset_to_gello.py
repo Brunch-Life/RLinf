@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Move the Franka arm to match the current GELLO joint positions.
 
 Reads the GELLO's current 7-DOF joint positions, shows them to the
@@ -32,9 +46,9 @@ from rlinf.envs.realworld.common.gello.gello_joint_expert import (  # noqa: E402
     GelloJointExpert,
 )
 from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
-    FrankyController,
     JOINT_LIMITS_LOWER,
     JOINT_LIMITS_UPPER,
+    FrankyController,
 )
 
 ALIGN_TOL = 0.08  # rad — considered aligned when all |Δ| < this
@@ -127,8 +141,10 @@ def main():
 
     for i in range(7):
         d = delta[i]
-        status = colour("OK", "32") if abs(d) < ALIGN_TOL else colour(f"Δ={d:+.3f}", "33")
-        print(f"  J{i+1}: {current[i]:+.3f} → {target[i]:+.3f}  ({status})")
+        status = (
+            colour("OK", "32") if abs(d) < ALIGN_TOL else colour(f"Δ={d:+.3f}", "33")
+        )
+        print(f"  J{i + 1}: {current[i]:+.3f} → {target[i]:+.3f}  ({status})")
     print()
     print(f"  Max |Δ| = {max_delta:.3f} rad ({math.degrees(max_delta):.1f}°)")
     print("─" * 64)
@@ -146,7 +162,7 @@ def main():
             lo, hi = JOINT_LIMITS_LOWER[i], JOINT_LIMITS_UPPER[i]
             if target[i] < lo or target[i] > hi:
                 print(
-                    f"    J{i+1}: {target[i]:+.3f} not in [{lo:+.3f}, {hi:+.3f}]",
+                    f"    J{i + 1}: {target[i]:+.3f} not in [{lo:+.3f}, {hi:+.3f}]",
                     file=sys.stderr,
                 )
         sys.exit(1)
@@ -178,8 +194,10 @@ def main():
     print()
     for i in range(7):
         d = final_delta[i]
-        status = colour("✓", "32") if abs(d) < ALIGN_TOL else colour(f"err={d:+.3f}", "31")
-        print(f"  J{i+1}: target={target[i]:+.3f}  actual={final[i]:+.3f}  {status}")
+        status = (
+            colour("✓", "32") if abs(d) < ALIGN_TOL else colour(f"err={d:+.3f}", "31")
+        )
+        print(f"  J{i + 1}: target={target[i]:+.3f}  actual={final[i]:+.3f}  {status}")
     print()
 
     if max_err < ALIGN_TOL:

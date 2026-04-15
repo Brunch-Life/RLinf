@@ -30,9 +30,7 @@ import numpy as np
 # unwrapping so that the first Dynamixel reading lands inside the valid range
 # even when it is offset by 2kπ after calibration.
 # Note: J4 centre ≈ −1.57, J6 centre ≈ 1.87 (J6 upper limit 3.75 > π).
-_FRANKA_RANGE_CENTER = np.array(
-    [0.0, 0.0, 0.0, -1.5708, 0.0, 1.8675, 0.0]
-)
+_FRANKA_RANGE_CENTER = np.array([0.0, 0.0, 0.0, -1.5708, 0.0, 1.8675, 0.0])
 
 
 class GelloJointExpert:
@@ -79,7 +77,11 @@ class GelloJointExpert:
                 gello_gripper = np.array([gello_gripper])
 
                 joints = np.array(gello_joints)
-                ref = self._prev_joints if self._prev_joints is not None else _FRANKA_RANGE_CENTER
+                ref = (
+                    self._prev_joints
+                    if self._prev_joints is not None
+                    else _FRANKA_RANGE_CENTER
+                )
                 joints = ref + (joints - ref + np.pi) % (2.0 * np.pi) - np.pi
                 self._prev_joints = joints
 

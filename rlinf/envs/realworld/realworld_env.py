@@ -145,9 +145,10 @@ class RealWorldEnv(gym.Env):
         # RelativeFrame is only applicable to Cartesian control.
         # Skip it for joint-space environments (identified by joint_action_mode
         # in env config) since the adjoint transform is meaningless for joints.
-        is_joint_space = hasattr(env, "config") and getattr(
-            env.config, "joint_action_mode", None
-        ) is not None
+        is_joint_space = (
+            hasattr(env, "config")
+            and getattr(env.config, "joint_action_mode", None) is not None
+        )
         if self.cfg.get("use_relative_frame", True) and not is_joint_space:
             env = RelativeFrame(env)
         env = Quat2EulerWrapper(env)

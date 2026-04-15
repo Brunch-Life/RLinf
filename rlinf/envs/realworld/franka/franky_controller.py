@@ -53,9 +53,7 @@ from .franka_robot_state import FrankaRobotState
 JOINT_LIMITS_LOWER = np.array(
     [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
 )
-JOINT_LIMITS_UPPER = np.array(
-    [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
-)
+JOINT_LIMITS_UPPER = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973])
 
 # Collision thresholds (Nm / N) — conservative defaults that let
 # deliberate streaming moves through without tripping reflexes.
@@ -422,9 +420,7 @@ class FrankyController(Worker):
         assert len(joint_positions) == 7, (
             f"Expected 7 joint positions, got {len(joint_positions)}"
         )
-        q = np.clip(
-            joint_positions, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
-        ).tolist()
+        q = np.clip(joint_positions, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER).tolist()
 
         try:
             self._ensure_tracking_motion()

@@ -78,9 +78,7 @@ def _print_help() -> None:
 
 def main() -> None:
     robot_ip = os.environ.get("FRANKA_ROBOT_IP")
-    assert robot_ip is not None, (
-        "Please set the FRANKA_ROBOT_IP environment variable."
-    )
+    assert robot_ip is not None, "Please set the FRANKA_ROBOT_IP environment variable."
 
     gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "robotiq")
     gripper_connection = os.environ.get("FRANKA_GRIPPER_PORT")
@@ -96,9 +94,7 @@ def main() -> None:
     while not controller.is_robot_up().wait()[0]:
         time.sleep(0.5)
         if time.time() - start_time > 30:
-            print(
-                f"Waited {time.time() - start_time:.1f}s for Franka to be ready"
-            )
+            print(f"Waited {time.time() - start_time:.1f}s for Franka to be ready")
             break
 
     print(f"Connected to Franka at {robot_ip}")
@@ -187,7 +183,7 @@ def main() -> None:
                 state = controller.get_state().wait()[0]
                 print(
                     f"joint_vel rms = "
-                    f"{np.sqrt(np.mean(state.arm_joint_velocity ** 2)):.5f} rad/s"
+                    f"{np.sqrt(np.mean(state.arm_joint_velocity**2)):.5f} rad/s"
                 )
             elif cmd == "open":
                 controller.open_gripper().wait()

@@ -175,16 +175,10 @@ class FrankaJointEnv(FrankaEnv):
             {
                 "state": gym.spaces.Dict(
                     {
-                        "tcp_pose": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),
+                        "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(7,)),
                         "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(6,)),
-                        "joint_position": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),
-                        "joint_velocity": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(7,)
-                        ),
+                        "joint_position": gym.spaces.Box(-np.inf, np.inf, shape=(7,)),
+                        "joint_velocity": gym.spaces.Box(-np.inf, np.inf, shape=(7,)),
                         "gripper_position": gym.spaces.Box(-1, 1, shape=(1,)),
                         "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
                         "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(3,)),
@@ -299,9 +293,7 @@ class FrankaJointEnv(FrankaEnv):
                 "tcp_vel": self._franka_state.tcp_vel,
                 "joint_position": self._franka_state.arm_joint_position,
                 "joint_velocity": self._franka_state.arm_joint_velocity,
-                "gripper_position": np.array(
-                    [self._franka_state.gripper_position]
-                ),
+                "gripper_position": np.array([self._franka_state.gripper_position]),
                 "tcp_force": self._franka_state.tcp_force,
                 "tcp_torque": self._franka_state.tcp_torque,
             }
@@ -312,4 +304,3 @@ class FrankaJointEnv(FrankaEnv):
             return copy.deepcopy(observation)
         else:
             return self._base_observation_space.sample()
-
