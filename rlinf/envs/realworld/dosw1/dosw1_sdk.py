@@ -45,6 +45,7 @@ class DOSW1SDKAdapter:
     def __init__(self, config: "DOSW1Config") -> None:
         self._logger = get_logger()
         self._config = config
+        self._leader_arm_enabled = bool(config.enable_human_in_loop)
         self._connected = False
         self._robot: object | None = None
 
@@ -108,6 +109,21 @@ class DOSW1SDKAdapter:
         except Exception:
             self._logger.exception("[DOSW1SDK] Failed to disconnect cleanly")
 
+    def set_leader_arm_enabled(self, enabled: bool) -> None:
+        """Toggle leader-arm linkage used by teleoperation."""
+        enabled = bool(enabled)
+        self._leader_arm_enabled = enabled
+        if self._config.is_dummy:
+            return
+        robot = self._require_connected()
+        config_ = getattr(robot, "config_", None)
+        if config_ is not None and hasattr(config_, "USE_LEAD_ARMS"):
+            setattr(config_, "USE_LEAD_ARMS", enabled)
+        if hasattr(robot, "USE_LEAD_ARMS"):
+            setattr(robot, "USE_LEAD_ARMS", enabled)
+        if hasattr(robot, "use_lead_arms"):
+            setattr(robot, "use_lead_arms", enabled)
+
     def get_left_joint(self) -> np.ndarray:
         """Return left follower arm state ``(7,)``."""
         if self._config.is_dummy:
@@ -152,7 +168,7 @@ class DOSW1SDKAdapter:
 
     def get_left_lead_joint(self) -> np.ndarray:
         """Return left leader arm state ``(7,)``."""
-        if self._config.is_dummy or not self._config.enable_human_in_loop:
+        if self._config.is_dummy or not self._leader_arm_enabled:
             return np.zeros(7)
         robot = self._require_connected()
         return np.asarray(
@@ -162,7 +178,7 @@ class DOSW1SDKAdapter:
 
     def get_right_lead_joint(self) -> np.ndarray:
         """Return right leader arm state ``(7,)``."""
-        if self._config.is_dummy or not self._config.enable_human_in_loop:
+        if self._config.is_dummy or not self._leader_arm_enabled:
             return np.zeros(7)
         robot = self._require_connected()
         return np.asarray(

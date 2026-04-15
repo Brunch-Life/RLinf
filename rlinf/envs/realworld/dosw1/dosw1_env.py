@@ -171,6 +171,7 @@ class DOSW1Config:
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
+    manual_episode_control_only: bool = False
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
 
@@ -223,9 +224,11 @@ class DOSW1Env(gym.Env):
         self._teleop_init_follow_right: np.ndarray | None = None
         self.teleop_target_left_gripper: float | None = None
         self.manual_done: bool = False
+        self._leader_follow_enabled: bool = False
         if config.enable_human_in_loop:
             self._keyboard = KeyboardListener()
             self.in_free_teleop = True
+            self._leader_follow_enabled = True
 
         self._init_action_obs_spaces()
 
@@ -250,6 +253,9 @@ class DOSW1Env(gym.Env):
         if self.config.enable_human_in_loop:
             self.in_free_teleop = True
             self.start_episode_requested = False
+            self._set_leader_follow_enabled(
+                enabled=True, source="reset_enter_free_teleop"
+            )
             # region agent log
             _agent_debug_log(
                 run_id="s-key",
@@ -270,10 +276,34 @@ class DOSW1Env(gym.Env):
             )
             self._free_teleop_loop()
             self.snapshot_teleop_init()
-            self.control_mode = ControlMode.TELEOP
+            manual_episode_control_only = bool(
+                getattr(self.config, "manual_episode_control_only", False)
+            )
+            next_mode = (
+                ControlMode.TELEOP
+                if manual_episode_control_only
+                else ControlMode.MODEL
+            )
+            self.set_control_mode(next_mode, source="reset_after_start_key")
+            # region agent log
+            _agent_debug_log(
+                run_id="mode-fix",
+                hypothesis_id="H1",
+                location="dosw1_env.py:reset",
+                message="reset_control_mode_selected",
+                data={
+                    "env_idx": self.env_idx,
+                    "manual_episode_control_only": manual_episode_control_only,
+                    "selected_mode": int(next_mode),
+                    "selected_mode_name": str(getattr(next_mode, "name", next_mode)),
+                    "in_free_teleop_after_reset": bool(self.in_free_teleop),
+                    "leader_follow_enabled": bool(self._leader_follow_enabled),
+                },
+            )
+            # endregion
         else:
             self._go_to_home()
-            self.control_mode = ControlMode.MODEL
+            self.set_control_mode(ControlMode.MODEL, source="reset_no_human_in_loop")
         self._num_steps = 0
         self.manual_done = False
         self.robot_state = self.sdk.get_state()
@@ -336,7 +366,86 @@ class DOSW1Env(gym.Env):
     def task_description(self) -> str:
         return "Perform the DOSW1 dual-arm manipulation task."
 
+    def set_control_mode(
+        self, mode: ControlMode, *, source: str = "unknown"
+    ) -> None:
+        prev_mode = self.control_mode
+        self.control_mode = mode
+        self._set_leader_follow_enabled(
+            enabled=bool(self.in_free_teleop or mode == ControlMode.TELEOP),
+            source=f"{source}:{getattr(mode, 'name', mode)}",
+        )
+        # region agent log
+        _agent_debug_log(
+            run_id="mode-fix",
+            hypothesis_id="H2",
+            location="dosw1_env.py:set_control_mode",
+            message="control_mode_updated",
+            data={
+                "env_idx": self.env_idx,
+                "source": source,
+                "prev_mode": int(prev_mode),
+                "prev_mode_name": str(getattr(prev_mode, "name", prev_mode)),
+                "new_mode": int(mode),
+                "new_mode_name": str(getattr(mode, "name", mode)),
+                "in_free_teleop": bool(self.in_free_teleop),
+                "leader_follow_enabled": bool(self._leader_follow_enabled),
+            },
+        )
+        # endregion
+
+    def _set_leader_follow_enabled(self, *, enabled: bool, source: str) -> None:
+        enabled = bool(enabled)
+        self._leader_follow_enabled = enabled
+        if self.sdk is not None:
+            set_enabled = getattr(self.sdk, "set_leader_arm_enabled", None)
+            if callable(set_enabled):
+                try:
+                    set_enabled(enabled)
+                except Exception:
+                    self._logger.exception(
+                        "[DOSW1Env] Failed to toggle leader follow to %s",
+                        enabled,
+                    )
+        # region agent log
+        _agent_debug_log(
+            run_id="mode-fix",
+            hypothesis_id="H4",
+            location="dosw1_env.py:_set_leader_follow_enabled",
+            message="leader_follow_toggled",
+            data={
+                "env_idx": self.env_idx,
+                "source": source,
+                "enabled": enabled,
+                "control_mode": int(getattr(self, "control_mode", ControlMode.MODEL)),
+                "control_mode_name": str(
+                    getattr(
+                        getattr(self, "control_mode", ControlMode.MODEL), "name", "MODEL"
+                    )
+                ),
+                "in_free_teleop": bool(self.in_free_teleop),
+            },
+        )
+        # endregion
+
     def _dispatch_action(self, policy_action: np.ndarray) -> np.ndarray:
+        # region agent log
+        if self.control_mode != ControlMode.MODEL:
+            _agent_debug_log(
+                run_id="mode-fix",
+                hypothesis_id="H3",
+                location="dosw1_env.py:_dispatch_action",
+                message="dispatch_non_model_mode",
+                data={
+                    "env_idx": self.env_idx,
+                    "control_mode": int(self.control_mode),
+                    "control_mode_name": str(
+                        getattr(self.control_mode, "name", self.control_mode)
+                    ),
+                    "leader_follow_enabled": bool(self._leader_follow_enabled),
+                },
+            )
+        # endregion
         if self.control_mode == ControlMode.MODEL:
             return self._execute_model_action(policy_action)
         if self.control_mode == ControlMode.PAUSE:
@@ -603,6 +712,8 @@ class DOSW1Env(gym.Env):
             # endregion
 
     def _forward_leader_to_follower(self) -> None:
+        if not self._leader_follow_enabled:
+            return
         cur_left = self.sdk.get_left_joint()[:6]
         cur_right = self.sdk.get_right_joint()[:6]
         left_joint, left_gripper, right_joint, right_gripper = (

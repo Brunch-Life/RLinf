@@ -180,21 +180,45 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
         if manual_episode_control_only and key in {"p", "t", "m"}:
             return None
 
+        if key in {"p", "t", "m"}:
+            # region agent log
+            _agent_debug_log(
+                run_id="mode-fix",
+                hypothesis_id="H2",
+                location="leader_follower_keyboard_intervention.py:_handle_key_event",
+                message="wrapper_mode_key_received",
+                data={
+                    "key": key,
+                    "manual_episode_control_only": manual_episode_control_only,
+                    "control_mode_before": str(getattr(control_mode, "name", control_mode)),
+                    "in_free_teleop": bool(in_free_teleop),
+                },
+            )
+            # endregion
+
+        set_control_mode = getattr(base_env, "set_control_mode", None)
+
+        def _update_mode(target_mode, source: str) -> None:
+            if callable(set_control_mode):
+                set_control_mode(target_mode, source=source)
+            else:
+                setattr(base_env, "control_mode", target_mode)
+
         if key == "p" and control_mode in (model_mode, teleop_mode):
             self._log_info(
                 "[LeaderFollowerEnv] %s -> PAUSE",
                 getattr(control_mode, "name", ""),
             )
-            setattr(base_env, "control_mode", pause_mode)
+            _update_mode(pause_mode, "keyboard_p")
         elif key == "t" and control_mode == pause_mode:
             self._log_info("[LeaderFollowerEnv] PAUSE -> TELEOP")
+            _update_mode(teleop_mode, "keyboard_t")
             snapshot_fn = getattr(base_env, "snapshot_teleop_init", None)
             if callable(snapshot_fn):
                 snapshot_fn()
-            setattr(base_env, "control_mode", teleop_mode)
         elif key == "m" and control_mode == pause_mode:
             self._log_info("[LeaderFollowerEnv] PAUSE -> MODEL")
-            setattr(base_env, "control_mode", model_mode)
+            _update_mode(model_mode, "keyboard_m")
 
         return None
 
