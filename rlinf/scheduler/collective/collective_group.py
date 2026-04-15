@@ -14,9 +14,13 @@
 
 import io
 import itertools
+import json
 import logging
+import os
+import socket
 import threading
 import time
+import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass, is_dataclass, replace
 from pickle import Pickler, Unpickler
@@ -39,6 +43,35 @@ from .async_work import AsyncFuncWork, AsyncWork
 
 if TYPE_CHECKING:
     from .collective import Collective
+
+
+_AGENT_DEBUG_LOG_PATH = "/mlp_vepfs/share/wyf/RLinf-open/.cursor/debug-c78ceb.log"
+_AGENT_DEBUG_SESSION_ID = "c78ceb"
+
+
+def _agent_debug_log(
+    *,
+    run_id: str,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, Any],
+) -> None:
+    try:
+        payload = {
+            "sessionId": _AGENT_DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+        }
+        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 @dataclass
@@ -308,6 +341,22 @@ class CollectiveGroup:
 
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
         """
+        # region agent log
+        _agent_debug_log(
+            run_id="pre-fix",
+            hypothesis_id="H4",
+            location="collective_group.py:_atomic_send",
+            message="atomic_send_enter",
+            data={
+                "group_name": self._group_name,
+                "comm_id": comm_id,
+                "thread_name": threading.current_thread().name,
+                "mc_group_initialized": (
+                    bool(self._mc_group and self._mc_group.is_initialized)
+                ),
+            },
+        )
+        # endregion
         self._init_process_group(options=options)
         # First send object type to the destination worker
         object_type_tensor = torch.tensor(object_type, dtype=torch.int, device="cpu")
@@ -881,6 +930,22 @@ class CollectiveGroup:
         """Initialize the process group for collective operations."""
         with self._lock:
             self._init_group()
+            # region agent log
+            _agent_debug_log(
+                run_id="pre-fix",
+                hypothesis_id="H4",
+                location="collective_group.py:_init_process_group",
+                message="init_process_group_enter",
+                data={
+                    "group_name": self._group_info.group_name,
+                    "rank": self._rank,
+                    "thread_name": threading.current_thread().name,
+                    "already_initialized": bool(
+                        self._mc_group and self._mc_group.is_initialized
+                    ),
+                },
+            )
+            # endregion
             if self._mc_group.is_initialized:
                 return
 
@@ -909,13 +974,61 @@ class CollectiveGroup:
                 f"Initializing process group for collective group {self._group_info.group_name}, master address {self._group_info.master_addr}, master port {master_port}, world size {self._group_info.world_size}, rank {self._rank}"
             )
 
-            self._mc_group.init(
-                init_method=f"tcp://{self._group_info.master_addr}:{master_port}",
-                world_size=self._group_info.world_size,
-                rank=self._rank,
-                group_name=self._group_info.group_name,
-                options=options,
+            # region agent log
+            _agent_debug_log(
+                run_id="pre-fix",
+                hypothesis_id="H1",
+                location="collective_group.py:_init_process_group",
+                message="before_mc_group_init",
+                data={
+                    "group_name": self._group_info.group_name,
+                    "rank": self._rank,
+                    "world_size": self._group_info.world_size,
+                    "master_addr": self._group_info.master_addr,
+                    "master_port": master_port,
+                    "worker_addresses": [
+                        (
+                            worker.address.get_name()
+                            if hasattr(worker, "address")
+                            and hasattr(worker.address, "get_name")
+                            else str(worker)
+                        )
+                        for worker in self._group_info.workers
+                    ],
+                    "gloo_socket_ifname": os.environ.get("GLOO_SOCKET_IFNAME"),
+                    "nccl_socket_ifname": os.environ.get("NCCL_SOCKET_IFNAME"),
+                    "hostname": socket.gethostname(),
+                },
             )
+            # endregion
+
+            try:
+                self._mc_group.init(
+                    init_method=f"tcp://{self._group_info.master_addr}:{master_port}",
+                    world_size=self._group_info.world_size,
+                    rank=self._rank,
+                    group_name=self._group_info.group_name,
+                    options=options,
+                )
+            except Exception as e:
+                # region agent log
+                _agent_debug_log(
+                    run_id="pre-fix",
+                    hypothesis_id="H3",
+                    location="collective_group.py:_init_process_group",
+                    message="mc_group_init_failed",
+                    data={
+                        "group_name": self._group_info.group_name,
+                        "rank": self._rank,
+                        "world_size": self._group_info.world_size,
+                        "master_addr": self._group_info.master_addr,
+                        "master_port": master_port,
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                    },
+                )
+                # endregion
+                raise
 
             self._logger.debug(
                 f"Process group {self._group_info.group_name} initialized successfully."
