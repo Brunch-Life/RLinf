@@ -272,6 +272,6 @@ def prepare_actions(
             model_type=model_type,
         )
     else:
-        raise NotImplementedError
+        chunk_actions = raw_chunk_actions
 
     return chunk_actions
