@@ -68,6 +68,24 @@ def _agent_debug_log(
         }
         with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        try:
+            logger = Worker.logger
+            if logger is not None:
+                logger.info(
+                    "[SKEY_DEBUG] %s",
+                    json.dumps(
+                        {
+                            "location": location,
+                            "message": message,
+                            "runId": run_id,
+                            "hypothesisId": hypothesis_id,
+                            "data": data,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+        except Exception:
+            pass
     except Exception:
         pass
 
