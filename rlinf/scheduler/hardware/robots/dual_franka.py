@@ -119,6 +119,9 @@ class DualFrankaConfig(HardwareConfig):
     right_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the right arm's wrist camera(s)."""
 
+    base_camera_serials: Optional[list[str]] = None
+    """Camera serial numbers for the base (third-person) camera(s)."""
+
     camera_type: str = "zed"
     """Camera backend: ``"realsense"`` or ``"zed"``."""
 
@@ -165,3 +168,5 @@ class DualFrankaConfig(HardwareConfig):
             self.left_camera_serials = list(self.left_camera_serials)
         if self.right_camera_serials:
             self.right_camera_serials = list(self.right_camera_serials)
+        if self.base_camera_serials:
+            self.base_camera_serials = list(self.base_camera_serials)

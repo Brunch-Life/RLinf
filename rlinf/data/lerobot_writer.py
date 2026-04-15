@@ -87,8 +87,6 @@ class LeRobotDatasetWriter:
         action_dim: int = 7,
         has_wrist_image: bool = True,
         has_extra_view_image: bool = True,
-        has_left_wrist_image: bool = False,
-        has_right_wrist_image: bool = False,
         chunks_size: int = 1000,
         codebase_version: str = "v2.0",
         use_incremental_stats: bool = False,
@@ -106,10 +104,6 @@ class LeRobotDatasetWriter:
             action_dim: Action dimension
             has_wrist_image: Whether to include wrist_image in the dataset schema
             has_extra_view_image: Whether to include extra_view_image in the dataset schema
-            has_left_wrist_image: Whether to include left_wrist_image (dual-arm; pi0/pi0.5 left wrist).
-                Defaults to False so single-arm parquet schema is byte-identical to legacy output.
-            has_right_wrist_image: Whether to include right_wrist_image (dual-arm; pi0/pi0.5 right wrist).
-                Same default rationale as has_left_wrist_image.
             chunks_size: Maximum number of episodes per chunk
             codebase_version: LeRobot version string
             use_incremental_stats: Whether to use incremental statistics (Welford's algorithm) to avoid storing all raw data
@@ -123,8 +117,6 @@ class LeRobotDatasetWriter:
         self.action_dim = action_dim
         self.has_wrist_image = has_wrist_image
         self.has_extra_view_image = has_extra_view_image
-        self.has_left_wrist_image = has_left_wrist_image
-        self.has_right_wrist_image = has_right_wrist_image
         self.chunks_size = chunks_size
         self.codebase_version = codebase_version
         self.use_incremental_stats = use_incremental_stats
@@ -155,20 +147,6 @@ class LeRobotDatasetWriter:
                     "max": None,
                 },
                 "extra_view_image": {
-                    "sum": None,
-                    "sum_sq": None,
-                    "count": 0,
-                    "min": None,
-                    "max": None,
-                },
-                "left_wrist_image": {
-                    "sum": None,
-                    "sum_sq": None,
-                    "count": 0,
-                    "min": None,
-                    "max": None,
-                },
-                "right_wrist_image": {
                     "sum": None,
                     "sum_sq": None,
                     "count": 0,
@@ -231,8 +209,6 @@ class LeRobotDatasetWriter:
                 "image": {"values": []},
                 "wrist_image": {"values": []},
                 "extra_view_image": {"values": []},
-                "left_wrist_image": {"values": []},
-                "right_wrist_image": {"values": []},
                 "state": {"values": []},
                 "actions": {"values": []},
                 "timestamp": {"values": []},
@@ -308,8 +284,6 @@ class LeRobotDatasetWriter:
         task: str,
         is_success: bool,
         dones: np.ndarray | None = None,
-        left_wrist_images: np.ndarray | None = None,
-        right_wrist_images: np.ndarray | None = None,
     ) -> int:
         """
         Add an episode to the dataset.
@@ -323,10 +297,6 @@ class LeRobotDatasetWriter:
             task: Task description string
             is_success: Whether this is a successful trajectory
             dones: Per-step done flags [T] bool; if None, auto-generated (True only at last step)
-            left_wrist_images: Dual-arm left wrist images [T, H, W, C] uint8, or None
-                for single-arm. Only written if ``has_left_wrist_image=True``.
-            right_wrist_images: Dual-arm right wrist images [T, H, W, C] uint8, or None
-                for single-arm. Only written if ``has_right_wrist_image=True``.
 
         Returns:
             episode_index: Index of the added episode
@@ -377,11 +347,6 @@ class LeRobotDatasetWriter:
             data["wrist_image"] = []
         if self.has_extra_view_image:
             data["extra_view_image"] = []
-        if self.has_left_wrist_image:
-            data["left_wrist_image"] = []
-        if self.has_right_wrist_image:
-            data["right_wrist_image"] = []
-
         for t in range(T):
             # Image struct
             data["image"].append(self._create_image_struct(images[t], t))
@@ -394,16 +359,6 @@ class LeRobotDatasetWriter:
             if self.has_extra_view_image and extra_view_images is not None:
                 data["extra_view_image"].append(
                     self._create_image_struct(extra_view_images[t], t)
-                )
-
-            if self.has_left_wrist_image and left_wrist_images is not None:
-                data["left_wrist_image"].append(
-                    self._create_image_struct(left_wrist_images[t], t)
-                )
-
-            if self.has_right_wrist_image and right_wrist_images is not None:
-                data["right_wrist_image"].append(
-                    self._create_image_struct(right_wrist_images[t], t)
                 )
 
             # State and actions as lists (for fixed_size_list)
@@ -427,8 +382,6 @@ class LeRobotDatasetWriter:
             states,
             actions,
             data,
-            left_wrist_images=left_wrist_images,
-            right_wrist_images=right_wrist_images,
         )
 
         # Update global frame index
@@ -470,10 +423,6 @@ class LeRobotDatasetWriter:
             fields.append(("wrist_image", image_struct))
         if self.has_extra_view_image:
             fields.append(("extra_view_image", image_struct))
-        if self.has_left_wrist_image:
-            fields.append(("left_wrist_image", image_struct))
-        if self.has_right_wrist_image:
-            fields.append(("right_wrist_image", image_struct))
         fields.extend(
             [
                 ("state", pa.list_(pa.float32(), self.state_dim)),
@@ -495,10 +444,6 @@ class LeRobotDatasetWriter:
             features["wrist_image"] = {"_type": "Image"}
         if self.has_extra_view_image:
             features["extra_view_image"] = {"_type": "Image"}
-        if self.has_left_wrist_image:
-            features["left_wrist_image"] = {"_type": "Image"}
-        if self.has_right_wrist_image:
-            features["right_wrist_image"] = {"_type": "Image"}
         features.update(
             {
                 "state": {
@@ -548,14 +493,6 @@ class LeRobotDatasetWriter:
             arrays["extra_view_image"] = pa.array(
                 data["extra_view_image"], type=schema.field("extra_view_image").type
             )
-        if self.has_left_wrist_image:
-            arrays["left_wrist_image"] = pa.array(
-                data["left_wrist_image"], type=schema.field("left_wrist_image").type
-            )
-        if self.has_right_wrist_image:
-            arrays["right_wrist_image"] = pa.array(
-                data["right_wrist_image"], type=schema.field("right_wrist_image").type
-            )
         return pa.table(arrays, schema=schema)
 
     def _update_stats_accumulators(
@@ -566,8 +503,6 @@ class LeRobotDatasetWriter:
         states: np.ndarray,
         actions: np.ndarray,
         data: dict[str, list],
-        left_wrist_images: np.ndarray | None = None,
-        right_wrist_images: np.ndarray | None = None,
     ) -> None:
         """Update the statistics accumulators."""
         if self.use_incremental_stats:
@@ -579,8 +514,6 @@ class LeRobotDatasetWriter:
                 states,
                 actions,
                 data,
-                left_wrist_images=left_wrist_images,
-                right_wrist_images=right_wrist_images,
             )
         else:
             # Original approach: accumulate raw data
@@ -598,17 +531,6 @@ class LeRobotDatasetWriter:
                 self._stats_accumulators["extra_view_image"]["values"].append(
                     extra_view_normalized
                 )
-            if left_wrist_images is not None:
-                left_normalized = left_wrist_images.astype(np.float32) / 255.0
-                self._stats_accumulators["left_wrist_image"]["values"].append(
-                    left_normalized
-                )
-            if right_wrist_images is not None:
-                right_normalized = right_wrist_images.astype(np.float32) / 255.0
-                self._stats_accumulators["right_wrist_image"]["values"].append(
-                    right_normalized
-                )
-
             self._stats_accumulators["state"]["values"].append(states)
             self._stats_accumulators["actions"]["values"].append(actions)
             self._stats_accumulators["timestamp"]["values"].extend(data["timestamp"])
@@ -629,8 +551,6 @@ class LeRobotDatasetWriter:
         states: np.ndarray,
         actions: np.ndarray,
         data: dict[str, list],
-        left_wrist_images: np.ndarray | None = None,
-        right_wrist_images: np.ndarray | None = None,
     ) -> None:
         """Incrementally update statistics using Welford's algorithm without storing raw data."""
         # Image sampling (use only a subset for statistics to reduce computation)
@@ -648,14 +568,6 @@ class LeRobotDatasetWriter:
                 extra_view_images[sample_indices].astype(np.float32) / 255.0
             )
             self._update_running_stats_array("extra_view_image", sampled_extra_view)
-        if left_wrist_images is not None:
-            sampled_left = left_wrist_images[sample_indices].astype(np.float32) / 255.0
-            self._update_running_stats_array("left_wrist_image", sampled_left)
-        if right_wrist_images is not None:
-            sampled_right = (
-                right_wrist_images[sample_indices].astype(np.float32) / 255.0
-            )
-            self._update_running_stats_array("right_wrist_image", sampled_right)
 
         # Use all data for state/action
         self._update_running_stats_array("state", states)
@@ -686,8 +598,6 @@ class LeRobotDatasetWriter:
             "image",
             "wrist_image",
             "extra_view_image",
-            "left_wrist_image",
-            "right_wrist_image",
         ]:
             # For images, compute per-channel mean/std
             # Reshape to [N, H*W, C] then mean over H*W
@@ -757,18 +667,6 @@ class LeRobotDatasetWriter:
             )
             stats["extra_view_image"] = self._compute_image_stats(all_extra_view)
 
-        if self._stats_accumulators["left_wrist_image"]["values"]:
-            all_left = np.concatenate(
-                self._stats_accumulators["left_wrist_image"]["values"], axis=0
-            )
-            stats["left_wrist_image"] = self._compute_image_stats(all_left)
-
-        if self._stats_accumulators["right_wrist_image"]["values"]:
-            all_right = np.concatenate(
-                self._stats_accumulators["right_wrist_image"]["values"], axis=0
-            )
-            stats["right_wrist_image"] = self._compute_image_stats(all_right)
-
         # State stats
         if self._stats_accumulators["state"]["values"]:
             all_states = np.concatenate(
@@ -806,8 +704,6 @@ class LeRobotDatasetWriter:
             "image",
             "wrist_image",
             "extra_view_image",
-            "left_wrist_image",
-            "right_wrist_image",
             "state",
             "actions",
         ]:
@@ -824,8 +720,6 @@ class LeRobotDatasetWriter:
                 "image",
                 "wrist_image",
                 "extra_view_image",
-                "left_wrist_image",
-                "right_wrist_image",
             ]:
                 # Image stats need special format: per-channel with nested structure
                 stats[key] = {
@@ -951,18 +845,6 @@ class LeRobotDatasetWriter:
             }
         if self.has_extra_view_image:
             features["extra_view_image"] = {
-                "dtype": "image",
-                "shape": list(self.image_shape),
-                "names": ["height", "width", "channel"],
-            }
-        if self.has_left_wrist_image:
-            features["left_wrist_image"] = {
-                "dtype": "image",
-                "shape": list(self.image_shape),
-                "names": ["height", "width", "channel"],
-            }
-        if self.has_right_wrist_image:
-            features["right_wrist_image"] = {
                 "dtype": "image",
                 "shape": list(self.image_shape),
                 "names": ["height", "width", "channel"],
@@ -1099,8 +981,8 @@ def merge_distributed_datasets(
     # Read the first parquet to infer data dimensions and which optional
     # image columns are present (so the merged HF metadata mirrors whatever
     # the source workers actually wrote — single-arm parquet has only
-    # `image`, dual-arm parquet has `left_wrist_image`/`right_wrist_image`,
-    # etc.).
+    # `image`, dual-arm parquet uses `wrist_image` for stacked wrist
+    # cameras, etc.).
     first_table = pq.read_table(all_episodes_data[0][0])
     first_df = first_table.to_pandas()
     source_columns = set(first_table.column_names)
@@ -1111,8 +993,6 @@ def merge_distributed_datasets(
     _OPTIONAL_IMAGE_COLUMNS = (
         "wrist_image",
         "extra_view_image",
-        "left_wrist_image",
-        "right_wrist_image",
     )
     present_optional_images = [
         col for col in _OPTIONAL_IMAGE_COLUMNS if col in source_columns

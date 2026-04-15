@@ -23,6 +23,8 @@ cluster:
         configs:
           - left_robot_ip: LEFT_ROBOT_IP
             right_robot_ip: RIGHT_ROBOT_IP
+            base_camera_serials:
+              - BASE_CAMERA_SERIAL
             left_camera_serials:
               - LEFT_CAMERA_SERIAL
             right_camera_serials:

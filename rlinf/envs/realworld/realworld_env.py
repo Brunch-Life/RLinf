@@ -317,14 +317,11 @@ class RealWorldEnv(gym.Env):
         # Process images
         frames = raw_obs["frames"]
         if self.is_dual_arm:
-            # Dual-arm: emit pi0/pi0.5-style semantic keys so the
-            # left/right distinction is preserved end-to-end (CollectEpisode →
-            # LeRobot columns). Each key flows through only when the env
-            # actually produced the corresponding wrist frame, which is
-            # ultimately gated by config.{left,right}_camera_serials inside
-            # DualFrankaEnv._all_camera_specs — i.e., "configured serials →
-            # has frames → has obs key → has LeRobot column" propagates
-            # automatically.
+            # Dual-arm: the base (third-person) camera goes into
+            # ``main_images``; left and right wrist cameras are stacked in
+            # alphabetical order (left first, then right) into
+            # ``wrist_images``.
+            base_frame = frames.get("base_0_rgb")
             left_frame = frames.get("left_wrist_0_rgb")
             right_frame = frames.get("right_wrist_0_rgb")
             if left_frame is None and right_frame is None:
@@ -334,15 +331,22 @@ class RealWorldEnv(gym.Env):
                     f"expected 'left_wrist_0_rgb' and/or 'right_wrist_0_rgb', "
                     f"got {available}."
                 )
+            # main_images = base (third-person) camera; fall back to a wrist
+            # camera when no base camera is configured.
+            if base_frame is not None:
+                obs["main_images"] = base_frame
+            else:
+                obs["main_images"] = (
+                    left_frame if left_frame is not None else right_frame
+                )
+            # wrist_images: stack in alphabetical order (left, right)
+            wrist_list = []
             if left_frame is not None:
-                obs["left_wrist_images"] = left_frame
+                wrist_list.append(left_frame)
             if right_frame is not None:
-                obs["right_wrist_images"] = right_frame
-            # ``main_images`` is kept as an alias of the (left, then right)
-            # wrist for backward compatibility with downstream code that
-            # still expects this key (EmbodiedRolloutResult batch-size
-            # inference, single-arm-style policy adapters, etc.).
-            obs["main_images"] = left_frame if left_frame is not None else right_frame
+                wrist_list.append(right_frame)
+            if wrist_list:
+                obs["wrist_images"] = np.stack(wrist_list, axis=1)
         else:
             if self.main_image_key not in frames:
                 available_keys = list(frames.keys())

@@ -96,14 +96,6 @@ class EnvOutput:
         extra_view_image_tensor = (
             obs["extra_view_images"] if "extra_view_images" in obs else None
         )
-        # Dual-arm semantic camera keys (None for single-arm envs); see
-        # `RealWorldEnv._wrap_obs` for where these are produced.
-        left_wrist_image_tensor = (
-            obs["left_wrist_images"] if "left_wrist_images" in obs else None
-        )
-        right_wrist_image_tensor = (
-            obs["right_wrist_images"] if "right_wrist_images" in obs else None
-        )
         states = obs["states"] if "states" in obs else None
         task_descriptions = (
             list(obs["task_descriptions"])
@@ -115,8 +107,6 @@ class EnvOutput:
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
-            "left_wrist_images": left_wrist_image_tensor,  # [N_ENV, H, W, C] (dual-arm only)
-            "right_wrist_images": right_wrist_image_tensor,  # [N_ENV, H, W, C] (dual-arm only)
             "states": states,
             "task_descriptions": task_descriptions,
         }

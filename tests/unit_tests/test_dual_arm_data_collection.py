@@ -17,12 +17,12 @@
 These tests cover the schema and data flow added to support dual-arm
 Franka environments end-to-end:
 
-* ``LeRobotDatasetWriter`` with ``has_left_wrist_image`` /
-  ``has_right_wrist_image`` flags.
-* ``CollectEpisode`` integration that auto-detects dual wrist images from
+* ``LeRobotDatasetWriter`` schema for single-arm and dual-arm.
+* ``CollectEpisode`` integration that auto-detects wrist images from
   the obs dict and forwards them to the writer.
-* ``RealWorldEnv._wrap_obs`` dual branch that emits semantic
-  ``left_wrist_images`` / ``right_wrist_images`` keys.
+* ``RealWorldEnv._wrap_obs`` dual branch that stacks left/right wrist
+  cameras into ``wrist_images`` (alphabetical order) and puts the base
+  (third-person) camera into ``main_images``.
 
 Single-arm regression checks live alongside each test to ensure that the
 default flag set produces a parquet schema byte-identical to the legacy
@@ -110,7 +110,7 @@ def test_lerobot_writer_single_arm_schema_unchanged(tmp_path):
 
 
 def test_lerobot_writer_dual_arm_schema(tmp_path):
-    """Dual-arm flags must add explicit left/right wrist columns + stats."""
+    """Dual-arm uses wrist_image for stacked left/right wrist cameras."""
     writer = LeRobotDatasetWriter(
         root_dir=str(tmp_path),
         robot_type="dual_panda",
@@ -118,22 +118,17 @@ def test_lerobot_writer_dual_arm_schema(tmp_path):
         image_shape=(64, 64, 3),
         state_dim=38,
         action_dim=14,
-        has_wrist_image=False,
+        has_wrist_image=True,
         has_extra_view_image=False,
-        has_left_wrist_image=True,
-        has_right_wrist_image=True,
         use_incremental_stats=True,
     )
     T = 4
     ep = _make_episode(T=T, image_shape=(64, 64, 3), state_dim=38, action_dim=14)
-    left = np.random.randint(0, 255, (T, 64, 64, 3), dtype=np.uint8)
-    right = np.random.randint(0, 255, (T, 64, 64, 3), dtype=np.uint8)
+    wrist = np.random.randint(0, 255, (T, 64, 64, 3), dtype=np.uint8)
     writer.add_episode(
         images=ep["images"],
-        wrist_images=None,
+        wrist_images=wrist,
         extra_view_images=None,
-        left_wrist_images=left,
-        right_wrist_images=right,
         states=ep["states"],
         actions=ep["actions"],
         task="dual arm",
@@ -144,28 +139,30 @@ def test_lerobot_writer_dual_arm_schema(tmp_path):
     table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
     cols = set(table.column_names)
     assert "image" in cols
-    assert "left_wrist_image" in cols
-    assert "right_wrist_image" in cols
-    assert "wrist_image" not in cols
+    assert "wrist_image" in cols
+    assert "left_wrist_image" not in cols
+    assert "right_wrist_image" not in cols
     assert "extra_view_image" not in cols
 
     # Image structs must be PNG-decodable for HuggingFace datasets to
     # interpret them as Image features.
-    for col in ("image", "left_wrist_image", "right_wrist_image"):
+    for col in ("image", "wrist_image"):
         first = table[col][0].as_py()
         assert isinstance(first, dict)
         assert "bytes" in first and "path" in first
         assert len(first["bytes"]) > 0
 
     info = json.loads((tmp_path / "meta" / "info.json").read_text())
-    assert info["features"]["left_wrist_image"]["dtype"] == "image"
-    assert info["features"]["right_wrist_image"]["dtype"] == "image"
+    assert info["features"]["wrist_image"]["dtype"] == "image"
+    assert "left_wrist_image" not in info["features"]
+    assert "right_wrist_image" not in info["features"]
     assert info["features"]["state"]["shape"] == [38]
     assert info["features"]["actions"]["shape"] == [14]
 
     stats = json.loads((tmp_path / "meta" / "stats.json").read_text())
-    assert "left_wrist_image" in stats
-    assert "right_wrist_image" in stats
+    assert "wrist_image" in stats
+    assert "left_wrist_image" not in stats
+    assert "right_wrist_image" not in stats
 
 
 # --------------------------------------------------------------------- #
@@ -212,7 +209,11 @@ class _SingleArmDummyEnv(gym.Env):
 
 
 class _DualArmDummyEnv(gym.Env):
-    """Mimics what RealWorldEnv._wrap_obs emits for the dual-arm branch."""
+    """Mimics what RealWorldEnv._wrap_obs emits for the dual-arm branch.
+
+    ``main_images`` = base (third-person) camera;
+    ``wrist_images`` = stacked [left, right] wrist cameras (alphabetical).
+    """
 
     def __init__(self) -> None:
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(14,), dtype=np.float32)
@@ -222,23 +223,21 @@ class _DualArmDummyEnv(gym.Env):
                 "main_images": gym.spaces.Box(
                     0, 255, shape=(64, 64, 3), dtype=np.uint8
                 ),
-                "left_wrist_images": gym.spaces.Box(
-                    0, 255, shape=(64, 64, 3), dtype=np.uint8
-                ),
-                "right_wrist_images": gym.spaces.Box(
-                    0, 255, shape=(64, 64, 3), dtype=np.uint8
+                "wrist_images": gym.spaces.Box(
+                    0, 255, shape=(2, 64, 64, 3), dtype=np.uint8
                 ),
             }
         )
         self._t = 0
 
     def _obs(self) -> dict[str, Any]:
+        base = np.full((64, 64, 3), self._t + 50, dtype=np.uint8)
         left = np.full((64, 64, 3), self._t + 100, dtype=np.uint8)
+        right = np.full((64, 64, 3), self._t + 200, dtype=np.uint8)
         return {
             "states": np.zeros(38, dtype=np.float32),
-            "main_images": left,  # alias for left wrist
-            "left_wrist_images": left,
-            "right_wrist_images": np.full((64, 64, 3), self._t + 200, dtype=np.uint8),
+            "main_images": base,
+            "wrist_images": np.stack([left, right], axis=0),
             "task_descriptions": "dual task",
         }
 
@@ -279,8 +278,8 @@ def test_collect_episode_single_arm_unchanged(tmp_path):
     assert "right_wrist_image" not in cols
 
 
-def test_collect_episode_dual_arm_writes_left_right_columns(tmp_path):
-    """Dual-arm obs auto-flow into LeRobot left_wrist_image/right_wrist_image."""
+def test_collect_episode_dual_arm_writes_wrist_image_column(tmp_path):
+    """Dual-arm obs auto-flow into LeRobot wrist_image column."""
     env = CollectEpisode(
         _DualArmDummyEnv(),
         save_dir=str(tmp_path),
@@ -296,14 +295,15 @@ def test_collect_episode_dual_arm_writes_left_right_columns(tmp_path):
     table = pq.read_table(tmp_path / "data" / "chunk-000" / "episode_000000.parquet")
     cols = set(table.column_names)
     assert "image" in cols
-    assert "left_wrist_image" in cols
-    assert "right_wrist_image" in cols
-    assert "wrist_image" not in cols
+    assert "wrist_image" in cols
+    assert "left_wrist_image" not in cols
+    assert "right_wrist_image" not in cols
     assert "extra_view_image" not in cols
 
     info = json.loads((tmp_path / "meta" / "info.json").read_text())
-    assert info["features"]["left_wrist_image"]["dtype"] == "image"
-    assert info["features"]["right_wrist_image"]["dtype"] == "image"
+    assert info["features"]["wrist_image"]["dtype"] == "image"
+    assert "left_wrist_image" not in info["features"]
+    assert "right_wrist_image" not in info["features"]
 
 
 # --------------------------------------------------------------------- #
@@ -381,12 +381,15 @@ def test_realworld_env_caches_is_dual_arm(dual_realworld_env):
 
 def test_realworld_env_dual_branch_emits_semantic_keys(dual_realworld_env):
     obs, _ = dual_realworld_env.reset()
-    assert "left_wrist_images" in obs
-    assert "right_wrist_images" in obs
-    assert "main_images" in obs, "main_images alias must be kept for backward compat"
+    assert "wrist_images" in obs
+    assert "main_images" in obs
+    assert "left_wrist_images" not in obs
+    assert "right_wrist_images" not in obs
     assert "extra_view_images" not in obs, (
         "dual branch should not bucket frames into extra_view_images"
     )
+    # wrist_images should be stacked [left, right] along axis=1
+    assert obs["wrist_images"].shape[1] == 2
     # state shape: gripper(2)+force(6)+pose(12 quat)+torque(6)+vel(12) = 38
     # (use_relative_frame=False above, but DualQuat2EulerWrapper still wraps)
     assert obs["states"].shape[-1] == 38
@@ -397,8 +400,10 @@ def test_realworld_env_dual_branch_step(dual_realworld_env):
     next_obs, reward, term, trunc, info = dual_realworld_env.step(
         np.zeros((1, 14), dtype=np.float32)
     )
-    assert "left_wrist_images" in next_obs
-    assert "right_wrist_images" in next_obs
+    assert "wrist_images" in next_obs
+    assert "main_images" in next_obs
+    assert "left_wrist_images" not in next_obs
+    assert "right_wrist_images" not in next_obs
 
 
 def test_realworld_env_dual_no_gripper_raises():

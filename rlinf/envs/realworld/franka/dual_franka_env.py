@@ -60,6 +60,7 @@ class DualFrankaRobotConfig:
 
     left_camera_serials: Optional[list[str]] = None
     right_camera_serials: Optional[list[str]] = None
+    base_camera_serials: Optional[list[str]] = None
     camera_type: Optional[str] = None
 
     left_gripper_type: Optional[str] = None
@@ -213,13 +214,15 @@ class DualFrankaEnv(gym.Env):
     def _all_camera_specs(self) -> list[tuple[str, str]]:
         """Return ``[(camera_name, serial), ...]`` with pi0/pi0.5-aligned names.
 
-        Each arm's cameras are named after the canonical pi0 image dict keys
-        (``left_wrist_0_rgb``, ``right_wrist_0_rgb``); a numeric suffix is
-        appended for the second-and-later cameras of the same arm
-        (``left_wrist_1_rgb`` …) so that downstream observation dicts can be
-        fed to a pi0/pi0.5 policy without any key remapping.
+        Base (third-person) cameras are named ``base_0_rgb``, ``base_1_rgb``,
+        …; each arm's wrist cameras use ``left_wrist_0_rgb``,
+        ``right_wrist_0_rgb``, etc.  Downstream observation dicts can be fed
+        to a pi0/pi0.5 policy without any key remapping.
         """
         specs: list[tuple[str, str]] = []
+        if self.config.base_camera_serials:
+            for j, serial in enumerate(self.config.base_camera_serials):
+                specs.append((f"base_{j}_rgb", serial))
         for arm, serials in (
             ("left", self.config.left_camera_serials),
             ("right", self.config.right_camera_serials),
@@ -251,6 +254,10 @@ class DualFrankaEnv(gym.Env):
                 self.config.left_camera_serials = hw.left_camera_serials
             if self.config.right_camera_serials is None:
                 self.config.right_camera_serials = hw.right_camera_serials
+            if self.config.base_camera_serials is None:
+                self.config.base_camera_serials = getattr(
+                    hw, "base_camera_serials", None
+                )
             if self.config.camera_type is None:
                 self.config.camera_type = getattr(hw, "camera_type", "zed")
             if self.config.left_gripper_type is None:
