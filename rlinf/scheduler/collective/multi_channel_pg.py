@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import os
 import socket
 import struct
 import time
-import uuid
 from datetime import timedelta
 from typing import Optional
 
@@ -33,35 +31,6 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
-
-_AGENT_DEBUG_LOG_PATH = "/mlp_vepfs/share/wyf/RLinf-open/.cursor/debug-c78ceb.log"
-_AGENT_DEBUG_SESSION_ID = "c78ceb"
-
-
-def _agent_debug_log(
-    *,
-    run_id: str,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-) -> None:
-    try:
-        payload = {
-            "sessionId": _AGENT_DEBUG_SESSION_ID,
-            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
-            "timestamp": int(time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-        }
-        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
 
 def _extract_host_from_init_method(init_method: Optional[str]) -> Optional[str]:
     if not init_method or not init_method.startswith("tcp://"):
@@ -216,51 +185,8 @@ class MultiChannelProcessGroup:
             master_host = _extract_host_from_init_method(init_method)
             if master_host:
                 if_name, target_ip, local_ip = _infer_gloo_ifname(master_host)
-                # region agent log
-                _agent_debug_log(
-                    run_id="post-fix",
-                    hypothesis_id="H3",
-                    location="multi_channel_pg.py:init",
-                    message="gloo_ifname_infer_result",
-                    data={
-                        "group_name": group_name,
-                        "master_host": master_host,
-                        "master_ip": target_ip,
-                        "local_ip": local_ip,
-                        "inferred_ifname": if_name,
-                    },
-                )
-                # endregion
                 if if_name:
                     os.environ["GLOO_SOCKET_IFNAME"] = if_name
-                    # region agent log
-                    _agent_debug_log(
-                        run_id="post-fix",
-                        hypothesis_id="H3",
-                        location="multi_channel_pg.py:init",
-                        message="gloo_ifname_auto_set",
-                        data={
-                            "group_name": group_name,
-                            "gloo_socket_ifname": if_name,
-                        },
-                    )
-                    # endregion
-        # region agent log
-        _agent_debug_log(
-            run_id="pre-fix",
-            hypothesis_id="H1",
-            location="multi_channel_pg.py:init",
-            message="mcpg_init_enter",
-            data={
-                "group_name": group_name,
-                "rank": rank,
-                "world_size": world_size,
-                "init_method": init_method,
-                "no_accel_ccl": self._no_accel_ccl,
-                "accel_backend": self._accel_ccl_backend,
-            },
-        )
-        # endregion
         try:
             # Set default timeout to 180 minutes
             timeout = int(Cluster.get_sys_env_var(ClusterEnvVar.TIMEOUT, "180"))
@@ -613,22 +539,6 @@ class MultiChannelProcessGroup:
             default_pg_timeout,
             rendezvous,
         )
-        # region agent log
-        _agent_debug_log(
-            run_id="pre-fix",
-            hypothesis_id="H1",
-            location="multi_channel_pg.py:_create_process_group",
-            message="create_pg_enter",
-            data={
-                "backend": str(backend) if backend is not None else None,
-                "init_method": init_method,
-                "world_size": world_size,
-                "rank": rank,
-                "has_store": store is not None,
-                "group_name": group_name,
-            },
-        )
-        # endregion
 
         assert (store is None) or (init_method is None), (
             "Cannot specify both init_method and store."
@@ -800,34 +710,7 @@ class MultiChannelProcessGroup:
         if _MPI_AVAILABLE:
             from torch.distributed.distributed_c10d import ProcessGroupMPI
         import warnings
-
-        # region agent log
-        _agent_debug_log(
-            run_id="pre-fix",
-            hypothesis_id="H5",
-            location="multi_channel_pg.py:_new_process_group_helper",
-            message="new_pg_helper_enter",
-            data={
-                "group_name": group_name,
-                "group_size": group_size,
-                "group_rank": group_rank,
-                "backend": str(backend),
-                "hostname": socket.gethostname(),
-                "hostname_ip": socket.gethostbyname(socket.gethostname()),
-                "gloo_socket_ifname": os.environ.get("GLOO_SOCKET_IFNAME"),
-            },
-        )
-        # endregion
         if group_name in _world.pg_names.values():
-            # region agent log
-            _agent_debug_log(
-                run_id="pre-fix",
-                hypothesis_id="H5",
-                location="multi_channel_pg.py:_new_process_group_helper",
-                message="group_name_conflict",
-                data={"group_name": group_name},
-            )
-            # endregion
             raise ValueError(
                 "The specified group name has already been "
                 "created, please use a different group name"
@@ -959,25 +842,6 @@ class MultiChannelProcessGroup:
                         backend_prefix_store, group_rank, group_size, timeout=timeout
                     )
                 except Exception as e:
-                    # region agent log
-                    _agent_debug_log(
-                        run_id="pre-fix",
-                        hypothesis_id="H3",
-                        location="multi_channel_pg.py:_new_process_group_helper",
-                        message="process_group_gloo_create_failed",
-                        data={
-                            "group_name": group_name,
-                            "group_rank": group_rank,
-                            "group_size": group_size,
-                            "error_type": type(e).__name__,
-                            "error": str(e),
-                            "hostname": socket.gethostname(),
-                            "gloo_socket_ifname": os.environ.get(
-                                "GLOO_SOCKET_IFNAME"
-                            ),
-                        },
-                    )
-                    # endregion
                     raise
                 backend_type = ProcessGroup.BackendType.GLOO
             elif backend_str == Backend.NCCL:

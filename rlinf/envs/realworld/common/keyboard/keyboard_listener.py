@@ -17,8 +17,23 @@ import json
 import threading
 import time
 import uuid
+from pathlib import Path
 
-_AGENT_DEBUG_LOG_PATH = "/mlp_vepfs/share/wyf/RLinf-open/.cursor/debug-c78ceb.log"
+
+def _resolve_agent_debug_log_path() -> str:
+    override = os.environ.get("RLINF_AGENT_DEBUG_LOG_PATH")
+    if override:
+        return override
+    try:
+        for parent in Path(__file__).resolve().parents:
+            if (parent / "rlinf").is_dir():
+                return str(parent / ".cursor" / "debug-c78ceb.log")
+    except Exception:
+        pass
+    return ".cursor/debug-c78ceb.log"
+
+
+_AGENT_DEBUG_LOG_PATH = _resolve_agent_debug_log_path()
 _AGENT_DEBUG_SESSION_ID = "c78ceb"
 
 
@@ -30,39 +45,41 @@ def _agent_debug_log(
     message: str,
     data: dict,
 ) -> None:
+    payload = {
+        "sessionId": _AGENT_DEBUG_SESSION_ID,
+        "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
+        "timestamp": int(time.time() * 1000),
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+    }
+
     try:
-        payload = {
-            "sessionId": _AGENT_DEBUG_SESSION_ID,
-            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
-            "timestamp": int(time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-        }
         with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        try:
-            from rlinf.utils.logging import get_logger
+    except Exception:
+        pass
+    try:
+        from rlinf.utils.logging import get_logger
 
-            logger = get_logger()
-            if logger is not None:
-                logger.info(
-                    "[SKEY_DEBUG] %s",
-                    json.dumps(
-                        {
-                            "location": location,
-                            "message": message,
-                            "runId": run_id,
-                            "hypothesisId": hypothesis_id,
-                            "data": data,
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-        except Exception:
-            pass
+        logger = get_logger()
+        if logger is not None:
+            logger.info(
+                "[SKEY_DEBUG] %s",
+                json.dumps(
+                    {
+                        "location": location,
+                        "message": message,
+                        "runId": run_id,
+                        "hypothesisId": hypothesis_id,
+                        "data": data,
+                        "logPath": _AGENT_DEBUG_LOG_PATH,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
     except Exception:
         pass
 
