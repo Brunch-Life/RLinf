@@ -14,78 +14,7 @@
 
 from __future__ import annotations
 
-import json
-import os
-import time
-import uuid
-from pathlib import Path
-
 import gymnasium as gym
-
-
-def _resolve_agent_debug_log_path() -> str:
-    override = os.environ.get("RLINF_AGENT_DEBUG_LOG_PATH")
-    if override:
-        return override
-    try:
-        for parent in Path(__file__).resolve().parents:
-            if (parent / "rlinf").is_dir():
-                return str(parent / ".cursor" / "debug-c78ceb.log")
-    except Exception:
-        pass
-    return ".cursor/debug-c78ceb.log"
-
-
-_AGENT_DEBUG_LOG_PATH = _resolve_agent_debug_log_path()
-_AGENT_DEBUG_SESSION_ID = "c78ceb"
-
-
-def _agent_debug_log(
-    *,
-    run_id: str,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-) -> None:
-    payload = {
-        "sessionId": _AGENT_DEBUG_SESSION_ID,
-        "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
-        "timestamp": int(time.time() * 1000),
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-    }
-
-    try:
-        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    try:
-        from rlinf.utils.logging import get_logger
-
-        logger = get_logger()
-        if logger is not None:
-            logger.info(
-                "[SKEY_DEBUG] %s",
-                json.dumps(
-                    {
-                        "location": location,
-                        "message": message,
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "data": data,
-                        "logPath": _AGENT_DEBUG_LOG_PATH,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-    except Exception:
-        pass
-
 
 class LeaderFollowerKeyboardIntervention(gym.Wrapper):
     """Keyboard intervention wrapper for leader-follower teleoperation envs."""
@@ -120,39 +49,8 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
             return None
 
         if key == "s":
-            # region agent log
-            _agent_debug_log(
-                run_id="s-key",
-                hypothesis_id="H2",
-                location="leader_follower_keyboard_intervention.py:_handle_key_event",
-                message="wrapper_handle_s_before",
-                data={
-                    "reset_phase": bool(reset_phase),
-                    "in_free_teleop": bool(in_free_teleop),
-                    "start_episode_requested_before": bool(
-                        getattr(base_env, "start_episode_requested", False)
-                    ),
-                    "control_mode": str(control_mode),
-                },
-            )
-            # endregion
             if reset_phase or in_free_teleop:
                 setattr(base_env, "start_episode_requested", True)
-            # region agent log
-            _agent_debug_log(
-                run_id="s-key",
-                hypothesis_id="H2",
-                location="leader_follower_keyboard_intervention.py:_handle_key_event",
-                message="wrapper_handle_s_after",
-                data={
-                    "reset_phase": bool(reset_phase),
-                    "in_free_teleop": bool(in_free_teleop),
-                    "start_episode_requested_after": bool(
-                        getattr(base_env, "start_episode_requested", False)
-                    ),
-                },
-            )
-            # endregion
             return None
 
         if reset_phase:
@@ -179,22 +77,6 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
 
         if manual_episode_control_only and key in {"p", "t", "m"}:
             return None
-
-        if key in {"p", "t", "m"}:
-            # region agent log
-            _agent_debug_log(
-                run_id="mode-fix",
-                hypothesis_id="H2",
-                location="leader_follower_keyboard_intervention.py:_handle_key_event",
-                message="wrapper_mode_key_received",
-                data={
-                    "key": key,
-                    "manual_episode_control_only": manual_episode_control_only,
-                    "control_mode_before": str(getattr(control_mode, "name", control_mode)),
-                    "in_free_teleop": bool(in_free_teleop),
-                },
-            )
-            # endregion
 
         set_control_mode = getattr(base_env, "set_control_mode", None)
 

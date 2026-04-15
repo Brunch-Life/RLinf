@@ -18,12 +18,8 @@ from __future__ import annotations
 
 import copy
 import enum
-import json
-import os
 import time
-import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Callable, Optional
 
 import cv2
@@ -38,68 +34,6 @@ from rlinf.utils.logging import get_logger
 
 from .dosw1_robot_state import DOSW1RobotState
 from .dosw1_sdk import DOSW1SDKAdapter
-
-
-def _resolve_agent_debug_log_path() -> str:
-    override = os.environ.get("RLINF_AGENT_DEBUG_LOG_PATH")
-    if override:
-        return override
-    try:
-        for parent in Path(__file__).resolve().parents:
-            if (parent / "rlinf").is_dir():
-                return str(parent / ".cursor" / "debug-c78ceb.log")
-    except Exception:
-        pass
-    return ".cursor/debug-c78ceb.log"
-
-
-_AGENT_DEBUG_LOG_PATH = _resolve_agent_debug_log_path()
-_AGENT_DEBUG_SESSION_ID = "c78ceb"
-
-
-def _agent_debug_log(
-    *,
-    run_id: str,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-) -> None:
-    payload = {
-        "sessionId": _AGENT_DEBUG_SESSION_ID,
-        "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
-        "timestamp": int(time.time() * 1000),
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-    }
-
-    try:
-        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    try:
-        logger = get_logger()
-        if logger is not None:
-            logger.info(
-                "[SKEY_DEBUG] %s",
-                json.dumps(
-                    {
-                        "location": location,
-                        "message": message,
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "data": data,
-                        "logPath": _AGENT_DEBUG_LOG_PATH,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-    except Exception:
-        pass
 
 
 class ControlMode(enum.IntEnum):
@@ -256,20 +190,6 @@ class DOSW1Env(gym.Env):
             self._set_leader_follow_enabled(
                 enabled=True, source="reset_enter_free_teleop"
             )
-            # region agent log
-            _agent_debug_log(
-                run_id="s-key",
-                hypothesis_id="H3",
-                location="dosw1_env.py:reset",
-                message="reset_enter_free_teleop",
-                data={
-                    "env_idx": self.env_idx,
-                    "env_worker_rank": self.env_worker_rank,
-                    "node_rank": self.node_rank,
-                    "start_episode_requested": bool(self.start_episode_requested),
-                },
-            )
-            # endregion
             self._logger.info(
                 "[DOSW1Env] FreeTeleop mode active. "
                 "Move arms freely via leader arm. Press 's' to start episode."
@@ -285,22 +205,6 @@ class DOSW1Env(gym.Env):
                 else ControlMode.MODEL
             )
             self.set_control_mode(next_mode, source="reset_after_start_key")
-            # region agent log
-            _agent_debug_log(
-                run_id="mode-fix",
-                hypothesis_id="H1",
-                location="dosw1_env.py:reset",
-                message="reset_control_mode_selected",
-                data={
-                    "env_idx": self.env_idx,
-                    "manual_episode_control_only": manual_episode_control_only,
-                    "selected_mode": int(next_mode),
-                    "selected_mode_name": str(getattr(next_mode, "name", next_mode)),
-                    "in_free_teleop_after_reset": bool(self.in_free_teleop),
-                    "leader_follow_enabled": bool(self._leader_follow_enabled),
-                },
-            )
-            # endregion
         else:
             self._go_to_home()
             self.set_control_mode(ControlMode.MODEL, source="reset_no_human_in_loop")
@@ -369,30 +273,11 @@ class DOSW1Env(gym.Env):
     def set_control_mode(
         self, mode: ControlMode, *, source: str = "unknown"
     ) -> None:
-        prev_mode = self.control_mode
         self.control_mode = mode
         self._set_leader_follow_enabled(
             enabled=bool(self.in_free_teleop or mode == ControlMode.TELEOP),
             source=f"{source}:{getattr(mode, 'name', mode)}",
         )
-        # region agent log
-        _agent_debug_log(
-            run_id="mode-fix",
-            hypothesis_id="H2",
-            location="dosw1_env.py:set_control_mode",
-            message="control_mode_updated",
-            data={
-                "env_idx": self.env_idx,
-                "source": source,
-                "prev_mode": int(prev_mode),
-                "prev_mode_name": str(getattr(prev_mode, "name", prev_mode)),
-                "new_mode": int(mode),
-                "new_mode_name": str(getattr(mode, "name", mode)),
-                "in_free_teleop": bool(self.in_free_teleop),
-                "leader_follow_enabled": bool(self._leader_follow_enabled),
-            },
-        )
-        # endregion
 
     def _set_leader_follow_enabled(self, *, enabled: bool, source: str) -> None:
         enabled = bool(enabled)
@@ -407,45 +292,8 @@ class DOSW1Env(gym.Env):
                         "[DOSW1Env] Failed to toggle leader follow to %s",
                         enabled,
                     )
-        # region agent log
-        _agent_debug_log(
-            run_id="mode-fix",
-            hypothesis_id="H4",
-            location="dosw1_env.py:_set_leader_follow_enabled",
-            message="leader_follow_toggled",
-            data={
-                "env_idx": self.env_idx,
-                "source": source,
-                "enabled": enabled,
-                "control_mode": int(getattr(self, "control_mode", ControlMode.MODEL)),
-                "control_mode_name": str(
-                    getattr(
-                        getattr(self, "control_mode", ControlMode.MODEL), "name", "MODEL"
-                    )
-                ),
-                "in_free_teleop": bool(self.in_free_teleop),
-            },
-        )
-        # endregion
 
     def _dispatch_action(self, policy_action: np.ndarray) -> np.ndarray:
-        # region agent log
-        if self.control_mode != ControlMode.MODEL:
-            _agent_debug_log(
-                run_id="mode-fix",
-                hypothesis_id="H3",
-                location="dosw1_env.py:_dispatch_action",
-                message="dispatch_non_model_mode",
-                data={
-                    "env_idx": self.env_idx,
-                    "control_mode": int(self.control_mode),
-                    "control_mode_name": str(
-                        getattr(self.control_mode, "name", self.control_mode)
-                    ),
-                    "leader_follow_enabled": bool(self._leader_follow_enabled),
-                },
-            )
-        # endregion
         if self.control_mode == ControlMode.MODEL:
             return self._execute_model_action(policy_action)
         if self.control_mode == ControlMode.PAUSE:
@@ -645,37 +493,9 @@ class DOSW1Env(gym.Env):
     def _free_teleop_loop(self) -> None:
         self.snapshot_teleop_init()
         last_log = time.time()
-        # region agent log
-        _agent_debug_log(
-            run_id="s-key",
-            hypothesis_id="H3",
-            location="dosw1_env.py:_free_teleop_loop",
-            message="free_teleop_loop_enter",
-            data={
-                "env_idx": self.env_idx,
-                "env_worker_rank": self.env_worker_rank,
-                "node_rank": self.node_rank,
-                "in_free_teleop": bool(self.in_free_teleop),
-            },
-        )
-        # endregion
         while True:
             self._poll_keyboard_event(reset_phase=True)
             if self.start_episode_requested:
-                # region agent log
-                _agent_debug_log(
-                    run_id="s-key",
-                    hypothesis_id="H3",
-                    location="dosw1_env.py:_free_teleop_loop",
-                    message="free_teleop_start_requested",
-                    data={
-                        "env_idx": self.env_idx,
-                        "env_worker_rank": self.env_worker_rank,
-                        "node_rank": self.node_rank,
-                        "in_free_teleop_before_break": bool(self.in_free_teleop),
-                    },
-                )
-                # endregion
                 self.start_episode_requested = False
                 self.in_free_teleop = False
                 break
@@ -696,20 +516,6 @@ class DOSW1Env(gym.Env):
         # Fallback when wrapper is disabled: keep reset-phase "s to start".
         if reset_phase and self._keyboard is not None and self._keyboard.get_key() == "s":
             self.start_episode_requested = True
-            # region agent log
-            _agent_debug_log(
-                run_id="s-key",
-                hypothesis_id="H1",
-                location="dosw1_env.py:_poll_keyboard_event",
-                message="fallback_detect_s_set_start",
-                data={
-                    "env_idx": self.env_idx,
-                    "env_worker_rank": self.env_worker_rank,
-                    "node_rank": self.node_rank,
-                    "reset_phase": bool(reset_phase),
-                },
-            )
-            # endregion
 
     def _forward_leader_to_follower(self) -> None:
         if not self._leader_follow_enabled:

@@ -13,75 +13,7 @@
 # limitations under the License.
 
 import os
-import json
 import threading
-import time
-import uuid
-from pathlib import Path
-
-
-def _resolve_agent_debug_log_path() -> str:
-    override = os.environ.get("RLINF_AGENT_DEBUG_LOG_PATH")
-    if override:
-        return override
-    try:
-        for parent in Path(__file__).resolve().parents:
-            if (parent / "rlinf").is_dir():
-                return str(parent / ".cursor" / "debug-c78ceb.log")
-    except Exception:
-        pass
-    return ".cursor/debug-c78ceb.log"
-
-
-_AGENT_DEBUG_LOG_PATH = _resolve_agent_debug_log_path()
-_AGENT_DEBUG_SESSION_ID = "c78ceb"
-
-
-def _agent_debug_log(
-    *,
-    run_id: str,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict,
-) -> None:
-    payload = {
-        "sessionId": _AGENT_DEBUG_SESSION_ID,
-        "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
-        "timestamp": int(time.time() * 1000),
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data,
-    }
-
-    try:
-        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    try:
-        from rlinf.utils.logging import get_logger
-
-        logger = get_logger()
-        if logger is not None:
-            logger.info(
-                "[SKEY_DEBUG] %s",
-                json.dumps(
-                    {
-                        "location": location,
-                        "message": message,
-                        "runId": run_id,
-                        "hypothesisId": hypothesis_id,
-                        "data": data,
-                        "logPath": _AGENT_DEBUG_LOG_PATH,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-    except Exception:
-        pass
 
 
 class KeyboardListener:
@@ -199,22 +131,6 @@ class KeyboardListener:
                 key = self._event_to_key(event.code)
                 if key is None:
                     continue
-
-                if key == "s":
-                    # region agent log
-                    _agent_debug_log(
-                        run_id="s-key",
-                        hypothesis_id="H1",
-                        location="keyboard_listener.py:_listen_loop",
-                        message="keyboard_s_event",
-                        data={
-                            "device_path": self.device.path,
-                            "event_value": int(event.value),
-                            "listener_thread": threading.current_thread().name,
-                            "latest_key_before": self.latest_data.get("key"),
-                        },
-                    )
-                    # endregion
 
                 if event.value in (1, 2):
                     with self.state_lock:
