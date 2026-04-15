@@ -524,14 +524,14 @@ class FrankyController(Worker):
     # ═══════════════════════════════════════════════════════════════
 
     def open_gripper(self):
-        self._gripper.open()
+        self._gripper.open(speed=1.0)
         self.log_debug("Open gripper")
 
     def close_gripper(self):
-        self._gripper.close()
+        self._gripper.close(speed=1.0)
         self.log_debug("Close gripper")
 
-    def move_gripper(self, position: int, speed: float = 0.3):
+    def move_gripper(self, position: int, speed: float = 1.0):
         assert 0 <= position <= 255, (
             f"Invalid gripper position {position}, must be between 0 and 255"
         )

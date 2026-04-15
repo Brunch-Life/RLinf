@@ -117,11 +117,14 @@ class DataCollector(Worker):
 
         current_obs_processed = self._process_obs(obs)
 
+        # Size the placeholder action from the env's actual action space so
+        # joint-space envs (8D: 7 joints + gripper) and Cartesian envs (6D or
+        # 7D) both work.  Intervention wrappers (GELLO/spacemouse) fill this
+        # buffer via infos["intervene_action"]; a shape mismatch would break
+        # the assignment in RealWorldEnv.step.
+        action_shape = self.env.action_space.shape
         while success_cnt < self.num_data_episodes:
-            if self.cfg.env.eval.get("no_gripper", True):
-                action = np.zeros((1, 6))
-            else:
-                action = np.zeros((1, 7))
+            action = np.zeros(action_shape, dtype=np.float32)
             next_obs, reward, done, _, info = self.env.step(action)
 
             if "intervene_action" in info:

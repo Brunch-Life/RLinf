@@ -223,15 +223,71 @@ class GelloJointIntervention(gym.ActionWrapper):
 
         return action, False
 
+    def _align_to_gello(self) -> bool:
+        """Slowly move robot joints from current pose to GELLO's pose.
+
+        After env.reset homes the arm to ``joint_reset_qpos``, GELLO is
+        typically at a very different joint configuration.  In
+        direct-stream mode the 1 kHz daemon would push that far-away
+        target straight into the impedance tracker, causing a large
+        reference jump and visible oscillation / shaking.
+
+        This uses the controller's blocking ``reset_joint`` (a franky
+        ``JointMotion`` with internal velocity/acceleration limits) to
+        transit smoothly to GELLO.  After it returns the arm is at
+        GELLO's pose, so the subsequent streaming delta is ~zero.
+
+        Returns ``True`` if alignment ran and succeeded, ``False`` if
+        GELLO is not ready or the controller could not be reached.
+        """
+        if not self.expert.ready:
+            return False
+        controller = self._resolve_controller()
+        if controller is None:
+            return False
+        try:
+            gello_q, _ = self.expert.get_action()
+        except Exception:
+            return False
+        try:
+            controller.reset_joint(
+                np.asarray(gello_q, dtype=np.float64).tolist()
+            ).wait()
+        except Exception:
+            return False
+        # Refresh the env's cached state so the next step's delta / obs
+        # read from the post-alignment pose instead of the stale home.
+        try:
+            fresh = controller.get_state().wait()[0]
+            self.unwrapped._franka_state = fresh
+        except Exception:
+            pass
+        return True
+
     def reset(self, **kwargs):
         """Pause streaming during reset to avoid racing with Cartesian motions."""
         self._stream_paused.clear()  # pause
+        aligned = False
         try:
             result = self.env.reset(**kwargs)
+            # Slow, blocking joint-space transit from home → GELLO pose
+            # BEFORE the 1 kHz streamer starts pumping targets.  Without
+            # this, direct-stream mode snaps the impedance reference
+            # from home to GELLO's (possibly far) joints and the arm
+            # shakes.  Step-gated mode has per-step velocity clipping
+            # so alignment is only critical for direct-stream.
+            if self._direct_stream:
+                aligned = self._align_to_gello()
         finally:
             self._stream_paused.set()  # resume
-            # Lazy-start the stream thread after the first reset completes.
-            if self._direct_stream and self._stream_thread is None:
+            # Only start the 1 kHz streamer once the arm is already at
+            # GELLO — otherwise defer to a future reset/step when
+            # alignment can succeed (e.g. GELLO just plugged in).
+            if (
+                self._direct_stream
+                and aligned
+                and self._stream_thread is None
+            ):
                 self._start_stream_thread()
         return result
 

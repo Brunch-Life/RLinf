@@ -75,6 +75,26 @@ class FrankaJointEnv(FrankaEnv):
 
     CONFIG_CLS: type[FrankaJointRobotConfig] = FrankaJointRobotConfig
 
+    def _interpolate_move(self, pose: np.ndarray, timeout: float = 1.5):
+        """Neutralise the parent's Cartesian reset (no-op for joint env).
+
+        The parent ``FrankaEnv.__init__`` (and ``reset()``) call
+        ``_interpolate_move`` to interpolate to ``reset_ee_pose`` via
+        Cartesian impedance control.  For a joint-space env driven by
+        GELLO teleop we don't want *any* pre-positioning here — the
+        arm stays wherever it is, and :class:`GelloJointIntervention`
+        is responsible for the single blocking ``reset_joint`` that
+        slowly brings the arm to GELLO's current pose before the 1 kHz
+        streamer starts.  Going home first would just mean an extra
+        long slew that isn't useful.
+
+        We still refresh ``_franka_state`` so downstream code that
+        reads the cache (obs computation, delta-mode step) sees the
+        current joint position rather than a stale one.
+        """
+        del pose, timeout
+        self._franka_state = self._controller.get_state().wait()[0]
+
     def _setup_hardware(self):
         """Use FrankyController instead of FrankaController."""
         from .franky_controller import FrankyController
