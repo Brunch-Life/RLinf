@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import time
 from collections import defaultdict
 from typing import Any, Literal
 
@@ -149,9 +148,9 @@ class EnvWorker(Worker):
             # train env
             train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
             if train_override_cfgs is not None:
-                assert len(train_override_cfgs) > self._rank, (
-                    f"{len(train_override_cfgs)=} > {self._rank=}"
-                )
+                assert (
+                    len(train_override_cfgs) > self._rank
+                ), f"{len(train_override_cfgs)=} > {self._rank=}"
 
                 general_train_override_cfg = OmegaConf.to_container(
                     self.cfg.env.train.get("override_cfg", {}), resolve=True
@@ -167,9 +166,9 @@ class EnvWorker(Worker):
         self._inject_realworld_reward_cfg(self.cfg.env.train)
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:
-            assert len(eval_override_cfgs) > self._rank, (
-                f"{len(eval_override_cfgs)=} > {self._rank=}"
-            )
+            assert (
+                len(eval_override_cfgs) > self._rank
+            ), f"{len(eval_override_cfgs)=} > {self._rank=}"
 
             general_eval_override_cfg = OmegaConf.to_container(
                 self.cfg.env.eval.get("override_cfg", {}), resolve=True
@@ -192,14 +191,14 @@ class EnvWorker(Worker):
         reward_placements = self._component_placement.get_strategy(
             "reward"
         ).get_placement(Cluster())
-        assert len(reward_placements) > 0, (
-            "Reward placement must contain at least one worker."
-        )
+        assert (
+            len(reward_placements) > 0
+        ), "Reward placement must contain at least one worker."
         reward_placement = reward_placements[0]
         reward_hardware_ranks = self._component_placement.get_hardware_ranks("reward")
-        assert len(reward_hardware_ranks) > 0, (
-            "Reward placement must contain at least one hardware rank."
-        )
+        assert (
+            len(reward_hardware_ranks) > 0
+        ), "Reward placement must contain at least one hardware rank."
 
         override_cfg = OmegaConf.to_container(
             env_cfg.get("override_cfg", {}), resolve=True
@@ -397,9 +396,11 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
@@ -467,9 +468,11 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
@@ -590,9 +593,9 @@ class EnvWorker(Worker):
             chunk_action.append(action_i)
         chunk_action = np.concatenate(chunk_action, axis=0)
         expected_total_size = sum(size for _, size in src_ranks_and_sizes)
-        assert chunk_action.shape[0] == expected_total_size, (
-            f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
-        )
+        assert (
+            chunk_action.shape[0] == expected_total_size
+        ), f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
         return chunk_action
 
     @Worker.timer("recv_rollout_results")
@@ -836,9 +839,11 @@ class EnvWorker(Worker):
                     dones=dones,
                     terminations=terminations,
                     truncations=truncations,
-                    final_obs=infos["final_observation"]
-                    if "final_observation" in infos
-                    else None,
+                    final_obs=(
+                        infos["final_observation"]
+                        if "final_observation" in infos
+                        else None
+                    ),
                     intervene_actions=None,
                     intervene_flags=None,
                 )
@@ -957,12 +962,16 @@ class EnvWorker(Worker):
                     )
                     chunk_step_result = ChunkStepResult(
                         actions=rollout_result.forward_inputs.get("action", None),
-                        prev_logprobs=rollout_result.prev_logprobs
-                        if self.collect_prev_infos
-                        else None,
-                        prev_values=rollout_result.prev_values
-                        if self.collect_prev_infos
-                        else None,
+                        prev_logprobs=(
+                            rollout_result.prev_logprobs
+                            if self.collect_prev_infos
+                            else None
+                        ),
+                        prev_values=(
+                            rollout_result.prev_values
+                            if self.collect_prev_infos
+                            else None
+                        ),
                         forward_inputs=rollout_result.forward_inputs,
                         versions=rollout_result.versions,
                         dones=env_output.dones,
@@ -1026,9 +1035,9 @@ class EnvWorker(Worker):
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
                 chunk_step_result = ChunkStepResult(
-                    prev_values=rollout_result.prev_values
-                    if self.collect_prev_infos
-                    else None,
+                    prev_values=(
+                        rollout_result.prev_values if self.collect_prev_infos else None
+                    ),
                     dones=env_output.dones,
                     truncations=env_output.truncations,
                     terminations=env_output.terminations,
@@ -1085,9 +1094,11 @@ class EnvWorker(Worker):
                     extracted_obs, infos = self.eval_env_list[stage_id].reset()
                     env_output = EnvOutput(
                         obs=extracted_obs,
-                        final_obs=infos["final_observation"]
-                        if "final_observation" in infos
-                        else None,
+                        final_obs=(
+                            infos["final_observation"]
+                            if "final_observation" in infos
+                            else None
+                        ),
                     )
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
