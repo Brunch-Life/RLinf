@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import copy
 import enum
+import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -34,6 +36,34 @@ from rlinf.utils.logging import get_logger
 
 from .dosw1_robot_state import DOSW1RobotState
 from .dosw1_sdk import DOSW1SDKAdapter
+
+_AGENT_DEBUG_LOG_PATH = "/mlp_vepfs/share/wyf/RLinf-open/.cursor/debug-c78ceb.log"
+_AGENT_DEBUG_SESSION_ID = "c78ceb"
+
+
+def _agent_debug_log(
+    *,
+    run_id: str,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict,
+) -> None:
+    try:
+        payload = {
+            "sessionId": _AGENT_DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+        }
+        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class ControlMode(enum.IntEnum):
@@ -105,7 +135,6 @@ class DOSW1Config:
     max_num_steps: int = 1000
 
     enable_human_in_loop: bool = False
-    manual_episode_control_only: bool = False
     gripper_factor: float = 0.07 / 0.048
     gripper_teleop_scale: float = 5.0
 
@@ -179,28 +208,31 @@ class DOSW1Env(gym.Env):
         options: Optional[dict] = None,
         joint_reset: bool = False,
     ) -> tuple[dict, dict]:
-        del seed, joint_reset
         if self.config.is_dummy:
             return self._get_observation(), {}
-
-        options = options or {}
-        skip_wait_for_start = bool(options.get("skip_wait_for_start", False))
 
         if self.config.enable_human_in_loop:
             self.in_free_teleop = True
             self.start_episode_requested = False
-            if skip_wait_for_start:
-                self._logger.info(
-                    "[DOSW1Env] Final reset skips waiting for 's'; "
-                    "no new episode will be started."
-                )
-                self.in_free_teleop = False
-            else:
-                self._logger.info(
-                    "[DOSW1Env] FreeTeleop mode active. "
-                    "Move arms freely via leader arm. Press 's' to start episode."
-                )
-                self._free_teleop_loop()
+            # region agent log
+            _agent_debug_log(
+                run_id="s-key",
+                hypothesis_id="H3",
+                location="dosw1_env.py:reset",
+                message="reset_enter_free_teleop",
+                data={
+                    "env_idx": self.env_idx,
+                    "env_worker_rank": self.env_worker_rank,
+                    "node_rank": self.node_rank,
+                    "start_episode_requested": bool(self.start_episode_requested),
+                },
+            )
+            # endregion
+            self._logger.info(
+                "[DOSW1Env] FreeTeleop mode active. "
+                "Move arms freely via leader arm. Press 's' to start episode."
+            )
+            self._free_teleop_loop()
             self.snapshot_teleop_init()
             self.control_mode = ControlMode.TELEOP
         else:
@@ -239,11 +271,7 @@ class DOSW1Env(gym.Env):
         )
         reward = self._calc_step_reward(obs, gripper_changed=gripper_changed)
         terminated = False
-        manual_episode_control_only = bool(self.config.manual_episode_control_only)
-        truncated = (
-            (not manual_episode_control_only)
-            and self._num_steps >= self.config.max_num_steps
-        )
+        truncated = self._num_steps >= self.config.max_num_steps
 
         info: dict = {"control_mode": self.control_mode.value, "manual_done": self.manual_done}
         if self.control_mode == ControlMode.TELEOP:
@@ -472,9 +500,37 @@ class DOSW1Env(gym.Env):
     def _free_teleop_loop(self) -> None:
         self.snapshot_teleop_init()
         last_log = time.time()
+        # region agent log
+        _agent_debug_log(
+            run_id="s-key",
+            hypothesis_id="H3",
+            location="dosw1_env.py:_free_teleop_loop",
+            message="free_teleop_loop_enter",
+            data={
+                "env_idx": self.env_idx,
+                "env_worker_rank": self.env_worker_rank,
+                "node_rank": self.node_rank,
+                "in_free_teleop": bool(self.in_free_teleop),
+            },
+        )
+        # endregion
         while True:
             self._poll_keyboard_event(reset_phase=True)
             if self.start_episode_requested:
+                # region agent log
+                _agent_debug_log(
+                    run_id="s-key",
+                    hypothesis_id="H3",
+                    location="dosw1_env.py:_free_teleop_loop",
+                    message="free_teleop_start_requested",
+                    data={
+                        "env_idx": self.env_idx,
+                        "env_worker_rank": self.env_worker_rank,
+                        "node_rank": self.node_rank,
+                        "in_free_teleop_before_break": bool(self.in_free_teleop),
+                    },
+                )
+                # endregion
                 self.start_episode_requested = False
                 self.in_free_teleop = False
                 break
@@ -495,6 +551,20 @@ class DOSW1Env(gym.Env):
         # Fallback when wrapper is disabled: keep reset-phase "s to start".
         if reset_phase and self._keyboard is not None and self._keyboard.get_key() == "s":
             self.start_episode_requested = True
+            # region agent log
+            _agent_debug_log(
+                run_id="s-key",
+                hypothesis_id="H1",
+                location="dosw1_env.py:_poll_keyboard_event",
+                message="fallback_detect_s_set_start",
+                data={
+                    "env_idx": self.env_idx,
+                    "env_worker_rank": self.env_worker_rank,
+                    "node_rank": self.node_rank,
+                    "reset_phase": bool(reset_phase),
+                },
+            )
+            # endregion
 
     def _forward_leader_to_follower(self) -> None:
         cur_left = self.sdk.get_left_joint()[:6]

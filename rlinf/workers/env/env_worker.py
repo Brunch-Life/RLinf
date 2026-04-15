@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import asyncio
+import json
+import time
+import uuid
 from collections import defaultdict
 from typing import Any, Literal
 
@@ -39,6 +42,34 @@ from rlinf.utils.nested_dict_process import (
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+
+_AGENT_DEBUG_LOG_PATH = "/mlp_vepfs/share/wyf/RLinf-open/.cursor/debug-c78ceb.log"
+_AGENT_DEBUG_SESSION_ID = "c78ceb"
+
+
+def _agent_debug_log(
+    *,
+    run_id: str,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict,
+) -> None:
+    try:
+        payload = {
+            "sessionId": _AGENT_DEBUG_SESSION_ID,
+            "id": f"log_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+        }
+        with open(_AGENT_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 class EnvWorker(Worker):
@@ -224,6 +255,22 @@ class EnvWorker(Worker):
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
+            # region agent log
+            _agent_debug_log(
+                run_id="s-key",
+                hypothesis_id="H4",
+                location="env_worker.py:_setup_env_and_wrappers",
+                message="env_created",
+                data={
+                    "env_worker_rank": self._rank,
+                    "stage_id": stage_id,
+                    "env_type": str(getattr(env_cfg, "env_type", "")),
+                    "has_keyboard_callback": bool(
+                        hasattr(getattr(env, "unwrapped", env), "_keyboard_event_callback")
+                    ),
+                },
+            )
+            # endregion
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
             if env_cfg.get("data_collection", None) and getattr(
@@ -362,6 +409,21 @@ class EnvWorker(Worker):
         for i in range(self.stage_num):
             if self.cfg.env.train.auto_reset:
                 extracted_obs, _ = self.env_list[i].reset()
+                # region agent log
+                _agent_debug_log(
+                    run_id="s-key",
+                    hypothesis_id="H4",
+                    location="env_worker.py:_init_env",
+                    message="init_env_reset_done",
+                    data={
+                        "env_worker_rank": self._rank,
+                        "stage_id": i,
+                        "obs_keys": list(extracted_obs.keys())
+                        if isinstance(extracted_obs, dict)
+                        else [],
+                    },
+                )
+                # endregion
                 self.last_obs_list.append(extracted_obs)
                 self.last_intervened_info_list.append((None, None))
             if self.enable_offload and hasattr(self.env_list[i], "offload"):
@@ -825,7 +887,32 @@ class EnvWorker(Worker):
         if not self.cfg.env.train.auto_reset:
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
+                # region agent log
+                _agent_debug_log(
+                    run_id="s-key",
+                    hypothesis_id="H3",
+                    location="env_worker.py:bootstrap_step",
+                    message="bootstrap_set_is_start_true",
+                    data={
+                        "env_worker_rank": self._rank,
+                        "stage_id": stage_id,
+                    },
+                )
+                # endregion
                 extracted_obs, infos = self.env_list[stage_id].reset()
+                # region agent log
+                _agent_debug_log(
+                    run_id="s-key",
+                    hypothesis_id="H3",
+                    location="env_worker.py:bootstrap_step",
+                    message="bootstrap_reset_done",
+                    data={
+                        "env_worker_rank": self._rank,
+                        "stage_id": stage_id,
+                        "has_final_observation": bool("final_observation" in infos),
+                    },
+                )
+                # endregion
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
