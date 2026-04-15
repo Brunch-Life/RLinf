@@ -100,7 +100,9 @@ def _infer_gloo_ifname(target_host: str) -> tuple[Optional[str], Optional[str], 
     if local_ip is None:
         return None, target_ip, None
 
-    for if_name, _ in socket.if_nameindex():
+    for _, if_name in socket.if_nameindex():
+        if not isinstance(if_name, str):
+            continue
         if_addr = _get_interface_ipv4_addr(if_name)
         if if_addr == local_ip:
             return if_name, target_ip, local_ip
