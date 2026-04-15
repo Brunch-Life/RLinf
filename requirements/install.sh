@@ -19,7 +19,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain")
 
 #=======================Utility Functions=======================
 
@@ -525,6 +525,13 @@ install_openpi_model() {
             install_flash_attn
             uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
             ;;
+        roboverse)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_roboverse_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -706,6 +713,10 @@ install_env_only() {
             install_common_embodied_deps
             install_habitat_env
             ;;
+        embodichain)
+            install_common_embodied_deps
+            install_embodichain_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -844,7 +855,7 @@ install_franka_env() {
     if [ ! -f "$ROS_CATKIN_PATH/libfranka/build/libfranka.so" ]; then
         mkdir -p "$ROS_CATKIN_PATH/libfranka/build"
         pushd "$ROS_CATKIN_PATH/libfranka/build" >/dev/null
-        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_PREFIX_PATH=/opt/openrobots/lib/cmake -DBUILD_TESTS=OFF ..
         make -j$(nproc)
         popd >/dev/null
     fi
@@ -852,10 +863,10 @@ install_franka_env() {
     export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:$CMAKE_PREFIX_PATH
 
     # Then franka_ros
-    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
+    catkin_make -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DFranka_DIR:PATH=$ROS_CATKIN_PATH/libfranka/build
 
     # Finally serl_franka_controllers
-    catkin_make -DCMAKE_CXX_STANDARD=17 --pkg serl_franka_controllers
+    catkin_make -DCMAKE_CXX_STANDARD=17 -DCMAKE_POLICY_VERSION_MINIMUM=3.5 --pkg serl_franka_controllers
     popd >/dev/null
 
     echo "export LD_LIBRARY_PATH=$ROS_CATKIN_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
@@ -983,6 +994,10 @@ install_frankasim_env() {
     uv pip install -r "$serldir/franka_sim/requirements.txt"
 }
 
+install_embodichain_env() {
+    uv pip install embodichain --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+}
+
 install_habitat_env() {
     local habitat_sim_dir
     habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
@@ -1019,6 +1034,20 @@ install_wan_world_model() {
     wan_dir=$(clone_or_reuse_repo WAN_PATH "$VENV_DIR/wan" https://github.com/RLinf/diffsynth-studio.git)
     uv pip install -e "$wan_dir"
     uv pip install -r $SCRIPT_DIR/embodied/models/wan.txt
+}
+
+install_roboverse_env() {
+    local roboverse_dir
+    roboverse_dir=$(clone_or_reuse_repo ROBOVERSE_PATH "$VENV_DIR/roboverse" https://github.com/tiny-xie/roboverse.git)
+    uv pip install -e "${roboverse_dir}[mujoco]"
+    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9 --no-build-isolation
+    uv pip install -e "${roboverse_dir}[sapien3]"
+    uv pip install -e "${roboverse_dir}[genesis]"
+    
+    local pyroki_dir
+    pyroki_dir=$(clone_or_reuse_repo PYROKI_PATH "$roboverse_dir/pyroki" https://github.com/chungmin99/pyroki.git)
+    uv pip install -e "$pyroki_dir"
+    uv pip install "numpy==1.26.4" --force-reinstall
 }
 
 #=======================AGENTIC INSTALLER=======================
