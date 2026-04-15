@@ -125,6 +125,7 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 ]
 xsquare_turtle2 = [
     "pyyaml",
@@ -139,7 +140,8 @@ xsquare_turtle2 = [
     "defusedxml",
     "pyspacemouse>=2.0.0",
     "imageio[ffmpeg]",
-    "evdev"
+    "evdev",
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 ]
 
 [tool.uv]
