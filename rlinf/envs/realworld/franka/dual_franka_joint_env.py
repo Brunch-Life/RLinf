@@ -262,7 +262,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
                         name: gym.spaces.Box(
                             0, 255, shape=(128, 128, 3), dtype=np.uint8
                         )
-                        for name, _ in camera_specs
+                        for name, _, _ in camera_specs
                     }
                 ),
             }

@@ -62,6 +62,9 @@ class DualFrankaRobotConfig:
     right_camera_serials: Optional[list[str]] = None
     base_camera_serials: Optional[list[str]] = None
     camera_type: Optional[str] = None
+    base_camera_type: Optional[str] = None
+    left_camera_type: Optional[str] = None
+    right_camera_type: Optional[str] = None
 
     left_gripper_type: Optional[str] = None
     right_gripper_type: Optional[str] = None
@@ -211,30 +214,40 @@ class DualFrankaEnv(gym.Env):
     #  Hardware setup                                                      #
     # ------------------------------------------------------------------ #
 
-    def _all_camera_specs(self) -> list[tuple[str, str]]:
-        """Return ``[(camera_name, serial), ...]`` with pi0/pi0.5-aligned names.
+    def _all_camera_specs(self) -> list[tuple[str, str, str]]:
+        """Return ``[(camera_name, serial, camera_type), ...]`` with
+        pi0/pi0.5-aligned names.
 
         Base (third-person) cameras are named ``base_0_rgb``, ``base_1_rgb``,
         …; each arm's wrist cameras use ``left_wrist_0_rgb``,
         ``right_wrist_0_rgb``, etc.  Downstream observation dicts can be fed
         to a pi0/pi0.5 policy without any key remapping.
+
+        Each slot's ``camera_type`` resolves per-slot override
+        (``base_camera_type`` / ``left_camera_type`` / ``right_camera_type``)
+        first, then falls back to the global :attr:`camera_type`.
         """
-        specs: list[tuple[str, str]] = []
+        default_type = self.config.camera_type or "zed"
+        base_type = self.config.base_camera_type or default_type
+        left_type = self.config.left_camera_type or default_type
+        right_type = self.config.right_camera_type or default_type
+
+        specs: list[tuple[str, str, str]] = []
         if self.config.base_camera_serials:
             for j, serial in enumerate(self.config.base_camera_serials):
-                specs.append((f"base_{j}_rgb", serial))
-        for arm, serials in (
-            ("left", self.config.left_camera_serials),
-            ("right", self.config.right_camera_serials),
+                specs.append((f"base_{j}_rgb", serial, base_type))
+        for arm, serials, arm_type in (
+            ("left", self.config.left_camera_serials, left_type),
+            ("right", self.config.right_camera_serials, right_type),
         ):
             if not serials:
                 continue
             for j, serial in enumerate(serials):
-                specs.append((f"{arm}_wrist_{j}_rgb", serial))
+                specs.append((f"{arm}_wrist_{j}_rgb", serial, arm_type))
         return specs
 
     def _all_camera_serials(self) -> list[str]:
-        return [serial for _, serial in self._all_camera_specs()]
+        return [serial for _, serial, _ in self._all_camera_specs()]
 
     def _setup_hardware(self):
         from .franka_controller import FrankaController
@@ -260,6 +273,12 @@ class DualFrankaEnv(gym.Env):
                 )
             if self.config.camera_type is None:
                 self.config.camera_type = getattr(hw, "camera_type", "zed")
+            if self.config.base_camera_type is None:
+                self.config.base_camera_type = getattr(hw, "base_camera_type", None)
+            if self.config.left_camera_type is None:
+                self.config.left_camera_type = getattr(hw, "left_camera_type", None)
+            if self.config.right_camera_type is None:
+                self.config.right_camera_type = getattr(hw, "right_camera_type", None)
             if self.config.left_gripper_type is None:
                 self.config.left_gripper_type = getattr(
                     hw, "left_gripper_type", "franka"
@@ -309,10 +328,9 @@ class DualFrankaEnv(gym.Env):
 
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
-        camera_type = self.config.camera_type or "zed"
         camera_infos = [
-            CameraInfo(name=name, serial_number=serial, camera_type=camera_type)
-            for name, serial in self._all_camera_specs()
+            CameraInfo(name=name, serial_number=serial, camera_type=cam_type)
+            for name, serial, cam_type in self._all_camera_specs()
         ]
         for info in camera_infos:
             camera = create_camera(info)
@@ -432,7 +450,7 @@ class DualFrankaEnv(gym.Env):
                             shape=(128, 128, 3),
                             dtype=np.uint8,
                         )
-                        for name, _ in camera_specs
+                        for name, _, _ in camera_specs
                     }
                 ),
             }
