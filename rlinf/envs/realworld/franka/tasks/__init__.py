@@ -21,6 +21,7 @@ from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.common.wrappers import (
     DualGelloIntervention,
+    DualGelloJointIntervention,
     DualQuat2EulerWrapper,
     DualRelativeFrame,
     DualSpacemouseIntervention,
@@ -33,6 +34,9 @@ from rlinf.envs.realworld.common.wrappers import (
     SpacemouseIntervention,
 )
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFrankaEnv
+from rlinf.envs.realworld.franka.dual_franka_joint_env import (
+    DualFrankaJointEnv as DualFrankaJointEnv,
+)
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
@@ -43,7 +47,9 @@ from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
 )
 
 
-def _apply_common_wrappers(env: gym.Env, env_cfg: Optional[Mapping[str, Any]]) -> gym.Env:
+def _apply_common_wrappers(
+    env: gym.Env, env_cfg: Optional[Mapping[str, Any]]
+) -> gym.Env:
     """Attach the single/dual franka wrapper stack driven by ``env_cfg``.
 
     ``env_cfg`` is the env-level config (``self.cfg`` in RealWorldEnv). The same
@@ -71,10 +77,11 @@ def _apply_common_wrappers(env: gym.Env, env_cfg: Optional[Mapping[str, Any]]) -
 
     use_spacemouse = cfg.get("use_spacemouse", True)
     use_gello = cfg.get("use_gello", False)
-    if use_spacemouse and use_gello:
+    use_gello_joint = cfg.get("use_gello_joint", False)
+    if sum(bool(x) for x in (use_spacemouse, use_gello, use_gello_joint)) > 1:
         raise ValueError(
             "Only one teleop mode can be active at a time. "
-            "Set exactly one of use_spacemouse, use_gello to True."
+            "Set exactly one of use_spacemouse, use_gello, use_gello_joint to True."
         )
 
     gripper_enabled = not no_gripper
@@ -113,12 +120,43 @@ def _apply_common_wrappers(env: gym.Env, env_cfg: Optional[Mapping[str, Any]]) -
                 env, port=gello_port, gripper_enabled=gripper_enabled
             )
 
+    if not env.config.is_dummy and use_gello_joint:
+        if not is_dual:
+            raise NotImplementedError(
+                "use_gello_joint is only supported on dual-arm joint-space envs "
+                "in this PR (DualFrankaJointEnv-v1). Single-arm joint teleop "
+                "lives on a separate branch."
+            )
+        left_port = cfg.get("left_gello_port", None)
+        right_port = cfg.get("right_gello_port", None)
+        if left_port is None or right_port is None:
+            raise ValueError(
+                "use_gello_joint=True requires both left_gello_port and "
+                "right_gello_port to be set in the env config."
+            )
+        env = DualGelloJointIntervention(
+            env,
+            left_port=left_port,
+            right_port=right_port,
+            gripper_enabled=gripper_enabled,
+            use_delta=(getattr(env.config, "joint_action_mode", "absolute") == "delta"),
+            action_scale=getattr(env.config, "joint_action_scale", 0.1),
+            direct_stream=getattr(env.config, "teleop_direct_stream", False),
+            stream_period=cfg.get("gello_joint_stream_period", 0.001),
+        )
+
     keyboard_reward_wrapper = cfg.get("keyboard_reward_wrapper", None)
     if not env.config.is_dummy and keyboard_reward_wrapper:
         if keyboard_reward_wrapper == "multi_stage":
             env = KeyboardRewardDoneMultiStageWrapper(env)
         elif keyboard_reward_wrapper == "single_stage":
             env = KeyboardRewardDoneWrapper(env)
+
+    # Cartesian-space transforms (RelativeFrame / Quat2Euler) are meaningless
+    # for joint-space teleop — the 16D action has no TCP frame and the obs
+    # consumer expects raw quaternions.  Skip both when use_gello_joint is on.
+    if use_gello_joint:
+        return env
 
     if cfg.get("use_relative_frame", True):
         env = DualRelativeFrame(env) if is_dual else RelativeFrame(env)
@@ -150,6 +188,22 @@ def create_dual_franka_env(
     env_cfg: Optional[Mapping[str, Any]] = None,
 ) -> gym.Env:
     env = DualFrankaEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return _apply_common_wrappers(env, env_cfg)
+
+
+def create_dual_franka_joint_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Optional[Mapping[str, Any]] = None,
+) -> gym.Env:
+    env = DualFrankaJointEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
@@ -214,6 +268,11 @@ register(
 register(
     id="DualFrankaEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_env",
+)
+
+register(
+    id="DualFrankaJointEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_joint_env",
 )
 
 register(

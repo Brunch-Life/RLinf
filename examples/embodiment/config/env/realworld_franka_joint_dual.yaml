@@ -1,0 +1,69 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+use_gello: False
+use_gello_joint: True
+use_relative_frame: False  # Not applicable for joint-space control
+no_gripper: False
+# Replace with your GELLO serial ports.
+left_gello_port: "/dev/serial/by-id/LEFT_GELLO_PORT"
+right_gello_port: "/dev/serial/by-id/RIGHT_GELLO_PORT"
+main_image_key: left_wrist_0_rgb
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DualFrankaJointEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual arm joint-space manipulation task"
+  # Joint action mode: "absolute" for direct GELLO mapping, "delta" for RL.
+  joint_action_mode: "absolute"
+  # Scaling factor for delta mode (rad per unit action). Ignored in absolute.
+  joint_action_scale: 0.1
+  # Conservative joint velocity limit (rad/s per joint) for safety.
+  joint_velocity_limit: 0.5
+  # Per-arm (2, 6) Cartesian poses kept for bookkeeping / success checking;
+  # action space is joint-space so these are informational only.
+  target_ee_pose:
+    - [0.5, -0.2, 0.3, -3.14, 0.0, 0.0]
+    - [0.5,  0.2, 0.3, -3.14, 0.0, 0.0]
+  reset_ee_pose:
+    - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+    - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+  max_num_steps: 300
+  reward_threshold:
+    - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+    - [0.01, 0.01, 0.01, 0.2, 0.2, 0.2]
+  action_scale: [1.0, 1.0, 1.0]
+  # Per-arm (2, 6) Cartesian safety box — not enforced in joint step, but
+  # kept populated so downstream tooling (e.g. viewers) stays happy.
+  ee_pose_limit_min:
+    - [0.3, -0.4, 0.2, -3.64, -0.5, -0.5]
+    - [0.3, -0.0, 0.2, -3.64, -0.5, -0.5]
+  ee_pose_limit_max:
+    - [0.7,  0.0, 0.6, -2.64, 0.5, 0.5]
+    - [0.7,  0.4, 0.6, -2.64, 0.5, 0.5]
+  enable_gripper_penalty: false
+  success_hold_steps: 1
+  # GELLO direct-stream: a 1 kHz daemon in DualGelloJointIntervention pushes
+  # joint targets straight to each controller, bypassing env.step's rate
+  # gate.  env.step still reads state / obs at step_frequency but does NOT
+  # forward move_joints — avoids two writers racing franky's motion queue.
+  teleop_direct_stream: true

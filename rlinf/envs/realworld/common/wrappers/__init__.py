@@ -14,6 +14,7 @@
 
 from .dual_euler_obs import DualQuat2EulerWrapper
 from .dual_gello_intervention import DualGelloIntervention
+from .dual_gello_joint_intervention import DualGelloJointIntervention
 from .dual_relative_frame import DualRelativeFrame, DualRelativeTargetFrame
 from .dual_spacemouse_intervention import DualSpacemouseIntervention
 from .euler_obs import Quat2EulerWrapper
@@ -28,6 +29,7 @@ from .spacemouse_intervention import SpacemouseIntervention
 
 __all__ = [
     "DualGelloIntervention",
+    "DualGelloJointIntervention",
     "DualQuat2EulerWrapper",
     "DualRelativeFrame",
     "DualRelativeTargetFrame",
