@@ -193,8 +193,12 @@ class DualFrankaJointEnv(DualFrankaEnv):
         """
         del joint_reset
         ctrls = [self._left_ctrl, self._right_ctrl]
-        for arm, ctrl in enumerate(ctrls):
-            ctrl.reset_joint(list(self.config.joint_reset_qpos[arm])).wait()
+        futures = [
+            ctrl.reset_joint(list(self.config.joint_reset_qpos[arm]))
+            for arm, ctrl in enumerate(ctrls)
+        ]
+        for f in futures:
+            f.wait()
         time.sleep(0.5)
 
     # ------------------------------------------------------------------ #

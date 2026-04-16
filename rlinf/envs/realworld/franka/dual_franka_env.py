@@ -655,8 +655,12 @@ class DualFrankaEnv(gym.Env):
     def _go_to_rest(self, joint_reset: bool = False):
         ctrls = [self._left_ctrl, self._right_ctrl]
         if joint_reset:
-            for arm, ctrl in enumerate(ctrls):
-                ctrl.reset_joint(self.config.joint_reset_qpos[arm]).wait()
+            futures = [
+                ctrl.reset_joint(self.config.joint_reset_qpos[arm])
+                for arm, ctrl in enumerate(ctrls)
+            ]
+            for f in futures:
+                f.wait()
             time.sleep(0.5)
 
         reset_poses = self._reset_poses.copy()
