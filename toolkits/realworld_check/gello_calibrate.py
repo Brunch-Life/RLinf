@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """GELLO ↔ Franka two-pose calibration.
 
 Determines BOTH ``joint_signs`` and ``joint_offsets`` for a Franka FR3
@@ -52,7 +66,6 @@ from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
     FrankyController,
 )
 
-
 # ── tunables ────────────────────────────────────────────────────────────
 ROBOT_IP = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
 GRIPPER_PORT = os.environ.get(
@@ -92,7 +105,7 @@ POSE_A = np.array([0.0, -PI / 4, 0.0, -3 * PI / 4, 0.0, PI / 2, PI / 4])
 POSE_B = np.array([-PI / 4, 0.0, -PI / 4, -PI / 2, PI / 4, 3 * PI / 4, 0.0])
 
 JOINT_IDS = (1, 2, 3, 4, 5, 6, 7)  # 7 arm joints
-GRIPPER_ID = 8                     # gripper Dynamixel id (per existing config)
+GRIPPER_ID = 8  # gripper Dynamixel id (per existing config)
 NUM_ARM = len(JOINT_IDS)
 TWO_PI = 2.0 * math.pi
 # ────────────────────────────────────────────────────────────────────────
@@ -132,8 +145,7 @@ def setup_robot() -> FrankyController:
 
 def setup_gello_raw() -> DynamixelDriver:
     print(
-        f"Opening GELLO Dynamixel chain at {GELLO_PORT} "
-        f"(baud {DXL_BAUDRATE}) ...",
+        f"Opening GELLO Dynamixel chain at {GELLO_PORT} (baud {DXL_BAUDRATE}) ...",
         flush=True,
     )
     driver = DynamixelDriver(
@@ -245,9 +257,7 @@ def wait_for_enter(prompt: str, driver: DynamixelDriver | None = None) -> None:
     print()
     print(prompt)
     if driver is not None:
-        print(
-            "(raw motor positions stream below — press ENTER when GELLO matches)"
-        )
+        print("(raw motor positions stream below — press ENTER when GELLO matches)")
     try:
         if driver is None:
             input("  press ENTER to continue: ")
@@ -404,8 +414,7 @@ def main() -> None:
 
     # Warn about ambiguous joints (very small motor delta → sign unreliable)
     ambiguous = [
-        i for i in range(NUM_ARM)
-        if abs(dq_motor[i]) < 0.05 or abs(dq_robot[i]) < 0.1
+        i for i in range(NUM_ARM) if abs(dq_motor[i]) < 0.05 or abs(dq_robot[i]) < 0.1
     ]
     if ambiguous:
         print(
@@ -455,9 +464,7 @@ def main() -> None:
     grip_open_deg = math.degrees(grip_B) - 0.2
     grip_close_deg = math.degrees(grip_B) - 42.0
     print()
-    print(
-        f"  gripper at pose B raw: {grip_B:.4f} rad ({math.degrees(grip_B):.2f}°)"
-    )
+    print(f"  gripper at pose B raw: {grip_B:.4f} rad ({math.degrees(grip_B):.2f}°)")
     print(
         f"  suggested gripper_config:  ({GRIPPER_ID}, "
         f"{int(round(grip_open_deg))}, {int(round(grip_close_deg))})"
@@ -470,9 +477,11 @@ def main() -> None:
     # Final paste-ready snippet
     print()
     print(colour("─" * 64, "36"))
-    print(colour(" Paste this into gello/agents/gello_agent.py PORT_CONFIG_MAP:", "36;1"))
+    print(
+        colour(" Paste this into gello/agents/gello_agent.py PORT_CONFIG_MAP:", "36;1")
+    )
     print(colour("─" * 64, "36"))
-    label = ", ".join(half_pi_label(o) for o in offsets)
+    ", ".join(half_pi_label(o) for o in offsets)
     sign_tuple = ", ".join(str(int(s)) for s in signs)
     print(
         f'    "{GELLO_PORT}": DynamixelRobotConfig(\n'

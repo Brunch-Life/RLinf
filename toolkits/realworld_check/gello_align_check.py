@@ -1,3 +1,17 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Live GELLO ↔ Franka joint alignment dashboard.
 
 Reads the robot's current joint positions via :class:`FrankyController`
@@ -75,14 +89,13 @@ def fmt_joint_row(i: int, q_robot: float, q_gello: float) -> str:
     else:
         c = "31"  # red
         status = "❌"
-        deg = math.degrees(wrapped)
+        math.degrees(wrapped)
         # Operator should turn GELLO BY -wrapped to make q_gello match q_robot
         # i.e. if wrapped > 0, GELLO is ahead of robot, turn GELLO BACK
         direction = -wrapped
         direction_deg = math.degrees(direction)
         hint = (
-            f"  → turn GELLO J{i + 1} by "
-            f"{direction:+.3f} rad ({direction_deg:+.1f}°)"
+            f"  → turn GELLO J{i + 1} by {direction:+.3f} rad ({direction_deg:+.1f}°)"
         )
 
     delta_str = colour(f"Δ={wrapped:+.3f}", c)
