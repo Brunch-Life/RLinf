@@ -63,9 +63,12 @@ JOINT_LIMITS_UPPER = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 
 # margin — same figures polymetis uses.  Used to clamp dq feedforward.
 JOINT_VEL_LIMITS = np.array([2.075, 2.075, 2.075, 2.075, 2.51, 2.51, 2.51])
 
-# Collision thresholds (Nm / N) — polymetis defaults.
-_DEFAULT_TORQUE_THRESHOLD = [40.0] * 7
-_DEFAULT_FORCE_THRESHOLD = [40.0] * 6
+# Collision thresholds (joint torques Nm; Cartesian Fxyz N + Mxyz Nm).
+# Raised well above polymetis defaults so GELLO teleop tracking errors
+# don't trip the reflex; joint values stay under libfranka's physical
+# limits [87,87,87,87,12,12,12] Nm.
+_DEFAULT_TORQUE_THRESHOLD = [80.0, 80.0, 80.0, 80.0, 11.0, 11.0, 11.0]
+_DEFAULT_FORCE_THRESHOLD = [100.0, 100.0, 100.0, 25.0, 25.0, 25.0]
 
 # Joint impedance PD gains (Nm/rad, Nms/rad) — polymetis default_Kq/Kqd.
 _DEFAULT_JOINT_STIFFNESS = [40.0, 30.0, 50.0, 25.0, 35.0, 25.0, 10.0]
