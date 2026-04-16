@@ -25,9 +25,10 @@ Franka environments end-to-end:
 * ``CollectEpisode`` integration that auto-detects wrist images from
   the obs dict and forwards them to the writer as correctly keyed
   per-step frame dicts.
-* ``RealWorldEnv._wrap_obs`` dual branch that stacks left/right wrist
-  cameras into ``wrist_images`` (alphabetical order) and puts the base
-  (third-person) camera into ``main_images``.
+* ``RealWorldEnv._wrap_obs`` that puts the frame named by
+  ``main_image_key`` into ``main_images`` and stacks the remaining
+  camera frames (alphabetical) into ``extra_view_images`` — the same
+  code path for single- and dual-arm envs.
 
 Single-arm regression checks live alongside each test to ensure that the
 default path produces frame dicts identical to the legacy single-arm
@@ -193,10 +194,12 @@ class _SingleArmDummyEnv(gym.Env):
 
 
 class _DualArmDummyEnv(gym.Env):
-    """Mimics what RealWorldEnv._wrap_obs emits for the dual-arm branch.
+    """Mimics a dual-arm obs dict with a stacked ``wrist_images`` tensor.
 
-    ``main_images`` = base (third-person) camera;
-    ``wrist_images`` = stacked [left, right] wrist cameras (alphabetical).
+    This shape is what sim envs (libero, roboverse, …) emit and what the
+    LeRobot CollectEpisode pipeline is expected to fan out — it is *not*
+    the shape RealWorldEnv produces for a dual-arm Franka: realworld
+    stacks secondary views into ``extra_view_images`` instead.
     """
 
     def __init__(self) -> None:
@@ -437,21 +440,15 @@ def dual_realworld_env():
     env.close()
 
 
-def test_realworld_env_caches_is_dual_arm(dual_realworld_env):
-    assert dual_realworld_env.is_dual_arm is True
-
-
 def test_realworld_env_dual_branch_emits_semantic_keys(dual_realworld_env):
     obs, _ = dual_realworld_env.reset()
-    assert "wrist_images" in obs
     assert "main_images" in obs
+    # Dual-arm uses the same path as single-arm: main_image_key picks the
+    # primary frame, remaining frames stack into extra_view_images.
+    assert "extra_view_images" in obs
+    assert "wrist_images" not in obs
     assert "left_wrist_images" not in obs
     assert "right_wrist_images" not in obs
-    assert "extra_view_images" not in obs, (
-        "dual branch should not bucket frames into extra_view_images"
-    )
-    # wrist_images should be stacked [left, right] along axis=1
-    assert obs["wrist_images"].shape[1] == 2
     # state shape: gripper(2)+force(6)+pose(12 quat)+torque(6)+vel(12) = 38
     # (use_relative_frame=False above, but DualQuat2EulerWrapper still wraps)
     assert obs["states"].shape[-1] == 38
@@ -462,8 +459,9 @@ def test_realworld_env_dual_branch_step(dual_realworld_env):
     next_obs, reward, term, trunc, info = dual_realworld_env.step(
         np.zeros((1, 14), dtype=np.float32)
     )
-    assert "wrist_images" in next_obs
     assert "main_images" in next_obs
+    assert "extra_view_images" in next_obs
+    assert "wrist_images" not in next_obs
     assert "left_wrist_images" not in next_obs
     assert "right_wrist_images" not in next_obs
 
