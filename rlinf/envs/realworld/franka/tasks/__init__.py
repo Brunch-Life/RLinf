@@ -43,7 +43,9 @@ from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
 )
 
 
-def _apply_common_wrappers(env: gym.Env, env_cfg: Optional[Mapping[str, Any]]) -> gym.Env:
+def _apply_common_wrappers(
+    env: gym.Env, env_cfg: Optional[Mapping[str, Any]]
+) -> gym.Env:
     """Attach the single/dual franka wrapper stack driven by ``env_cfg``.
 
     ``env_cfg`` is the env-level config (``self.cfg`` in RealWorldEnv). The same
