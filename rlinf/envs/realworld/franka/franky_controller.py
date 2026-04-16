@@ -15,20 +15,23 @@
 """Franka robot controller using Franky (libfranka) for joint-space control.
 
 Thin wrapper around the ``franky`` library.  All real-time work — 1 kHz
-``robot.control()`` loop and impedance torque computation — runs inside
-franky's C++ std::thread, and every franky Python binding releases the
-GIL via ``py::call_guard<py::gil_scoped_release>()``.  That means this
-controller does no RT work in Python at all:
+torque loop and impedance computation — runs inside franky's C++
+std::thread; franky bindings release the GIL via
+``py::call_guard<py::gil_scoped_release>()``.
 
-* ``move_joints`` updates the impedance tracking reference via
-  ``JointImpedanceTrackingMotion``.  The C++ control thread
-  continuously computes joint torques to track the latest reference
-  at 1 kHz — no trajectory re-planning on each call, so streaming
-  GELLO joint targets at 1 kHz produces smooth, buzz-free motion.
-* ``reset_joint`` uses a synchronous ``JointMotion`` for blocking
-  resets (env ``reset()`` semantics).
-* ``get_state`` calls ``robot.read_once()`` on demand; there is no
-  background state thread fighting for the GIL with Ray dispatch.
+Torque law used by ``JointImpedanceTrackingMotion``
+(franky ``src/motion/joint_impedance_motion.cpp``)::
+
+    τ = Kq·(q_ref − q) + Kqd·(dq_ref − dq) + coriolis + τ_ff
+    τ ← saturateTorqueRate(τ, τ_prev, max_delta_tau)
+
+Gains/collision thresholds below mirror polymetis production
+(``fairo/polymetis/polymetis/conf/robot_client/franka_hardware.yaml``):
+``default_Kq=[40,30,50,25,35,25,10]`` with ``default_Kqd=[4,6,5,5,3,2,1]``
+and uniform 40 Nm/N collision thresholds.  We track the pure-joint
+``JointImpedanceControl`` (``adaptive=False``) branch of polymetis
+because franky has no ``HybridJointImpedanceControl`` (no
+``Kp_eff = Jᵀ Kx J + Kq`` path).
 
 See ``requirements/embodied/franky_install.md`` for the PREEMPT_RT kernel / CPU governor /
 rtprio limits that must be set before this controller will behave
@@ -38,6 +41,7 @@ deterministically.
 import ctypes
 import ctypes.util
 import os
+import time
 from typing import Optional
 
 import numpy as np
@@ -55,17 +59,26 @@ JOINT_LIMITS_LOWER = np.array(
 )
 JOINT_LIMITS_UPPER = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973])
 
-# Collision thresholds (Nm / N) — conservative defaults that let
-# deliberate streaming moves through without tripping reflexes.
-_DEFAULT_TORQUE_THRESHOLD = [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
-_DEFAULT_FORCE_THRESHOLD = [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+# Joint velocity limits (rad/s), Franka hard limits minus 0.1 rad/s
+# margin — same figures polymetis uses.  Used to clamp dq feedforward.
+JOINT_VEL_LIMITS = np.array([2.075, 2.075, 2.075, 2.075, 2.51, 2.51, 2.51])
 
-# Joint impedance (Nm/rad).  Lower than libfranka's defaults on joints
-# 5-7 so small command noise from a 10 Hz upstream doesn't translate
-# into audible buzz.  Tune via reconfigure_compliance_params at runtime.
-_DEFAULT_JOINT_IMPEDANCE = [400.0, 400.0, 400.0, 400.0, 200.0, 100.0, 40.0]
+# Collision thresholds (Nm / N) — polymetis defaults.
+_DEFAULT_TORQUE_THRESHOLD = [40.0] * 7
+_DEFAULT_FORCE_THRESHOLD = [40.0] * 6
 
-_DEFAULT_DYNAMICS_FACTOR = 0.15
+# Joint impedance PD gains (Nm/rad, Nms/rad) — polymetis default_Kq/Kqd.
+_DEFAULT_JOINT_STIFFNESS = [40.0, 30.0, 50.0, 25.0, 35.0, 25.0, 10.0]
+_DEFAULT_JOINT_DAMPING = [4.0, 6.0, 5.0, 5.0, 3.0, 2.0, 1.0]
+
+# Global dynamics factor scales JointMotion/CartesianMotion planned
+# moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
+# the torque-mode impedance tracker.
+_DEFAULT_DYNAMICS_FACTOR = 0.3
+
+# Minimum dt for dq feedforward.  Guards against divide-by-zero when
+# two move_joints calls land in the same millisecond.
+_DQ_MIN_DT_S = 1e-3
 
 # Real-time priority for the Python main/dispatch thread.  80 is a
 # polite high — leaves headroom for kernel threads (>=90).
@@ -131,9 +144,8 @@ class FrankyController(Worker):
         self._robot.recover_from_errors()
         self._robot.relative_dynamics_factor = _DEFAULT_DYNAMICS_FACTOR
 
-        # Collision + impedance configuration.  franky exposes a
-        # two-argument ``set_collision_behavior(torque, force)`` that
-        # applies the same threshold to lower/upper.
+        # franky exposes a two-argument ``set_collision_behavior(torque,
+        # force)`` that applies the same threshold to lower/upper.
         try:
             self._robot.set_collision_behavior(
                 _DEFAULT_TORQUE_THRESHOLD,
@@ -142,10 +154,11 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"set_collision_behavior failed: {e}")
 
-        try:
-            self._robot.set_joint_impedance(_DEFAULT_JOINT_IMPEDANCE)
-        except Exception as e:
-            self._logger.warning(f"set_joint_impedance failed: {e}")
+        # Note: libfranka ``set_joint_impedance`` only affects position-
+        # mode moves (our JointMotion reset path).  The torque-mode
+        # impedance tracker reads its own stiffness/damping, so we skip
+        # that call and let libfranka keep its internal defaults for the
+        # reset path.
 
         # ── Gripper (Robotiq Modbus RTU) ──────────────────────────────
         if gripper_type != "robotiq":
@@ -168,13 +181,18 @@ class FrankyController(Worker):
         # Impedance tracking motion handle (lazy-started on first move_joints).
         self._tracker = None
 
+        # Previous commanded target + timestamp, used to derive the
+        # dq feedforward passed to the tracker each move_joints call.
+        self._prev_target_q: Optional[np.ndarray] = None
+        self._prev_target_ts: Optional[float] = None
+
         # Cached gripper state (read on get_state, not on every RT tick).
         self._cached_gripper_position: float = 0.0
         self._cached_gripper_open: bool = True
 
         self._logger.info(
             f"FrankyController connected to robot at {robot_ip} "
-            f"(impedance={_DEFAULT_JOINT_IMPEDANCE}, "
+            f"(Kq={_DEFAULT_JOINT_STIFFNESS}, Kqd={_DEFAULT_JOINT_DAMPING}, "
             f"dynamics_factor={_DEFAULT_DYNAMICS_FACTOR})"
         )
 
@@ -348,29 +366,27 @@ class FrankyController(Worker):
     def reconfigure_compliance_params(self, params: dict[str, float]):
         """Apply runtime joint impedance updates.
 
-        Accepts a dict with optional ``"Kq"`` (stiffness) and ``"Dq"``
-        (damping) keys, each mapping to a list of 7 values (Nm/rad or
-        Nms/rad).  If a tracker is active, gains are updated via the
-        tracker's exponential interpolation; otherwise falls back to
-        ``robot.set_joint_impedance``.
+        Accepts a dict with optional ``"Kq"`` (stiffness, Nm/rad) and
+        ``"Kqd"`` (damping, Nms/rad) keys, each a 7-element list.
+        Any other keys (e.g. the Cartesian compliance dict from the
+        legacy franka_controller config) are silently ignored so the
+        same reset hook works for both controllers.  When a tracker is
+        active, gains are smoothed via its exponential interpolation.
         """
         Kq = params.get("Kq", None)
-        Dq = params.get("Dq", None)
-        if self._tracker is not None and (Kq is not None or Dq is not None):
-            try:
-                self._tracker.set_gains(
-                    stiffness=np.array(Kq) if Kq is not None else None,
-                    damping=np.array(Dq) if Dq is not None else None,
-                )
-                self._logger.info(f"Tracker gains updated: Kq={Kq}, Dq={Dq}")
-            except Exception as e:
-                self._logger.warning(f"Failed to set tracker gains: {e}")
-        elif Kq is not None:
-            try:
-                self._robot.set_joint_impedance(list(Kq))
-                self._logger.info(f"Joint impedance updated: {list(Kq)}")
-            except Exception as e:
-                self._logger.warning(f"Failed to set joint impedance: {e}")
+        Kqd = params.get("Kqd", None)
+        if Kq is None and Kqd is None:
+            return
+        if self._tracker is None:
+            return
+        try:
+            self._tracker.set_gains(
+                stiffness=np.array(Kq, dtype=np.float64) if Kq is not None else None,
+                damping=np.array(Kqd, dtype=np.float64) if Kqd is not None else None,
+            )
+            self._logger.info(f"Tracker gains updated: Kq={Kq}, Kqd={Kqd}")
+        except Exception as e:
+            self._logger.warning(f"Failed to set tracker gains: {e}")
 
     def clear_errors(self):
         """Trigger libfranka's automatic error recovery."""
@@ -405,26 +421,45 @@ class FrankyController(Worker):
 
         self._tracker = self._franky.JointImpedanceTracker(
             self._robot,
-            stiffness=np.array(_DEFAULT_JOINT_IMPEDANCE),
+            stiffness=np.array(_DEFAULT_JOINT_STIFFNESS, dtype=np.float64),
+            damping=np.array(_DEFAULT_JOINT_DAMPING, dtype=np.float64),
+            compensate_coriolis=True,
         )
+        self._prev_target_q = None
+        self._prev_target_ts = None
         self._logger.info("Joint impedance tracking motion started")
 
     def move_joints(self, joint_positions: np.ndarray):
         """Update the impedance tracking reference (non-blocking).
 
-        Updates the target of the active ``JointImpedanceTrackingMotion``.
-        The C++ control thread continuously computes torques to track
-        the reference — no trajectory re-planning per call, so streaming
-        at 1 kHz is smooth and buzz-free.
+        Target velocity feedforward is derived from the last commanded
+        target and elapsed wall time, clamped to Franka's joint
+        velocity limits.  Without it the PD term has to eat all
+        tracking error through the position channel, which produces
+        visible lag and overshoot at the 10 Hz env.step rate even when
+        the direct-stream daemon pushes at 1 kHz.
         """
         assert len(joint_positions) == 7, (
             f"Expected 7 joint positions, got {len(joint_positions)}"
         )
-        q = np.clip(joint_positions, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER).tolist()
+        q = np.clip(
+            np.asarray(joint_positions, dtype=np.float64),
+            JOINT_LIMITS_LOWER,
+            JOINT_LIMITS_UPPER,
+        )
+
+        now = time.perf_counter()
+        if self._prev_target_q is not None and self._prev_target_ts is not None:
+            dt = max(now - self._prev_target_ts, _DQ_MIN_DT_S)
+            dq_ff = np.clip(
+                (q - self._prev_target_q) / dt, -JOINT_VEL_LIMITS, JOINT_VEL_LIMITS
+            )
+        else:
+            dq_ff = None
 
         try:
             self._ensure_tracking_motion()
-            self._tracker.set_target(np.array(q))
+            self._tracker.set_target(q, dq=dq_ff)
         except Exception as e:
             self._logger.warning(f"Joint impedance update failed: {e}")
             self._stop_tracking_motion()
@@ -433,6 +468,10 @@ class FrankyController(Worker):
             except Exception:
                 pass
             self.clear_errors()
+            return
+
+        self._prev_target_q = q
+        self._prev_target_ts = now
 
     def _stop_tracking_motion(self):
         """Stop the impedance tracking motion if active."""
@@ -442,6 +481,8 @@ class FrankyController(Worker):
             except Exception:
                 pass
             self._tracker = None
+        self._prev_target_q = None
+        self._prev_target_ts = None
 
     def reset_joint(self, reset_pos: list[float]):
         """Blocking joint reset — matches env ``reset()`` semantics.
