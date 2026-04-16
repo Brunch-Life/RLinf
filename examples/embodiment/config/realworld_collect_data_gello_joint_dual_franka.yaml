@@ -63,6 +63,11 @@ env:
     use_spacemouse: False
     use_gello: False
     use_gello_joint: True
+    # Keyboard wrapper for manual episode termination during GELLO teleop:
+    #   c = success (reward=+1, done)  → saved
+    #   a = failure (reward=-1, done)  → dropped when only_success=True
+    #   b = neutral (reward=0, continue)
+    keyboard_reward_wrapper: "single_stage"
     # GELLO serial ports — inherited from env/realworld_franka_joint_dual.
     # Override here only if you swap GELLO units for a session.
     left_gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0"
