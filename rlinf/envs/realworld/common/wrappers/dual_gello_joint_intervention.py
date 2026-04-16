@@ -168,9 +168,9 @@ class DualGelloJointIntervention(gym.ActionWrapper):
                     elif is_open_now != prev:
                         try:
                             if is_open_now:
-                                ctrl.open_gripper().wait()
+                                ctrl.open_gripper()
                             else:
-                                ctrl.close_gripper().wait()
+                                ctrl.close_gripper()
                         except Exception:
                             pass
                         self._stream_last_gripper_open[arm_idx] = is_open_now

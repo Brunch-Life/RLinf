@@ -613,12 +613,12 @@ class DualFrankaEnv(gym.Env):
     def _gripper_action(self, ctrl, state: FrankaRobotState, position: float) -> bool:
         threshold = self.config.binary_gripper_threshold
         if position <= -threshold and state.gripper_open:
-            ctrl.close_gripper().wait()
-            time.sleep(0.6)
+            ctrl.close_gripper()
+            state.gripper_open = False
             return True
         elif position >= threshold and not state.gripper_open:
-            ctrl.open_gripper().wait()
-            time.sleep(0.6)
+            ctrl.open_gripper()
+            state.gripper_open = True
             return True
         return False
 
