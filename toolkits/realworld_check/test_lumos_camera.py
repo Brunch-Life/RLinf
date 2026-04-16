@@ -52,7 +52,7 @@ def main():
     parser.add_argument(
         "--height", type=int, default=1280, help="Requested frame height"
     )
-    parser.add_argument("--fps", type=int, default=30, help="Requested camera FPS")
+    parser.add_argument("--fps", type=int, default=15, help="Requested camera FPS")
     parser.add_argument(
         "--exposure",
         type=int,
