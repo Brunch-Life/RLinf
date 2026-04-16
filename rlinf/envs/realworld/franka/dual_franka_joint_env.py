@@ -114,6 +114,12 @@ class DualFrankaJointEnv(DualFrankaEnv):
                 )
             if self.config.camera_type is None:
                 self.config.camera_type = getattr(hw, "camera_type", "zed")
+            if self.config.base_camera_type is None:
+                self.config.base_camera_type = getattr(hw, "base_camera_type", None)
+            if self.config.left_camera_type is None:
+                self.config.left_camera_type = getattr(hw, "left_camera_type", None)
+            if self.config.right_camera_type is None:
+                self.config.right_camera_type = getattr(hw, "right_camera_type", None)
             if self.config.left_gripper_type is None:
                 self.config.left_gripper_type = getattr(
                     hw, "left_gripper_type", "robotiq"

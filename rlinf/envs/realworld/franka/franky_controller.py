@@ -462,7 +462,7 @@ class FrankyController(Worker):
 
         franky = self._franky
         motion = franky.JointMotion(
-            list(reset_pos),
+            franky.JointState(position=np.asarray(reset_pos, dtype=np.float64)),
             reference_type=franky.ReferenceType.Absolute,
         )
         try:

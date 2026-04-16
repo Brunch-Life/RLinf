@@ -26,17 +26,11 @@ cluster:
           # cabled to its own Franka.
           - left_robot_ip: "172.16.0.2"
             right_robot_ip: "172.16.0.2"
-            # Base = D435i third-person (pyrealsense serial).
-            base_camera_serials:
-              - "941322072906"
-            # Left wrist = XVisio vSLAM module streamed as a Lumos V4L2
-            # camera (I420 → BGR); stable /dev/v4l/by-id/ entry.
+            # Single-camera rig: only the left-wrist XVisio vSLAM (Lumos
+            # V4L2, I420 → BGR).  Base third-person camera and right wrist
+            # are intentionally omitted.
             left_camera_serials:
               - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
-            # No right wrist camera for this rig — omit the field entirely
-            # so DualFrankaEnv skips the right-wrist slot.
-            camera_type: realsense
-            base_camera_type: realsense
             left_camera_type: lumos
             left_gripper_type: robotiq
             right_gripper_type: robotiq

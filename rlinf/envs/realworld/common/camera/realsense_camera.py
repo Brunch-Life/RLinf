@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from typing import Optional
 
 import numpy as np
@@ -43,28 +44,60 @@ class RealSenseCamera(BaseCamera):
         self._device = self._device_info[self._serial_number]
         self._enable_depth = camera_info.enable_depth
 
-        self._pipeline = rs.pipeline()
-        self._config = rs.config()
-        self._config.enable_device(self._serial_number)
-        self._config.enable_stream(
-            rs.stream.color,
-            camera_info.resolution[0],
-            camera_info.resolution[1],
-            rs.format.bgr8,
-            camera_info.fps,
-        )
-        if self._enable_depth:
-            self._config.enable_stream(
-                rs.stream.depth,
-                camera_info.resolution[0],
-                camera_info.resolution[1],
-                rs.format.z16,
-                camera_info.fps,
-            )
-        self.profile = self._pipeline.start(self._config)
+        self._rs = rs
+        self._resolution = camera_info.resolution
+        self._fps = camera_info.fps
+
+        # Aborted prior runs can leave the USB endpoint in VIDIOC_S_FMT=EBUSY.
+        # A hardware_reset() + settle sleep clears it; retry once before giving up.
+        try:
+            self.profile = self._start_pipeline()
+        except RuntimeError as exc:
+            if "Device or resource busy" not in str(exc):
+                raise
+            self._device.hardware_reset()
+            time.sleep(3.0)
+            self._refresh_device()
+            self.profile = self._start_pipeline()
 
         # rs.align allows us to perform alignment of depth frames to color frames
         self._align = rs.align(rs.stream.color)
+
+    def _build_config(self):
+        rs = self._rs
+        config = rs.config()
+        config.enable_device(self._serial_number)
+        config.enable_stream(
+            rs.stream.color,
+            self._resolution[0],
+            self._resolution[1],
+            rs.format.bgr8,
+            self._fps,
+        )
+        if self._enable_depth:
+            config.enable_stream(
+                rs.stream.depth,
+                self._resolution[0],
+                self._resolution[1],
+                rs.format.z16,
+                self._fps,
+            )
+        return config
+
+    def _start_pipeline(self):
+        self._pipeline = self._rs.pipeline()
+        self._config = self._build_config()
+        return self._pipeline.start(self._config)
+
+    def _refresh_device(self):
+        # hardware_reset drops the old handle; re-enumerate before retrying.
+        self._device_info = {}
+        for device in self._rs.context().devices:
+            self._device_info[device.get_info(self._rs.camera_info.serial_number)] = (
+                device
+            )
+        if self._serial_number in self._device_info:
+            self._device = self._device_info[self._serial_number]
 
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
         frames = self._pipeline.wait_for_frames()

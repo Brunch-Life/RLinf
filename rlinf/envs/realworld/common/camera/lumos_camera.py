@@ -48,14 +48,17 @@ class LumosCamera(BaseCamera):
         self._cv2 = cv2
 
         if camera_info.enable_depth:
-            raise ValueError(
-                "LumosCamera does not support depth capture via V4L2."
-            )
+            raise ValueError("LumosCamera does not support depth capture via V4L2.")
 
-        self._w, self._h = camera_info.resolution
-        dev_path: Union[str, int] = self._resolve_device_path(
-            camera_info.serial_number
+        self._out_w, self._out_h = camera_info.resolution
+        # XVisio vSLAM only streams YU12 at 640x480, 1280x720, 1280x1280.  Off-
+        # spec resolutions (e.g. 640x640) negotiate successfully but then hang
+        # the driver at select().  Pick the smallest native mode that covers
+        # the request and resize in software.
+        self._native_w, self._native_h = self._pick_native_resolution(
+            self._out_w, self._out_h
         )
+        dev_path: Union[str, int] = self._resolve_device_path(camera_info.serial_number)
 
         self._cap = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
         if not self._cap.isOpened():
@@ -67,8 +70,8 @@ class LumosCamera(BaseCamera):
         self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YU12"))
         # Keep OpenCV from silently reinterpreting the I420 buffer.
         self._cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._w)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._h)
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._native_w)
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._native_h)
         self._cap.set(cv2.CAP_PROP_FPS, camera_info.fps)
         try:
             self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -79,6 +82,18 @@ class LumosCamera(BaseCamera):
             # 1 == manual mode for most V4L2 UVC drivers.
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
             self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
+
+    # XVisio vSLAM enumerates YU12 at 640x480 / 1280x720 / 1280x1280, but in
+    # practice only 1280x1280 streams reliably — the smaller modes negotiate
+    # without error and then starve the V4L2 pipeline (select() timeout).
+    # Always capture at the largest native mode and resize in software.
+    _NATIVE_W = 1280
+    _NATIVE_H = 1280
+
+    @classmethod
+    def _pick_native_resolution(cls, w: int, h: int) -> tuple[int, int]:
+        del w, h
+        return cls._NATIVE_W, cls._NATIVE_H
 
     @staticmethod
     def _resolve_device_path(serial_number: Union[str, int]) -> Union[str, int]:
@@ -102,8 +117,14 @@ class LumosCamera(BaseCamera):
             return False, None
         try:
             # I420 packs Y (H×W) + U (H/2×W/2) + V (H/2×W/2) into a (H*3/2)×W buffer.
-            yuv = np.ascontiguousarray(raw).reshape(self._h * 3 // 2, self._w)
+            yuv = np.ascontiguousarray(raw).reshape(
+                self._native_h * 3 // 2, self._native_w
+            )
             bgr = self._cv2.cvtColor(yuv, self._cv2.COLOR_YUV2BGR_I420)
+            if (self._native_w, self._native_h) != (self._out_w, self._out_h):
+                bgr = self._cv2.resize(
+                    bgr, (self._out_w, self._out_h), interpolation=self._cv2.INTER_AREA
+                )
             return True, bgr
         except Exception:
             return False, None
