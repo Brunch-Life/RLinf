@@ -481,7 +481,6 @@ def main() -> None:
         colour(" Paste this into gello/agents/gello_agent.py PORT_CONFIG_MAP:", "36;1")
     )
     print(colour("─" * 64, "36"))
-    ", ".join(half_pi_label(o) for o in offsets)
     sign_tuple = ", ".join(str(int(s)) for s in signs)
     print(
         f'    "{GELLO_PORT}": DynamixelRobotConfig(\n'

@@ -205,7 +205,6 @@ def _print_home_pose(home: list[float]) -> None:
     print(colour("Alignment HOME pose:", "36;1"))
     for i, v in enumerate(home):
         print(f"  J{i + 1} = {_format_angle(v)}")
-    # Verbal description for operator visual matching
     print()
     print(
         "  Geometric intent: J2 vertical, J4 at right angle (forearm\n"

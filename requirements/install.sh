@@ -6,6 +6,7 @@ TARGET=""
 
 MODEL=""
 ENV_NAME=""
+FRANKA_BACKEND="${FRANKA_BACKEND:-ros}"
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 TEST_BUILD=${TEST_BUILD:-0}
@@ -34,6 +35,14 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
+    --franka-backend <b>   Franka control backend: ros (default) or franky.
+                           Only applies when --env franka.
+                             - ros:     legacy ROS/catkin + serl controllers
+                             - franky:  franky-control pip package with a
+                                        C++ RT thread + Ruckig smoother —
+                                        recommended; requires PREEMPT_RT
+                                        and the system tuning in
+                                        requirements/embodied/franky_install.md
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -78,6 +87,21 @@ parse_args() {
                     exit 1
                 fi
                 ENV_NAME="${2:-}"
+                shift 2
+                ;;
+            --franka-backend)
+                if [ -z "${2:-}" ]; then
+                    echo "--franka-backend requires an argument (ros|franky)." >&2
+                    exit 1
+                fi
+                FRANKA_BACKEND="${2:-}"
+                case "$FRANKA_BACKEND" in
+                    ros|franky) ;;
+                    *)
+                        echo "Invalid --franka-backend: $FRANKA_BACKEND (expected ros|franky)." >&2
+                        exit 1
+                        ;;
+                esac
                 shift 2
                 ;;
             --use-mirror)
@@ -660,12 +684,26 @@ install_env_only() {
     case "$ENV_NAME" in
         franka)
             uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
-            if [ "$SKIP_ROS" -ne 1 ]; then
-                if [ "$NO_ROOT" -eq 0 ]; then
-                    bash $SCRIPT_DIR/embodied/ros_install.sh
-                fi
-                install_franka_env
-            fi
+            case "$FRANKA_BACKEND" in
+                ros)
+                    if [ "$SKIP_ROS" -ne 1 ]; then
+                        if [ "$NO_ROOT" -eq 0 ]; then
+                            bash $SCRIPT_DIR/embodied/ros_install.sh
+                        fi
+                        install_franka_env
+                    fi
+                    ;;
+                franky)
+                    if [ "$NO_ROOT" -eq 0 ]; then
+                        bash $SCRIPT_DIR/embodied/franky_install.sh
+                    fi
+                    install_franka_franky_env
+                    ;;
+                *)
+                    echo "Invalid FRANKA_BACKEND=$FRANKA_BACKEND" >&2
+                    exit 1
+                    ;;
+            esac
             ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
@@ -835,6 +873,52 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_franka_franky_env() {
+    # Franky backend: a C++ RT thread runs robot.control() with Ruckig
+    # inside franky's std::thread, and all pybind11 bindings release the
+    # GIL — no Python RT loop, no GIL contention with Ray actors.  See
+    # rlinf/envs/realworld/franka/franky_controller.py and
+    # requirements/embodied/franky_install.md for details.
+    #
+    # franky-control ships pre-built wheels on PyPI for common Python +
+    # libfranka combinations.  If the wheel matches the host this is a
+    # one-liner; on a mismatched host pip falls back to a source build
+    # that needs libfranka headers + pinocchio (installed by
+    # requirements/embodied/franky_install.sh).
+    uv pip install "franky-control>=0.15.0"
+
+    # If a libfranka build already exists on disk (e.g. under
+    # $VENV_DIR/franka_catkin_ws/libfranka/build), make its .so
+    # discoverable at runtime.  Harmless if the directory doesn't exist.
+    local FRANKA_WS_PATH
+    FRANKA_WS_PATH=$(realpath "$VENV_DIR/franka_catkin_ws" 2>/dev/null || echo "")
+    if [ -n "$FRANKA_WS_PATH" ] && [ -d "$FRANKA_WS_PATH/libfranka/build" ]; then
+        echo "export LD_LIBRARY_PATH=$FRANKA_WS_PATH/libfranka/build:/opt/openrobots/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
+    fi
+
+    cat <<'EOF'
+
+================================================================
+ franky-control installed.
+
+ IMPORTANT: before running the controller, apply the per-boot
+ system tuning listed in requirements/embodied/franky_install.md:
+
+   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > "$g"; done'
+   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+
+ And verify the one-time rtprio/memlock limits:
+
+   ulimit -r   # expected: 99 or unlimited
+   ulimit -l   # expected: unlimited
+
+ Without these, FrankyController will still run but will log
+ "SCHED_FIFO not granted / mlockall failed" and jitter will show
+ up as robot buzz under Ray/GIL load.
+================================================================
+EOF
 }
 
 install_xsquare_turtle2_env() {

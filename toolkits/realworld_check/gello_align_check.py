@@ -89,7 +89,6 @@ def fmt_joint_row(i: int, q_robot: float, q_gello: float) -> str:
     else:
         c = "31"  # red
         status = "❌"
-        math.degrees(wrapped)
         # Operator should turn GELLO BY -wrapped to make q_gello match q_robot
         # i.e. if wrapped > 0, GELLO is ahead of robot, turn GELLO BACK
         direction = -wrapped
