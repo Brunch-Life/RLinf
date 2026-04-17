@@ -289,8 +289,7 @@ class DualFrankaEnv(gym.Env):
         ]
         for info in camera_infos:
             camera = create_camera(info)
-            if not self.config.is_dummy:
-                camera.open()
+            camera.open()
             self._cameras.append(camera)
 
     def _close_cameras(self):
