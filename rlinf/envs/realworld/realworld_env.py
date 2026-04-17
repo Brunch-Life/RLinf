@@ -250,7 +250,10 @@ class RealWorldEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        # ``max_episode_steps: null`` defers truncation to inner wrappers
+        # (e.g. keyboard-gated teleop), otherwise enforce the outer cap.
+        if self.cfg.max_episode_steps is not None:
+            truncations = self.elapsed_steps >= self.cfg.max_episode_steps
 
         obs = self._wrap_obs(raw_obs)
         step_reward = self._calc_step_reward(_reward)

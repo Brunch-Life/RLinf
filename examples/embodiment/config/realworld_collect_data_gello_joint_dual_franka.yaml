@@ -66,6 +66,8 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
+    # Defer truncation entirely to the keyboard wrapper (`c`/`b`).
+    max_episode_steps: null
     no_gripper: False
     ignore_terminations: False
     auto_reset: False

@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -143,6 +143,11 @@ class KeyboardStartEndWrapper(gym.Wrapper):
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
+
+        # Keyboard is the sole terminator in both phases — pre-record must not
+        # auto-reset either, or `_align_to_gello` jerks the arms every 30 s.
+        terminated = False
+        truncated = False
 
         record_reset = False
         event: str | None = None
