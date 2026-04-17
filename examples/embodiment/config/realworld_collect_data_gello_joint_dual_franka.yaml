@@ -26,12 +26,21 @@ cluster:
           # cabled to its own Franka.
           - left_robot_ip: "172.16.0.2"
             right_robot_ip: "172.16.0.2"
-            # Single-camera rig: only the left-wrist XVisio vSLAM (Lumos
-            # V4L2, I420 → BGR).  Base third-person camera and right wrist
-            # are intentionally omitted.
+            # Full three-camera rig:
+            #   - base_0_rgb:       Intel RealSense D435i  (third-person)
+            #   - left_wrist_0_rgb: XVisio vSLAM ...1218   (left Lumos)
+            #   - right_wrist_0_rgb: XVisio vSLAM ...1173  (right Lumos)
+            # RealSense serial is the librealsense device serial reported
+            # by `rs.context().devices`, NOT the /dev/v4l/by-id USB id.
+            base_camera_serials:
+              - "941322072906"
+            base_camera_type: realsense
             left_camera_serials:
               - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
             left_camera_type: lumos
+            right_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
+            right_camera_type: lumos
             left_gripper_type: robotiq
             right_gripper_type: robotiq
             # Robotiq 2F-85 on RS-485 — stable /dev/serial/by-id/ paths so
