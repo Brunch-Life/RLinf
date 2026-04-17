@@ -108,7 +108,24 @@ class KeyboardRewardDoneMultiStageWrapper(BaseKeyboardRewardDoneWrapper):
 
 
 class KeyboardStartEndWrapper(gym.Wrapper):
-    """Gate recording on `a`; end with `b` (fail, -1) or `c` (success, +1)."""
+    """Gate recording on `a`; end with `b` (fail, -1) or `c` (success, +1).
+
+    Uses the listener's lossless press queue (``pop_pressed_keys``) instead of
+    ``get_key``: at 10 Hz step rate a fast tap (<100 ms) often lands entirely
+    between two polls and ``get_key`` never sees it — the queue catches every
+    initial press in the evdev thread.
+
+    Does not print — stdout inside a Ray actor lags the driver terminal via
+    Ray's log monitor.  Events and state are surfaced through ``info`` so the
+    driver-side caller can render realtime output.
+
+    info fields added every step:
+      - ``keyboard_phase``:  ``"pre"`` | ``"rec"``
+      - ``keyboard_event``:  label from the LAST press handled this step —
+            ``"start"`` | ``"restart"`` | ``"end_fail"`` | ``"end_success"``
+            or ``None`` if no relevant press fired.
+      - ``pre_record`` / ``record_reset`` — consumed by CollectEpisode.
+    """
 
     def __init__(self, env: gym.Env):
         super().__init__(env)
@@ -117,6 +134,9 @@ class KeyboardStartEndWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         self._recording = False
+        # Drain any presses queued during the reset gap so they can't leak
+        # into the next episode.
+        self.listener.pop_pressed_keys()
         return self.env.reset(seed=seed, options=options)
 
     def step(
@@ -124,24 +144,28 @@ class KeyboardStartEndWrapper(gym.Wrapper):
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        key = self.listener.get_key()
-        if key is not None:
-            print(f"Key pressed: {key}")
-
         record_reset = False
-        if key == "a":
-            # `a` also re-presses to rebase mid-warmup without touching hardware.
-            self._recording = True
-            record_reset = True
-        elif key == "b" and self._recording:
-            reward = -1.0
-            terminated = True
-        elif key == "c" and self._recording:
-            reward = 1.0
-            terminated = True
+        event: str | None = None
+        for key in self.listener.pop_pressed_keys():
+            if key == "a":
+                event = "restart" if self._recording else "start"
+                self._recording = True
+                record_reset = True
+            elif key == "b" and self._recording:
+                event = "end_fail"
+                reward = -1.0
+                terminated = True
+                break
+            elif key == "c" and self._recording:
+                event = "end_success"
+                reward = 1.0
+                terminated = True
+                break
 
         if not isinstance(info, dict):
             info = {}
         info["pre_record"] = not self._recording
         info["record_reset"] = record_reset
+        info["keyboard_phase"] = "rec" if self._recording else "pre"
+        info["keyboard_event"] = event
         return obs, reward, terminated, truncated, info

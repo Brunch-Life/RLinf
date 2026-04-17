@@ -14,6 +14,7 @@
 
 import os
 import threading
+from collections import deque
 
 
 class KeyboardListener:
@@ -36,6 +37,11 @@ class KeyboardListener:
 
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
+        # Edge-press queue: the evdev thread enqueues every *initial* press
+        # (value==1, not autorepeat==2) so consumers polling at a low rate can
+        # still catch sub-period taps that would be missed by ``get_key()``
+        # (which only reports the currently-held key).
+        self._press_events: deque[str] = deque()
         self.device = self._open_keyboard_device()
 
         self.listener = threading.Thread(
@@ -132,7 +138,14 @@ class KeyboardListener:
                 if key is None:
                     continue
 
-                if event.value in (1, 2):
+                if event.value == 1:
+                    # Initial press only — autorepeat (value==2) does not
+                    # re-enqueue, so holding a key for a second doesn't flood
+                    # the queue.
+                    with self.state_lock:
+                        self.latest_data["key"] = key
+                        self._press_events.append(key)
+                elif event.value == 2:
                     with self.state_lock:
                         self.latest_data["key"] = key
                 elif event.value == 0:
@@ -159,6 +172,22 @@ class KeyboardListener:
         return key_name.lower()
 
     def get_key(self) -> str | None:
-        """Returns the latest key pressed."""
+        """Return the currently-held key, or None.
+
+        Only reflects held state; fast taps may be missed between polls.
+        Use :meth:`pop_pressed_keys` when you need lossless press detection.
+        """
         with self.state_lock:
             return self.latest_data["key"]
+
+    def pop_pressed_keys(self) -> list[str]:
+        """Drain and return every key that has seen an initial press since the
+        last call.  Autorepeat is collapsed to a single entry per physical
+        keystroke.  Thread-safe and non-blocking.
+        """
+        with self.state_lock:
+            if not self._press_events:
+                return []
+            pressed = list(self._press_events)
+            self._press_events.clear()
+            return pressed
