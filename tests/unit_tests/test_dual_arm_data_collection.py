@@ -12,32 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the dual-arm data collection pipeline.
-
-These tests cover the schema and data flow added to support dual-arm
-Franka environments end-to-end:
-
-* ``CollectEpisode._expand_multi_view_images`` fan-out of multi-view
-  wrist cameras into per-view frame keys (``wrist_image-0``,
-  ``wrist_image-1``).
-* ``CollectEpisode._collect_image_keys`` schema detection for the
-  ``LeRobotDatasetWriter.create()`` call.
-* ``CollectEpisode`` integration that auto-detects wrist images from
-  the obs dict and forwards them to the writer as correctly keyed
-  per-step frame dicts.
-* ``RealWorldEnv._wrap_obs`` that puts the frame named by
-  ``main_image_key`` into ``main_images`` and stacks the remaining
-  camera frames (alphabetical) into ``extra_view_images`` — the same
-  code path for single- and dual-arm envs.
-
-Single-arm regression checks live alongside each test to ensure that the
-default path produces frame dicts identical to the legacy single-arm
-output.
-
-Run with::
-
-    python -m pytest tests/unit_tests/test_dual_arm_data_collection.py -v
-"""
+"""Unit tests for the dual-arm data collection pipeline."""
 
 from __future__ import annotations
 
@@ -48,10 +23,6 @@ import numpy as np
 import pytest
 
 from rlinf.envs.wrappers import CollectEpisode
-
-# --------------------------------------------------------------------- #
-#  _expand_multi_view_images unit tests                                    #
-# --------------------------------------------------------------------- #
 
 
 def test_expand_multi_view_images_none():
@@ -100,11 +71,6 @@ def test_expand_multi_view_images_triple_view():
     }
 
 
-# --------------------------------------------------------------------- #
-#  _collect_image_keys unit tests                                          #
-# --------------------------------------------------------------------- #
-
-
 def test_collect_image_keys_single_wrist():
     """Single wrist view produces {wrist_image: shape}."""
     frame = {
@@ -150,11 +116,6 @@ def test_collect_image_keys_ignores_non_3d():
     assert result == {"wrist_image-0": (64, 64, 3)}
 
 
-# --------------------------------------------------------------------- #
-#  Dummy environments                                                      #
-# --------------------------------------------------------------------- #
-
-
 class _SingleArmDummyEnv(gym.Env):
     """Mimics what RealWorldEnv._wrap_obs emits for single-arm Franka."""
 
@@ -194,13 +155,7 @@ class _SingleArmDummyEnv(gym.Env):
 
 
 class _DualArmDummyEnv(gym.Env):
-    """Mimics a dual-arm obs dict with a stacked ``wrist_images`` tensor.
-
-    This shape is what sim envs (libero, roboverse, …) emit and what the
-    LeRobot CollectEpisode pipeline is expected to fan out — it is *not*
-    the shape RealWorldEnv produces for a dual-arm Franka: realworld
-    stacks secondary views into ``extra_view_images`` instead.
-    """
+    """Sim-style dual-arm obs with a stacked ``wrist_images`` tensor (not the realworld shape)."""
 
     def __init__(self) -> None:
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(14,), dtype=np.float32)
@@ -242,11 +197,6 @@ class _DualArmDummyEnv(gym.Env):
             False,
             {"success_once": terminated},
         )
-
-
-# --------------------------------------------------------------------- #
-#  CollectEpisode frame-format tests (no lerobot dependency)               #
-# --------------------------------------------------------------------- #
 
 
 def test_collect_episode_single_arm_frame_format(tmp_path):
@@ -369,11 +319,6 @@ def test_collect_episode_dual_arm_image_content(tmp_path):
     )
 
     env.close()
-
-
-# --------------------------------------------------------------------- #
-#  RealWorldEnv._wrap_obs dual branch (uses dummy DualFrankaEnv)           #
-# --------------------------------------------------------------------- #
 
 
 @pytest.fixture()

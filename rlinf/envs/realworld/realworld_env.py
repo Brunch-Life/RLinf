@@ -221,17 +221,10 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate(full_states, axis=-1)
         obs["states"] = full_states
 
-        # Process images: main_image_key picks the primary image; everything
-        # else is stacked alphabetically into extra_view_images. For dual-arm
-        # envs, set main_image_key to the preferred wrist camera (e.g.
-        # "left_wrist_0_rgb") and the remaining views flow into extra.
         frames = raw_obs["frames"]
         if self.main_image_key not in frames:
-            available_keys = list(frames.keys())
             raise KeyError(
-                f"main_image_key '{self.main_image_key}' not found in raw_obs['frames']. "
-                f"Available keys: {available_keys}. "
-                f"Please set 'main_image_key' in your env config to one of the available keys."
+                f"main_image_key {self.main_image_key!r} not in {list(frames)}"
             )
         obs["main_images"] = frames[self.main_image_key]
         raw_images = OrderedDict(sorted(frames.items()))

@@ -93,9 +93,7 @@ def _apply_common_wrappers(
             right_port = cfg.get("right_gello_port", None)
             if left_port is None or right_port is None:
                 raise ValueError(
-                    "use_gello=True on a dual-arm env requires both "
-                    "left_gello_port and right_gello_port to be set in "
-                    "the env config."
+                    "dual-arm use_gello requires left_gello_port and right_gello_port"
                 )
             env = DualGelloIntervention(
                 env,
@@ -106,11 +104,7 @@ def _apply_common_wrappers(
         else:
             gello_port = cfg.get("gello_port", None)
             if gello_port is None:
-                raise ValueError(
-                    "use_gello is True but gello_port is not set in the env config. "
-                    "Please set env.eval.gello_port (or env.train.gello_port) to the "
-                    "serial port of your GELLO device."
-                )
+                raise ValueError("use_gello requires gello_port")
             env = GelloIntervention(
                 env, port=gello_port, gripper_enabled=gripper_enabled
             )

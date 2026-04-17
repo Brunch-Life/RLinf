@@ -207,18 +207,8 @@ class DualFrankaEnv(gym.Env):
         if hasattr(self, "camera_player"):
             self.camera_player.stop()
 
-    # ------------------------------------------------------------------ #
-    #  Hardware setup                                                      #
-    # ------------------------------------------------------------------ #
-
     def _all_camera_specs(self) -> list[tuple[str, str]]:
-        """Return ``[(camera_name, serial), ...]`` with pi0/pi0.5-aligned names.
-
-        Base (third-person) cameras are named ``base_0_rgb``, ``base_1_rgb``,
-        …; each arm's wrist cameras use ``left_wrist_0_rgb``,
-        ``right_wrist_0_rgb``, etc.  Downstream observation dicts can be fed
-        to a pi0/pi0.5 policy without any key remapping.
-        """
+        """Camera specs as ``[(name, serial), ...]`` with pi0-aligned names."""
         specs: list[tuple[str, str]] = []
         if self.config.base_camera_serials:
             for j, serial in enumerate(self.config.base_camera_serials):
@@ -303,10 +293,6 @@ class DualFrankaEnv(gym.Env):
             gripper_connection=self.config.right_gripper_connection,
         )
 
-    # ------------------------------------------------------------------ #
-    #  Cameras                                                             #
-    # ------------------------------------------------------------------ #
-
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
         camera_type = self.config.camera_type or "zed"
@@ -369,10 +355,6 @@ class DualFrankaEnv(gym.Env):
         raise RuntimeError(
             f"Cameras failed to produce frames after {_MAX_CAMERA_RETRIES} attempts."
         )
-
-    # ------------------------------------------------------------------ #
-    #  Action / observation spaces                                         #
-    # ------------------------------------------------------------------ #
 
     def _init_action_obs_spaces(self):
         # Per-arm safety boxes
@@ -439,17 +421,7 @@ class DualFrankaEnv(gym.Env):
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
-    # ------------------------------------------------------------------ #
-    #  Step / reset                                                        #
-    # ------------------------------------------------------------------ #
-
     def step(self, action: np.ndarray):
-        """Execute one environment step with a 14-dim action.
-
-        Args:
-            action: ``[left_xyz(3), left_rpy(3), left_grip(1),
-                       right_xyz(3), right_rpy(3), right_grip(1)]``
-        """
         start_time = time.time()
         action = np.clip(action, self.action_space.low, self.action_space.high)
         actions = action.reshape(NUM_ARMS, ACTION_DIM_PER_ARM)
@@ -534,10 +506,6 @@ class DualFrankaEnv(gym.Env):
         self._right_state = right_st_f.wait()[0]
         return self._get_observation(), {}
 
-    # ------------------------------------------------------------------ #
-    #  Public helpers for wrapper access                                    #
-    # ------------------------------------------------------------------ #
-
     def get_tcp_pose(self) -> np.ndarray:
         """Return concatenated TCP poses ``(14,)`` for both arms."""
         left_st_f = self._left_ctrl.get_state()
@@ -569,10 +537,6 @@ class DualFrankaEnv(gym.Env):
                 )
             )
         return np.concatenate(poses)
-
-    # ------------------------------------------------------------------ #
-    #  Internal helpers                                                    #
-    # ------------------------------------------------------------------ #
 
     def _clip_position_to_safety_box(
         self, position: np.ndarray, arm_idx: int
