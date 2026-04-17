@@ -434,7 +434,7 @@ class DualFrankaEnv(gym.Env):
                         name: gym.spaces.Box(
                             0,
                             255,
-                            shape=(128, 128, 3),
+                            shape=(224, 224, 3),
                             dtype=np.uint8,
                         )
                         for name, _, _ in camera_specs
