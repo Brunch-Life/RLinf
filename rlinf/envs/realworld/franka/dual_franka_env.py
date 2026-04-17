@@ -42,11 +42,10 @@ from .franka_robot_state import FrankaRobotState
 from .utils import clip_euler_to_target_window, quat_slerp
 
 NUM_ARMS = 2
-ACTION_DIM_PER_ARM = 7  # xyz_delta(3) + rpy_delta(3) + gripper(1)
-TCP_POSE_DIM = 7  # xyz(3) + quat(4)
+ACTION_DIM_PER_ARM = 7
+TCP_POSE_DIM = 7
 TCP_VEL_DIM = 6
-# Offset added to env_idx for the right arm controller to avoid Ray actor name
-# collisions when both controllers are on the same node.
+# Keeps right-arm Ray actor names distinct from left when both live on one node.
 _RIGHT_ARM_ENV_IDX_OFFSET = 1000
 _MAX_CAMERA_RETRIES = 3
 
@@ -210,10 +209,6 @@ class DualFrankaEnv(gym.Env):
         if hasattr(self, "camera_player"):
             self.camera_player.stop()
 
-    # ------------------------------------------------------------------ #
-    #  Hardware setup                                                      #
-    # ------------------------------------------------------------------ #
-
     def _all_camera_specs(self) -> list[tuple[str, str, str]]:
         """Return ``[(camera_name, serial, camera_type), ...]`` with
         pi0/pi0.5-aligned names.
@@ -322,10 +317,6 @@ class DualFrankaEnv(gym.Env):
             gripper_connection=self.config.right_gripper_connection,
         )
 
-    # ------------------------------------------------------------------ #
-    #  Cameras                                                             #
-    # ------------------------------------------------------------------ #
-
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
         camera_infos = [
@@ -387,10 +378,6 @@ class DualFrankaEnv(gym.Env):
         raise RuntimeError(
             f"Cameras failed to produce frames after {_MAX_CAMERA_RETRIES} attempts."
         )
-
-    # ------------------------------------------------------------------ #
-    #  Action / observation spaces                                         #
-    # ------------------------------------------------------------------ #
 
     def _init_action_obs_spaces(self):
         # Per-arm safety boxes
@@ -456,10 +443,6 @@ class DualFrankaEnv(gym.Env):
             }
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
-
-    # ------------------------------------------------------------------ #
-    #  Step / reset                                                        #
-    # ------------------------------------------------------------------ #
 
     def step(self, action: np.ndarray):
         """Execute one environment step with a 14-dim action.
@@ -552,10 +535,6 @@ class DualFrankaEnv(gym.Env):
         self._right_state = right_st_f.wait()[0]
         return self._get_observation(), {}
 
-    # ------------------------------------------------------------------ #
-    #  Public helpers for wrapper access                                    #
-    # ------------------------------------------------------------------ #
-
     def get_tcp_pose(self) -> np.ndarray:
         """Return concatenated TCP poses ``(14,)`` for both arms."""
         left_st_f = self._left_ctrl.get_state()
@@ -587,10 +566,6 @@ class DualFrankaEnv(gym.Env):
                 )
             )
         return np.concatenate(poses)
-
-    # ------------------------------------------------------------------ #
-    #  Internal helpers                                                    #
-    # ------------------------------------------------------------------ #
 
     def _clip_position_to_safety_box(
         self, position: np.ndarray, arm_idx: int

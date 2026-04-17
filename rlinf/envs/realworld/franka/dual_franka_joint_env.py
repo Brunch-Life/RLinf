@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-arm Franka environment with joint-space actions via Franky.
-
-Parallels :class:`rlinf.envs.realworld.franka.franka_joint_env.FrankaJointEnv`
-but for two arms.  Subclasses :class:`DualFrankaEnv` to reuse camera setup,
-observation images, and helper logic; overrides hardware setup, action /
-observation spaces, step and reset to operate in joint space via
-:class:`FrankyController`.
-"""
+"""Dual-arm Franka environment with joint-space control via Franky."""
 
 from __future__ import annotations
 
@@ -43,7 +36,7 @@ from .dual_franka_env import (
 from .franky_controller import JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
 
 JOINT_DIM_PER_ARM = 7
-ACTION_DIM_PER_ARM = 8  # joints(7) + gripper(1)
+ACTION_DIM_PER_ARM = 8
 
 
 @dataclass
@@ -84,10 +77,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
     """
 
     CONFIG_CLS: type[DualFrankaJointRobotConfig] = DualFrankaJointRobotConfig
-
-    # ------------------------------------------------------------------ #
-    #  Hardware setup                                                      #
-    # ------------------------------------------------------------------ #
 
     def _setup_hardware(self):
         """Launch two FrankyController Ray actors (one per arm)."""
@@ -163,10 +152,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
             gripper_connection=self.config.right_gripper_connection,
         )
 
-    # ------------------------------------------------------------------ #
-    #  Startup / reset: no Cartesian pre-positioning                       #
-    # ------------------------------------------------------------------ #
-
     def _interpolate_move_both(self, target_poses: np.ndarray, timeout: float = 1.5):
         """Neutralise the parent's Cartesian reset.
 
@@ -200,10 +185,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
         for f in futures:
             f.wait()
         time.sleep(0.5)
-
-    # ------------------------------------------------------------------ #
-    #  Action / observation spaces                                         #
-    # ------------------------------------------------------------------ #
 
     def _init_action_obs_spaces(self):
         # Per-arm Cartesian safety boxes — kept for informational clipping
@@ -279,10 +260,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
-    # ------------------------------------------------------------------ #
-    #  Step                                                                #
-    # ------------------------------------------------------------------ #
-
     def step(self, action: np.ndarray):
         """Take a 16D joint-space step.
 
@@ -347,10 +324,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
         )
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, reward, terminated, truncated, {}
-
-    # ------------------------------------------------------------------ #
-    #  Helpers                                                             #
-    # ------------------------------------------------------------------ #
 
     def _clip_joints_to_limits(self, q: np.ndarray) -> np.ndarray:
         return np.clip(

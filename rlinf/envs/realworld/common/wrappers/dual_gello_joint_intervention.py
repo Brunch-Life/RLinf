@@ -14,20 +14,10 @@
 
 """Dual-arm GELLO intervention wrapper for joint-space control.
 
-Parallels :class:`rlinf.envs.realworld.common.wrappers.gello_joint_intervention.GelloJointIntervention`
-for :class:`DualFrankaJointEnv`.  Two :class:`GelloJointExpert` devices
-(one per arm) drive the policy action directly in joint space.
-
-Two streaming modes:
-
-* **step-gated** (default): ``action()`` returns the concatenated GELLO
-  joints and env ``step()`` forwards them via ``move_joints`` at
-  ``step_frequency`` Hz.
-* **direct-stream** (``direct_stream=True``): a daemon thread reads both
-  GELLOs at ~1 kHz and pushes joint targets straight to each controller,
-  bypassing env.step's rate gate.  Pair with
-  ``DualFrankaJointRobotConfig.teleop_direct_stream=True`` so env.step
-  does NOT also send move_joints.
+Supports step-gated mode (action forwarded by env.step) and direct-stream
+mode (daemon thread pushes joint targets to each controller at ~1 kHz,
+bypassing env.step's rate gate — pair with
+``DualFrankaJointRobotConfig.teleop_direct_stream=True``).
 """
 
 from __future__ import annotations
@@ -82,7 +72,6 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         self.right_expert = GelloJointExpert(port=right_port)
         self.last_intervene = 0.0
 
-        # ── direct-stream daemon ────────────────────────────────────
         self._direct_stream = direct_stream
         self._stream_period = stream_period
         self._stream_thread: threading.Thread | None = None
@@ -90,10 +79,6 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         self._stream_last_gripper_open: list[bool | None] = [None, None]
         self._stream_paused = threading.Event()
         self._stream_paused.set()  # starts unpaused
-
-    # ═══════════════════════════════════════════════════════════════
-    #  Direct-stream daemon — bypasses env.step's step-rate gate
-    # ═══════════════════════════════════════════════════════════════
 
     def _start_stream_thread(self) -> None:
         """Spawn the 1 kHz GELLO → controllers pump."""
@@ -179,10 +164,6 @@ class DualGelloJointIntervention(gym.ActionWrapper):
             sleep_for = period - elapsed
             if sleep_for > 0:
                 time.sleep(sleep_for)
-
-    # ═══════════════════════════════════════════════════════════════
-    #  Action override (policy buffer path — runs at env step rate)
-    # ═══════════════════════════════════════════════════════════════
 
     def _get_current_joint_positions(self) -> np.ndarray:
         """Return cached ``(2, 7)`` joint positions from the env."""

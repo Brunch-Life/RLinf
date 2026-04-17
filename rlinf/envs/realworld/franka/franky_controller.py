@@ -134,12 +134,9 @@ class FrankyController(Worker):
         self._robot_ip = robot_ip
         self._gripper_type = gripper_type
 
-        # ── Lock memory + raise priority BEFORE touching the robot ──
-        # Done first so any allocation during the franky import is
-        # already under the mlockall umbrella.
+        # Must precede the franky import so mlockall catches its allocations.
         self._apply_rt_hardening()
 
-        # ── Robot connection ────────────────────────────────────────
         import franky
 
         self._franky = franky
@@ -163,7 +160,6 @@ class FrankyController(Worker):
         # that call and let libfranka keep its internal defaults for the
         # reset path.
 
-        # ── Gripper (Robotiq Modbus RTU) ──────────────────────────────
         if gripper_type != "robotiq":
             raise ValueError(
                 f"Unsupported gripper_type={gripper_type!r} for "
@@ -199,10 +195,6 @@ class FrankyController(Worker):
             f"dynamics_factor={_DEFAULT_DYNAMICS_FACTOR})"
         )
 
-    # ═══════════════════════════════════════════════════════════════
-    #  Real-time hardening (Linux PREEMPT_RT scheduling + mlockall)
-    # ═══════════════════════════════════════════════════════════════
-
     def _apply_rt_hardening(self) -> None:
         """Lock memory, raise priority, pin affinity.
 
@@ -211,7 +203,6 @@ class FrankyController(Worker):
         these calls need; without them the calls are no-ops (the
         controller still works, just with normal OS scheduling).
         """
-        # --- mlockall ---------------------------------------------------
         libc_name = ctypes.util.find_library("c") or "libc.so.6"
         try:
             libc = ctypes.CDLL(libc_name, use_errno=True)
@@ -226,7 +217,6 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"mlockall unavailable: {e}")
 
-        # --- SCHED_FIFO -------------------------------------------------
         try:
             param = os.sched_param(_RT_PRIORITY)
             os.sched_setscheduler(0, os.SCHED_FIFO, param)
@@ -242,11 +232,7 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"SCHED_FIFO setup failed: {e}")
 
-        # --- CPU affinity ----------------------------------------------
-        # Leave CPUs 2-3 free for franky's C++ control thread and its
-        # network interrupts; pin everything else Python touches to
-        # the remaining cores.  On machines with <4 cores this is a
-        # no-op.
+        # Reserve CPUs 2-3 for franky's RT control thread + NIC IRQs.
         try:
             ncpu = os.cpu_count() or 1
             if ncpu >= 6:
@@ -258,10 +244,6 @@ class FrankyController(Worker):
                 )
         except Exception as e:
             self._logger.warning(f"sched_setaffinity failed: {e}")
-
-    # ═══════════════════════════════════════════════════════════════
-    #  State
-    # ═══════════════════════════════════════════════════════════════
 
     def _compute_full_state(self, robot_state) -> FrankaRobotState:
         """Parse a ``franky.RobotState`` into our ``FrankaRobotState``.
@@ -315,10 +297,6 @@ class FrankyController(Worker):
         s.arm_jacobian = jacobian
         s.tcp_vel = tcp_vel
         return s
-
-    # ═══════════════════════════════════════════════════════════════
-    #  Public API
-    # ═══════════════════════════════════════════════════════════════
 
     def is_robot_up(self) -> bool:
         """Check robot link + gripper handshake.
@@ -397,10 +375,6 @@ class FrankyController(Worker):
             self._robot.recover_from_errors()
         except Exception as e:
             self._logger.warning(f"Error recovery failed: {e}")
-
-    # ═══════════════════════════════════════════════════════════════
-    #  Joint control (impedance tracking — buzz-free streaming)
-    # ═══════════════════════════════════════════════════════════════
 
     def _ensure_tracking_motion(self):
         """Start the impedance tracking motion if not already active.
@@ -521,10 +495,6 @@ class FrankyController(Worker):
         except Exception:
             pass
 
-    # ═══════════════════════════════════════════════════════════════
-    #  Cartesian motion (non-blocking — for env reset interpolation)
-    # ═══════════════════════════════════════════════════════════════
-
     def move_arm(self, position: np.ndarray):
         """Submit a Cartesian target (non-blocking).
 
@@ -559,10 +529,6 @@ class FrankyController(Worker):
                 pass
             self.clear_errors()
 
-    # ═══════════════════════════════════════════════════════════════
-    #  Gripper (delegates to self._gripper)
-    # ═══════════════════════════════════════════════════════════════
-
     def open_gripper(self):
         self._gripper.open(speed=1.0)
         self.log_debug("Open gripper")
@@ -577,10 +543,6 @@ class FrankyController(Worker):
         )
         self._gripper.move(position, speed)
         self.log_debug(f"Move gripper to position: {position}")
-
-    # ═══════════════════════════════════════════════════════════════
-    #  Lifecycle
-    # ═══════════════════════════════════════════════════════════════
 
     def cleanup(self):
         """Stop tracking motion, join in-flight motion, release gripper."""

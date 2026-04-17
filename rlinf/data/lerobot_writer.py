@@ -21,23 +21,7 @@ from rlinf.utils.logging import get_logger
 
 
 class LeRobotDatasetWriter:
-    """
-    Wrapper for LeRobotDataset that provides a simplified interface for writing episodes.
-
-    Usage:
-        writer = LeRobotDatasetWriter()
-        writer.create(
-            repo_id="my-dataset",
-            robot_type="franka_panda",
-            fps=5,
-            features={...}
-        )
-
-        for episode_data in episodes:
-            writer.add_episode(episode_data)
-
-        writer.finalize(push_to_hub=False)
-    """
+    """Simplified LeRobotDataset wrapper for writing episodes."""
 
     def __init__(self):
         """Initialize the writer."""

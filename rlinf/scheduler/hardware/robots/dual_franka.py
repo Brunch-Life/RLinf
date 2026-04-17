@@ -37,13 +37,7 @@ class DualFrankaHWInfo(HardwareInfo):
 
 @Hardware.register()
 class DualFrankaRobot(Hardware):
-    """Hardware policy for dual-arm Franka robotic systems.
-
-    Both arms are managed by a single :class:`DualFrankaEnv` instance
-    running on the ``node_rank`` specified in the config.  Each arm's
-    :class:`FrankaController` can optionally be placed on a different
-    node via ``left_controller_node_rank`` / ``right_controller_node_rank``.
-    """
+    """Hardware policy for dual-arm Franka robotic systems."""
 
     HW_TYPE = "DualFranka"
 
@@ -101,65 +95,33 @@ class DualFrankaRobot(Hardware):
 class DualFrankaConfig(HardwareConfig):
     """Configuration for a dual-arm Franka robotic system.
 
-    The env process (cameras + teleop) always runs on the node indicated
-    by :attr:`node_rank`.  Each arm's low-level controller can be placed
-    on a separate node via the ``*_controller_node_rank`` fields — this
-    is the key mechanism for *Option D* (main controller + remote arm).
+    The env process runs on :attr:`node_rank`; each arm's low-level
+    controller can be placed on a separate node via the
+    ``*_controller_node_rank`` fields. Per-slot ``*_camera_type`` fields
+    fall back to :attr:`camera_type` when unset.
     """
 
     left_robot_ip: str = "0.0.0.0"
-    """IP address of the left Franka arm."""
-
     right_robot_ip: str = "0.0.0.0"
-    """IP address of the right Franka arm."""
 
     left_camera_serials: Optional[list[str]] = None
-    """Camera serial numbers for the left arm's wrist camera(s)."""
-
     right_camera_serials: Optional[list[str]] = None
-    """Camera serial numbers for the right arm's wrist camera(s)."""
-
     base_camera_serials: Optional[list[str]] = None
-    """Camera serial numbers for the base (third-person) camera(s)."""
 
     camera_type: str = "zed"
-    """Default camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``.
-    Used as a fallback when the per-slot ``*_camera_type`` fields are unset."""
-
     base_camera_type: Optional[str] = None
-    """Camera backend override for base (third-person) cameras. Falls back
-    to :attr:`camera_type` when ``None``."""
-
     left_camera_type: Optional[str] = None
-    """Camera backend override for the left-arm wrist cameras. Falls back
-    to :attr:`camera_type` when ``None``."""
-
     right_camera_type: Optional[str] = None
-    """Camera backend override for the right-arm wrist cameras. Falls back
-    to :attr:`camera_type` when ``None``."""
 
     left_gripper_type: str = "franka"
-    """Gripper backend for the left arm."""
-
     right_gripper_type: str = "franka"
-    """Gripper backend for the right arm."""
-
     left_gripper_connection: Optional[str] = None
-    """Serial port for the left arm's Robotiq gripper."""
-
     right_gripper_connection: Optional[str] = None
-    """Serial port for the right arm's Robotiq gripper."""
 
     left_controller_node_rank: Optional[int] = None
-    """Node rank for the left arm's FrankaController.
-    ``None`` means co-located with the env worker."""
-
     right_controller_node_rank: Optional[int] = None
-    """Node rank for the right arm's FrankaController.
-    ``None`` means co-located with the env worker."""
 
     disable_validate: bool = False
-    """Skip IP ping and camera serial validation."""
 
     def __post_init__(self):  # noqa: D105
         assert isinstance(self.node_rank, int), (
