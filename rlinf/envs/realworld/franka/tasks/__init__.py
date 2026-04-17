@@ -29,6 +29,7 @@ from rlinf.envs.realworld.common.wrappers import (
     GripperCloseEnv,
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
+    KeyboardStartEndWrapper,
     Quat2EulerWrapper,
     RelativeFrame,
     SpacemouseIntervention,
@@ -151,6 +152,8 @@ def _apply_common_wrappers(
             env = KeyboardRewardDoneMultiStageWrapper(env)
         elif keyboard_reward_wrapper == "single_stage":
             env = KeyboardRewardDoneWrapper(env)
+        elif keyboard_reward_wrapper == "start_end":
+            env = KeyboardStartEndWrapper(env)
 
     # Cartesian-space transforms (RelativeFrame / Quat2Euler) are meaningless
     # for joint-space teleop — the 16D action has no TCP frame and the obs

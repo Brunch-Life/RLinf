@@ -105,3 +105,43 @@ class KeyboardRewardDoneMultiStageWrapper(BaseKeyboardRewardDoneWrapper):
             reward = -1
             done = False
         return last_intervened, done, reward
+
+
+class KeyboardStartEndWrapper(gym.Wrapper):
+    """Gate recording on `a`; end with `b` (fail, -1) or `c` (success, +1)."""
+
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.listener = KeyboardListener()
+        self._recording = False
+
+    def reset(self, *, seed=None, options=None):
+        self._recording = False
+        return self.env.reset(seed=seed, options=options)
+
+    def step(
+        self, action: ActType
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
+        obs, reward, terminated, truncated, info = self.env.step(action)
+
+        key = self.listener.get_key()
+        if key is not None:
+            print(f"Key pressed: {key}")
+
+        record_reset = False
+        if key == "a":
+            # `a` also re-presses to rebase mid-warmup without touching hardware.
+            self._recording = True
+            record_reset = True
+        elif key == "b" and self._recording:
+            reward = -1.0
+            terminated = True
+        elif key == "c" and self._recording:
+            reward = 1.0
+            terminated = True
+
+        if not isinstance(info, dict):
+            info = {}
+        info["pre_record"] = not self._recording
+        info["record_reset"] = record_reset
+        return obs, reward, terminated, truncated, info

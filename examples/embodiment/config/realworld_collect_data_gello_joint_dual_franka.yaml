@@ -45,7 +45,7 @@ cluster:
             right_gripper_type: robotiq
             # Robotiq 2F-85 on RS-485 — stable /dev/serial/by-id/ paths so
             # the port survives reboots and USB re-enumeration.
-            # Left adapter: DAAIT8PU on node 0 (sohu-dual-slave? local host).
+            # Left adapter: DAAIT8PU on node 0 (sohu-dual-slave, local host).
             # Right adapter: DAAIR00N on node 1 (sohu-dual-master, 192.168.120.42).
             left_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0"  # on node 0
             right_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIR00N-if00-port0"  # on node 1
@@ -60,7 +60,7 @@ runner:
     project_name: rlinf
     experiment_name: "collect-data-gello-joint-dual-franka"
     logger_backends: ["tensorboard"]
-  num_data_episodes: 20
+  num_data_episodes: 200
   record_task_description: False
 
 env:
@@ -72,16 +72,17 @@ env:
     use_spacemouse: False
     use_gello: False
     use_gello_joint: True
-    # Keyboard wrapper for manual episode termination during GELLO teleop:
-    #   c = success (reward=+1, done)  → saved
-    #   a = failure (reward=-1, done)  → dropped when only_success=True
-    #   b = neutral (reward=0, continue)
-    keyboard_reward_wrapper: "single_stage"
+    # Keyboard wrapper for gated demonstration collection during GELLO teleop:
+    #   a = start recording (pre-`a` frames are skipped; `a` rebases buffer)
+    #   b = fail-end  (reward=-1, done)  → episode dropped
+    #   c = success-end (reward=+1, done) → episode saved as parquet
+    keyboard_reward_wrapper: "start_end"
     # GELLO serial ports — inherited from env/realworld_franka_joint_dual.
     # Override here only if you swap GELLO units for a session.
     left_gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0"
     right_gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAM5DHY-if00-port0"
     override_cfg:
+      task_description: "pick up the cylinder with the left hand, hand it over to the right hand, and place it on the plate"
       joint_action_mode: "absolute"
       # Safe dual-arm bookkeeping pose (joint-space step does NOT consume
       # these, but DualFrankaEnv keeps the fields populated for downstream
