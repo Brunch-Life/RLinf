@@ -25,13 +25,11 @@ Torque law used by ``JointImpedanceTrackingMotion``
     τ = Kq·(q_ref − q) + Kqd·(dq_ref − dq) + coriolis + τ_ff
     τ ← saturateTorqueRate(τ, τ_prev, max_delta_tau)
 
-Gains/collision thresholds below mirror polymetis production
-(``fairo/polymetis/polymetis/conf/robot_client/franka_hardware.yaml``):
-``default_Kq=[40,30,50,25,35,25,10]`` with ``default_Kqd=[4,6,5,5,3,2,1]``
-and uniform 40 Nm/N collision thresholds.  We track the pure-joint
-``JointImpedanceControl`` (``adaptive=False``) branch of polymetis
-because franky has no ``HybridJointImpedanceControl`` (no
-``Kp_eff = Jᵀ Kx J + Kq`` path).
+Torque law traces polymetis's pure-joint ``JointImpedanceControl``
+(``adaptive=False``) branch — franky has no ``HybridJointImpedanceControl``
+path (``Kp_eff = Jᵀ Kx J + Kq``).  Default Kq/Kqd below are hand-tuned
+for dual-Franka GELLO teleop, not polymetis defaults; collision
+thresholds are also raised (see ``_DEFAULT_TORQUE_THRESHOLD`` below).
 
 See ``requirements/embodied/franky_install.md`` for the PREEMPT_RT kernel / CPU governor /
 rtprio limits that must be set before this controller will behave
@@ -70,9 +68,11 @@ JOINT_VEL_LIMITS = np.array([2.075, 2.075, 2.075, 2.075, 2.51, 2.51, 2.51])
 _DEFAULT_TORQUE_THRESHOLD = [80.0, 80.0, 80.0, 80.0, 11.0, 11.0, 11.0]
 _DEFAULT_FORCE_THRESHOLD = [100.0, 100.0, 100.0, 25.0, 25.0, 25.0]
 
-# Joint impedance PD gains (Nm/rad, Nms/rad) — polymetis default_Kq/Kqd.
-_DEFAULT_JOINT_STIFFNESS = [40.0, 30.0, 50.0, 25.0, 35.0, 25.0, 10.0]
-_DEFAULT_JOINT_DAMPING = [4.0, 6.0, 5.0, 5.0, 3.0, 2.0, 1.0]
+# Joint impedance PD gains (Nm/rad, Nms/rad) — hand-tuned for dual-Franka
+# GELLO joint teleop; see toolkits/realworld_check/tune_impedance.py for
+# the live tuner and keep it in sync with these values.
+_DEFAULT_JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
+_DEFAULT_JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
 # Global dynamics factor scales JointMotion/CartesianMotion planned
 # moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
