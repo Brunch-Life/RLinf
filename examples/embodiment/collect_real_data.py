@@ -14,11 +14,14 @@
 
 
 import os
+import threading
+import time
+from typing import Optional
 
 import hydra
 import numpy as np
+import ray
 import torch
-from tqdm import tqdm
 
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
@@ -27,6 +30,130 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
+
+STATUS_BUS_NAME = "collect_status_bus"
+
+
+@ray.remote(num_cpus=0)
+class StatusBus:
+    """Tiny shared state object: DataCollector pushes, driver renderer polls.
+
+    Exists because Ray's log monitor batches worker stdout at ~500 ms and
+    breaks tqdm's ``\\r`` refresh — we can't get a live bar by printing from
+    the worker.  The driver has its own TTY, so we ship state to a named
+    actor and let the driver render.
+    """
+
+    def __init__(self):
+        self._state: dict = {}
+
+    def set(self, state: dict) -> None:
+        self._state = dict(state)
+
+    def get(self) -> dict:
+        return dict(self._state)
+
+
+class DriverStatusRenderer:
+    """Driver-side background thread that polls ``StatusBus`` and paints a
+    single refreshing line on ``/dev/tty``.
+
+    ``collect_data.sh`` pipes the driver's stdout through ``tee``, so
+    ``sys.stdout`` is not a terminal and tqdm would fall back to per-update
+    newlines.  Writing to ``/dev/tty`` bypasses the shell redirect and goes
+    straight to the controlling terminal, so ``\\r`` refresh works and the
+    ``run_embodiment.log`` file stays clean.
+    """
+
+    _BAR_WIDTH = 20
+    _LINE_WIDTH = 110
+
+    def __init__(self, bus, target: int, poll_interval_s: float = 0.1):
+        self._bus = bus
+        self._target = max(1, int(target))
+        self._poll_interval_s = poll_interval_s
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        try:
+            self._tty = open("/dev/tty", "w", buffering=1)
+        except OSError:
+            self._tty = None
+        self._t0 = time.time()
+
+    def start(self) -> None:
+        if self._tty is None:
+            # No controlling terminal (e.g. headless CI); renderer is a no-op.
+            return
+        self._thread = threading.Thread(
+            target=self._loop, name="DriverStatusRenderer", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        if self._tty is not None:
+            try:
+                self._tty.write("\n")
+                self._tty.flush()
+                self._tty.close()
+            except OSError:
+                pass
+
+    def _render(self, state: dict) -> str:
+        phase = state.get("phase", "init")
+        saved = int(state.get("saved", 0))
+        frames = int(state.get("frames", 0))
+        ep_t = float(state.get("ep_t", 0.0))
+        last_event = state.get("last_event") or ""
+        last_event_ts = float(state.get("last_event_ts", 0.0))
+
+        # Hold the last event on screen for 3 s, then blank it out.
+        if last_event and (time.time() - last_event_ts) > 3.0:
+            last_event = ""
+
+        frac = saved / self._target
+        filled = int(round(self._BAR_WIDTH * frac))
+        bar = "#" * filled + "-" * (self._BAR_WIDTH - filled)
+        total_elapsed = time.time() - self._t0
+
+        return (
+            f"[{bar}] {saved:>3}/{self._target} "
+            f"phase={phase:<3} frames={frames:>4} ep_t={ep_t:>5.1f}s "
+            f"elapsed={total_elapsed:>6.1f}s "
+            f"last={last_event:<12}"
+        )
+
+    def _loop(self) -> None:
+        last_event_ts_seen = 0.0
+        while not self._stop.is_set():
+            try:
+                state = ray.get(self._bus.get.remote())
+            except Exception:
+                state = {}
+            line = self._render(state).ljust(self._LINE_WIDTH)
+            try:
+                self._tty.write("\r" + line)
+                self._tty.flush()
+            except OSError:
+                break
+
+            # Also surface state transitions as durable log lines on the real
+            # stdout (which the shell tee captures to run_embodiment.log).
+            ev_ts = float(state.get("last_event_ts", 0.0))
+            ev = state.get("last_event") or ""
+            if ev and ev_ts and ev_ts != last_event_ts_seen:
+                self._tty.write(
+                    "\n"
+                    + time.strftime("%H:%M:%S")
+                    + f" [keyboard] {ev}".ljust(self._LINE_WIDTH)
+                    + "\n"
+                )
+                self._tty.flush()
+                last_event_ts_seen = ev_ts
+
+            time.sleep(self._poll_interval_s)
 
 
 class DataCollector(Worker):
@@ -91,6 +218,13 @@ class DataCollector(Worker):
             trajectory_format="pt",
         )
 
+        # Attach to the driver-side status bus (created in main()).  Absent
+        # actor (e.g. standalone debug run) is non-fatal — we just skip pushes.
+        try:
+            self._bus = ray.get_actor(STATUS_BUS_NAME)
+        except ValueError:
+            self._bus = None
+
     def _process_obs(self, obs):
         """
         Process observations to match the format expected by EmbodiedRolloutResult.
@@ -113,12 +247,28 @@ class DataCollector(Worker):
 
         return ret_obs
 
+    @staticmethod
+    def _unwrap_info_scalar(val):
+        """Info fields from SyncVectorEnv arrive as len-1 arrays/lists."""
+        if val is None:
+            return None
+        if isinstance(val, (list, tuple)):
+            return val[0] if val else None
+        if isinstance(val, np.ndarray):
+            return val.reshape(-1)[0] if val.size else None
+        return val
+
+    def _push_status(self, **state) -> None:
+        if self._bus is None:
+            return
+        # fire-and-forget: ignore the returned ObjectRef so we don't block on
+        # RPC latency from the env step loop.
+        self._bus.set.remote(state)
+
     def run(self):
         obs, _ = self.env.reset()
         success_cnt = 0
-        progress_bar = tqdm(
-            range(self.num_data_episodes), desc="Collecting Data Episodes:"
-        )
+        self.log_info("[keyboard] ready — press 'a' to start recording")
 
         current_rollout = EmbodiedRolloutResult(
             max_episode_length=self.cfg.env.eval.max_episode_steps,
@@ -126,11 +276,49 @@ class DataCollector(Worker):
 
         current_obs_processed = self._process_obs(obs)
 
+        ep_start_time: Optional[float] = None
+        ep_step_count: int = 0
+        last_event_msg: str = ""
+        last_event_ts: float = 0.0
+        self._push_status(
+            phase="pre",
+            saved=0,
+            frames=0,
+            ep_t=0.0,
+            last_event="",
+            last_event_ts=0.0,
+        )
+
         while success_cnt < self.num_data_episodes:
             # Zero "no-op" placeholder action; teleop wrappers overwrite this
             # via info["intervene_action"] when the operator is active.
             action = np.zeros((1, self.action_dim))
             next_obs, reward, terminated, truncated, info = self.env.step(action)
+
+            kb_event = self._unwrap_info_scalar(info.get("keyboard_event"))
+            kb_phase = self._unwrap_info_scalar(info.get("keyboard_phase")) or "pre"
+            if kb_event:
+                self.log_info(f"[keyboard] {kb_event}")
+                last_event_msg = kb_event
+                last_event_ts = time.time()
+                if kb_event in ("start", "restart"):
+                    ep_start_time = time.time()
+                    ep_step_count = 0
+
+            if kb_phase == "rec":
+                ep_step_count += 1
+                ep_t = time.time() - ep_start_time if ep_start_time else 0.0
+            else:
+                ep_t = 0.0
+
+            self._push_status(
+                phase=kb_phase,
+                saved=success_cnt,
+                frames=ep_step_count,
+                ep_t=ep_t,
+                last_event=last_event_msg,
+                last_event_ts=last_event_ts,
+            )
 
             if "intervene_action" in info:
                 action = info["intervene_action"]
@@ -205,13 +393,23 @@ class DataCollector(Worker):
                         trajectory.intervene_flags
                     )
                     self.buffer.add_trajectories([trajectory])
-
-                    progress_bar.update(1)
                 else:
                     self.log_info(
                         f"Episode ended (reward={r_val:.2f}). "
                         f"Discarded. Total success: {success_cnt}/{self.num_data_episodes}"
                     )
+
+                # Reset counters before starting next episode.
+                ep_start_time = None
+                ep_step_count = 0
+                self._push_status(
+                    phase="pre",
+                    saved=success_cnt,
+                    frames=0,
+                    ep_t=0.0,
+                    last_event=last_event_msg,
+                    last_event_ts=last_event_ts,
+                )
 
                 # Reset for next episode
                 obs, _ = self.env.reset()
@@ -234,10 +432,26 @@ def main(cfg):
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ComponentPlacement(cfg, cluster)
     env_placement = component_placement.get_strategy("env")
-    collector = DataCollector.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
-    )
-    collector.run().wait()
+
+    # Named status bus + driver-side refreshing TTY renderer.  Create the bus
+    # *before* launching DataCollector so the worker's ``ray.get_actor`` lookup
+    # succeeds during __init__.
+    bus = StatusBus.options(
+        name=STATUS_BUS_NAME, lifetime="detached", namespace=Cluster.NAMESPACE
+    ).remote()
+    renderer = DriverStatusRenderer(bus, target=cfg.runner.num_data_episodes)
+    renderer.start()
+    try:
+        collector = DataCollector.create_group(cfg).launch(
+            cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        )
+        collector.run().wait()
+    finally:
+        renderer.stop()
+        try:
+            ray.kill(bus)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
