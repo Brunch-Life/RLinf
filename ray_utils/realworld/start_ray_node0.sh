@@ -7,7 +7,7 @@
 # Tears down any stale Ray instance, activates the project venv, exports
 # the env vars RLinf captures at ray-start time, and starts the head.
 
-set -euo pipefail
+set -eo pipefail  # no -u: venv activate touches unset LD_LIBRARY_PATH
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_PATH="$( cd "$SCRIPT_DIR/../.." && pwd )"

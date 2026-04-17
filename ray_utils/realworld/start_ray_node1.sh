@@ -10,7 +10,7 @@
 # NOTE: Edit WORKER_IP below to match this machine's IP on the same subnet
 # as the head (git-synced from node 0 — the head side keeps its own script).
 
-set -euo pipefail
+set -eo pipefail  # no -u: venv activate touches unset LD_LIBRARY_PATH
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_PATH="$( cd "$SCRIPT_DIR/../.." && pwd )"
