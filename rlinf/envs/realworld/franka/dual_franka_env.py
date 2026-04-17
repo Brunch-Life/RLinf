@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-arm Franka environment.
-
-Two independent Franka arms are managed by a single gym environment.
-Cameras and teleop devices are attached locally; each arm's low-level
-controller can run on a different node via ``controller_node_rank``.
-"""
+"""Dual-arm Franka environment."""
 
 from __future__ import annotations
 
@@ -45,8 +40,7 @@ NUM_ARMS = 2
 ACTION_DIM_PER_ARM = 7  # xyz_delta(3) + rpy_delta(3) + gripper(1)
 TCP_POSE_DIM = 7  # xyz(3) + quat(4)
 TCP_VEL_DIM = 6
-# Offset added to env_idx for the right arm controller to avoid Ray actor name
-# collisions when both controllers are on the same node.
+# Avoids Ray actor name collision when both arms land on the same node.
 _RIGHT_ARM_ENV_IDX_OFFSET = 1000
 _MAX_CAMERA_RETRIES = 3
 
@@ -114,14 +108,7 @@ class DualFrankaRobotConfig:
 
 
 class DualFrankaEnv(gym.Env):
-    """Dual-arm Franka environment.
-
-    Manages two Franka arms, their cameras and teleop devices in a single
-    process for perfect time synchronisation.  Each arm's low-level
-    :class:`FrankaController` can live on a different Ray node.
-    """
-
-    IS_DUAL_ARM: bool = True
+    """Dual-arm Franka env; each arm's controller may live on a different Ray node."""
 
     CONFIG_CLS: type[DualFrankaRobotConfig] = DualFrankaRobotConfig
 

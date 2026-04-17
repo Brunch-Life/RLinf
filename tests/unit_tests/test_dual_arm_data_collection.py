@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the dual-arm data collection pipeline."""
+"""CollectEpisode frame shaping, RealWorldEnv + DualFrankaEnv dummy flow, and dual-arm wrappers."""
 
 from __future__ import annotations
 
@@ -388,14 +388,11 @@ def dual_realworld_env():
 def test_realworld_env_dual_branch_emits_semantic_keys(dual_realworld_env):
     obs, _ = dual_realworld_env.reset()
     assert "main_images" in obs
-    # Dual-arm uses the same path as single-arm: main_image_key picks the
-    # primary frame, remaining frames stack into extra_view_images.
     assert "extra_view_images" in obs
     assert "wrist_images" not in obs
     assert "left_wrist_images" not in obs
     assert "right_wrist_images" not in obs
-    # state shape: gripper(2)+force(6)+pose(12 quat)+torque(6)+vel(12) = 38
-    # (use_relative_frame=False above, but DualQuat2EulerWrapper still wraps)
+    # gripper(2)+force(6)+pose(12 euler)+torque(6)+vel(12) = 38
     assert obs["states"].shape[-1] == 38
 
 
@@ -471,3 +468,66 @@ def test_realworld_env_dual_no_gripper_raises():
             total_num_processes=1,
             worker_info=None,
         )
+
+
+@pytest.fixture()
+def _dummy_dual_franka():
+    from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv
+
+    cfg = {
+        "is_dummy": True,
+        "left_robot_ip": "0.0.0.0",
+        "right_robot_ip": "0.0.0.0",
+        "left_camera_serials": ["DUMMY_L"],
+        "right_camera_serials": ["DUMMY_R"],
+        "camera_type": "zed",
+        "target_ee_pose": [[0.5, 0, 0.1, -3.14, 0, 0], [0.5, 0, 0.1, -3.14, 0, 0]],
+        "reset_ee_pose": [[0.5, 0, 0.3, -3.14, 0, 0], [0.5, 0, 0.3, -3.14, 0, 0]],
+        "reward_threshold": [[0.01, 0.01, 0.01, 0.2, 0.2, 0.2]] * 2,
+        "action_scale": [1.0, 1.0, 1.0],
+        "ee_pose_limit_min": [[-1] * 6, [-1] * 6],
+        "ee_pose_limit_max": [[1] * 6, [1] * 6],
+        "max_num_steps": 50,
+    }
+    return DualFrankaEnv(
+        override_cfg=cfg,
+        worker_info=None,
+        hardware_info=None,
+        env_idx=0,
+    )
+
+
+def test_dual_quat2euler_shrinks_pose_to_12d(_dummy_dual_franka):
+    from rlinf.envs.realworld.common.wrappers.dual_euler_obs import (
+        DualQuat2EulerWrapper,
+    )
+
+    wrapped = DualQuat2EulerWrapper(_dummy_dual_franka)
+    obs, _ = wrapped.reset()
+    assert obs["state"]["tcp_pose"].shape == (12,)
+    # Each arm's euler triplet (indices 3:6 and 9:12) must stay in [-pi, pi].
+    tcp = obs["state"]["tcp_pose"]
+    for euler in (tcp[3:6], tcp[9:12]):
+        assert np.all(np.abs(euler) <= np.pi + 0.01)
+
+
+def test_dual_relative_frame_action_transform_roundtrip(_dummy_dual_franka):
+    from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
+        DualRelativeFrame,
+    )
+
+    wrapped = DualRelativeFrame(_dummy_dual_franka)
+    wrapped.reset()
+    action = np.random.randn(14).astype(np.float32)
+    recovered = wrapped.transform_action_inv(wrapped.transform_action(action.copy()))
+    np.testing.assert_allclose(recovered, action, atol=1e-6)
+
+
+def test_dual_relative_target_frame_reset(_dummy_dual_franka):
+    from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
+        DualRelativeTargetFrame,
+    )
+
+    wrapped = DualRelativeTargetFrame(_dummy_dual_franka)
+    obs, _ = wrapped.reset()
+    assert obs["state"]["tcp_pose"].shape == (14,)

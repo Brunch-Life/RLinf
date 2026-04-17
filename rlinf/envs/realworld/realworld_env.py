@@ -98,16 +98,9 @@ class RealWorldEnv(gym.Env):
         with node_lock:
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
             for proc in psutil.process_iter():
-                try:
-                    if proc.name() in ros_proc_names:
-                        proc.kill()
-                        time.sleep(0.5)
-                except (
-                    psutil.AccessDenied,
-                    psutil.NoSuchProcess,
-                    psutil.ZombieProcess,
-                ):
-                    pass
+                if proc.name() in ros_proc_names:
+                    proc.kill()
+                    time.sleep(0.5)
 
     def _init_env(self):
         env_fns = [

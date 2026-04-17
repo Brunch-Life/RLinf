@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .apply import apply_dual_arm_wrappers, apply_single_arm_wrappers
 from .dual_euler_obs import DualQuat2EulerWrapper
 from .dual_gello_intervention import DualGelloIntervention
 from .dual_relative_frame import DualRelativeFrame, DualRelativeTargetFrame
@@ -39,4 +40,6 @@ __all__ = [
     "Quat2EulerWrapper",
     "RelativeFrame",
     "SpacemouseIntervention",
+    "apply_dual_arm_wrappers",
+    "apply_single_arm_wrappers",
 ]
