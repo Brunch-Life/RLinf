@@ -225,6 +225,16 @@ class DataCollector(Worker):
         except ValueError:
             self._bus = None
 
+        # Outer rate limiter: ``DualFrankaJointEnv.step`` in direct-stream
+        # mode deliberately does NOT pace itself so that wrapper + record
+        # overhead is included in the budget here.  Target period is driven
+        # by ``data_collection.fps`` so the parquet metadata matches the
+        # achieved wall-clock rate.
+        fps = None
+        if self.cfg.env.eval.get("data_collection") is not None:
+            fps = self.cfg.env.eval.data_collection.get("fps")
+        self._target_step_period = 1.0 / float(fps) if fps else None
+
     def _process_obs(self, obs):
         """
         Process observations to match the format expected by EmbodiedRolloutResult.
@@ -290,6 +300,7 @@ class DataCollector(Worker):
         )
 
         while success_cnt < self.num_data_episodes:
+            iter_start = time.perf_counter()
             # Zero "no-op" placeholder action; teleop wrappers overwrite this
             # via info["intervene_action"] when the operator is active.
             action = np.zeros((1, self.action_dim))
@@ -361,10 +372,17 @@ class DataCollector(Worker):
                 forward_inputs={"action": action_tensor},
             )
 
-            current_rollout.append_step_result(step_result)
-            current_rollout.append_transitions(
-                curr_obs=current_obs_processed, next_obs=next_obs_processed
-            )
+            # Mirror CollectEpisode's record gate: rebuild on `a`, skip
+            # pre-record — keeps the buffer bounded and excludes pre-`a` frames.
+            if kb_event in ("start", "restart"):
+                current_rollout = EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.eval.max_episode_steps,
+                )
+            elif kb_phase == "rec":
+                current_rollout.append_step_result(step_result)
+                current_rollout.append_transitions(
+                    curr_obs=current_obs_processed, next_obs=next_obs_processed
+                )
 
             obs = next_obs
             current_obs_processed = next_obs_processed
@@ -417,6 +435,15 @@ class DataCollector(Worker):
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
+
+            # Pin the full iteration (step + record + wrappers) to the target
+            # period.  On ``done`` iterations ``env.reset`` usually blows past
+            # the budget and sleep_for is <= 0 — a graceful no-op.
+            if self._target_step_period is not None:
+                elapsed = time.perf_counter() - iter_start
+                sleep_for = self._target_step_period - elapsed
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
 
         self.buffer.close()
         self.log_info(

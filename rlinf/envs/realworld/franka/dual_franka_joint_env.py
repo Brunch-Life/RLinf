@@ -303,8 +303,17 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
         self._num_steps += 1
         if not self.config.is_dummy:
-            step_time = time.time() - start_time
-            time.sleep(max(0, (1.0 / self.config.step_frequency) - step_time))
+            if not self.config.teleop_direct_stream:
+                # Non-direct mode: ``move_joints`` was just issued above and
+                # franky needs the full period to track it before we sample
+                # state, so sleep *between* action and state read.
+                step_time = time.time() - start_time
+                time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
+            # Direct-stream mode does not rate-limit here — motion is driven
+            # by the 1 kHz daemon independently of ``env.step`` and the outer
+            # collection loop owns the step period so that wrapper / record
+            # overhead is included in the budget.  Callers MUST pace step()
+            # themselves (e.g. ``DataCollector.run``).
             left_st_f = ctrls[0].get_state()
             right_st_f = ctrls[1].get_state()
             self._left_state = left_st_f.wait()[0]
