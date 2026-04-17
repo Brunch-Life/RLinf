@@ -12,10 +12,37 @@
 
 ## 2. 节点分工
 
-| 角色 | 主机 | IP | 负责 |
-|---|---|---|---|
-| head (node 0) | `ubuntu-franka-slave` | 192.168.120.43 | DataCollector + 左臂 controller + 3 相机 + 2 GELLO |
-| worker (node 1) | `ubuntu-franka-master` | 192.168.120.42 | 右臂 controller |
+| 角色 | 主机 | 直连 IP | WiFi IP（备用） | 负责 |
+|---|---|---|---|---|
+| head (node 0) | `ubuntu-franka-slave` | **10.10.10.1** | 192.168.120.43 | DataCollector + 左臂 controller + 3 相机 + 2 GELLO |
+| worker (node 1) | `sohu-dual-master` | **10.10.10.2** | 192.168.120.42 | 右臂 controller |
+
+### 2.1 网线直连 + IP 设置（一次性）
+
+两台机器之间拉一根 USB Ethernet 网线直连，Ray 跨节点 RPC（franky streamer、gripper、controller state）走这根线；共享 WiFi 有 ~25 ms mdev 抖动，会让 teleop 右臂一卡一卡。
+
+接好线后确认两端都出现了 `enx<MAC>` 形式的网卡（`ip link` 查看），然后分别持久化配置：
+
+```bash
+# node 0（10.10.10.1）
+nmcli connection add type ethernet ifname enx207bd232e224 con-name rlinf-direct \
+    ipv4.addresses 10.10.10.1/24 ipv4.method manual ipv6.method ignore \
+    connection.autoconnect yes
+nmcli connection up rlinf-direct
+
+# node 1（10.10.10.2） — 通过 ssh sohu-dual-master 过去执行
+nmcli connection add type ethernet ifname enx00e04c364742 con-name rlinf-direct \
+    ipv4.addresses 10.10.10.2/24 ipv4.method manual ipv6.method ignore \
+    connection.autoconnect yes
+nmcli connection up rlinf-direct
+```
+
+- **MAC / `enx...` 名字每台不同**，用 `ip link` 实际查；如果换了线或换了 USB 网口，重跑 `nmcli connection modify rlinf-direct connection.interface-name enx<新MAC>`。
+- 验证：`ping -c3 10.10.10.2`（从 node 0）应拿到 sub-ms RTT；WiFi 的 ~25 ms 是参照物。
+
+### 2.2 如果直连网线临时坏了
+
+`ray_utils/realworld/start_ray_node0.sh` 和 `start_ray_node1.sh` 里把 `HEAD_IP` / `WORKER_IP` 改回 WiFi IP（`192.168.120.43` / `192.168.120.42`），就能退回旧链路跑（会卡，但能跑）。脚本顶部的注释保留了旧 IP 作为注记。
 
 ## 3. 启动 Ray（两台分别跑）
 
@@ -42,15 +69,32 @@ bash examples/embodiment/collect_data.sh realworld_collect_data_gello_joint_dual
 
 ## 5. 键盘控制
 
-进度条窗口**焦点要在终端**。按键语义（新 wrapper）：
+进度条窗口**焦点要在终端**（evdev 直读 `/dev/input/event*`，实际上即使别的窗口激活也能触发，但通常把终端留在前台）。按键语义：
 
 | 键 | 语义 |
 |---|---|
-| `a` | **开始**录制当前 episode |
+| `a` | **开始**录制当前 episode；已在录制时按 `a` = 丢弃当前缓冲并重新开始 |
 | `b` | **失败结束** — reward = -1, episode 丢弃 |
 | `c` | **成功结束** — reward = +1, episode 保存为 parquet |
 
 `only_success: True`（默认）下，`b` 的 episode 只进内存、不落盘。
+
+### 5.1 实时反馈
+
+wrapper 运行在 Ray worker 里，`print` 会被 Ray 的 log monitor 批处理，不够实时。现在改成按键边沿触发（`start` / `restart` / `end_fail` / `end_success`）时调 `self.log_info`，输出类似：
+
+```
+[INFO 14:23:07 DataCollector-Rank-0][collect_real_data.py:144] [keyboard] start
+[INFO 14:23:42 DataCollector-Rank-0][collect_real_data.py:144] [keyboard] end_success
+```
+
+同一时刻也会落到 `logs/<timestamp>/worker_logs/DataCollector/rank_0.log`，可以 `tail -f` 观察：
+
+```bash
+tail -f logs/$(ls -t logs | head -1)/worker_logs/DataCollector/rank_0.log
+```
+
+如果按了键但终端 **5 秒内还没出现对应的 `[keyboard] ...` 行**，再排查：evdev 设备权限、`RLINF_KEYBOARD_DEVICE` 是否指到了正确的 `/dev/input/eventX`、或进程是否在 sleep。
 
 ## 6. 下一个 episode / 终止条件
 
