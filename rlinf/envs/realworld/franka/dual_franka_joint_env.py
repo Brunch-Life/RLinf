@@ -168,23 +168,16 @@ class DualFrankaJointEnv(DualFrankaEnv):
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
     def _go_to_rest(self, joint_reset: bool = False):
-        """Reset both arms via ``reset_joint`` only (no Cartesian slew).
+        """No-op — the outer GELLO wrapper aligns both arms to GELLO's live pose.
 
-        The parent implementation first does per-arm ``reset_joint`` when
-        ``joint_reset=True`` then Cartesian-interpolates to
-        ``reset_ee_pose``.  A joint-space env has no meaningful Cartesian
-        target during reset, so we always use ``reset_joint`` and skip
-        the interpolation entirely.  ``joint_reset`` is ignored.
+        Going to ``joint_reset_qpos`` first and then letting
+        ``DualGelloJointIntervention._align_to_gello`` slew onto GELLO causes
+        a visible "home then drop" since GELLO's rest configuration is
+        typically below home.  Since this env is only used under GELLO joint
+        teleop, we skip the home step entirely and let the outer wrapper
+        drive the single reset motion straight to GELLO.
         """
         del joint_reset
-        ctrls = [self._left_ctrl, self._right_ctrl]
-        futures = [
-            ctrl.reset_joint(list(self.config.joint_reset_qpos[arm]))
-            for arm, ctrl in enumerate(ctrls)
-        ]
-        for f in futures:
-            f.wait()
-        time.sleep(0.5)
 
     def _init_action_obs_spaces(self):
         # Per-arm Cartesian safety boxes — kept for informational clipping
