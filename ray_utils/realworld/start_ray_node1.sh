@@ -27,9 +27,12 @@ export RLINF_NODE_RANK=1
 # export RLINF_COMM_NET_DEVICES="rlinf"
 
 # --- Ray worker ----------------------------------------------------------
-HEAD_IP="192.168.120.43"
+# Direct point-to-point USB-Ethernet link — see start_ray_node0.sh for the
+# rationale.  node 0 (head) = 10.10.10.1, node 1 (this host) = 10.10.10.2.
+# Old WiFi IPs: HEAD 192.168.120.43, WORKER 192.168.120.42.
+HEAD_IP="10.10.10.1"
 RAY_PORT=6379
-WORKER_IP="192.168.120.42"   # <-- set to this node's IP on the head's subnet
+WORKER_IP="10.10.10.2"       # <-- this node's IP on the direct link
 
 ray stop --force || true
 ray start --address="$HEAD_IP:$RAY_PORT" --node-ip-address="$WORKER_IP"

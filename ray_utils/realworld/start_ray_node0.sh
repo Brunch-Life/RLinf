@@ -24,7 +24,13 @@ export RLINF_NODE_RANK=0
 # export RLINF_COMM_NET_DEVICES="rlinf"
 
 # --- Ray head ------------------------------------------------------------
-HEAD_IP="192.168.120.43"
+# Direct point-to-point USB-Ethernet link between the two nodes:
+#   node 0  enx207bd232e224  10.10.10.1  <--->  10.10.10.2  enx00e04c364742  node 1
+# sub-ms RTT on this link vs ~25 ms mdev over the shared WiFi — Ray cross-
+# node RPC (franky streamer, gripper events, controller state polls) is the
+# only thing we want going through the direct cable, so bind Ray to the
+# direct-link IP here and on node 1.  Old WiFi IP: 192.168.120.43.
+HEAD_IP="10.10.10.1"
 RAY_PORT=6379
 
 ray stop --force || true
