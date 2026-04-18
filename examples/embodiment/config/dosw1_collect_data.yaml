@@ -44,3 +44,11 @@ env:
       manual_episode_control_only: True
       robot_url: "127.0.0.1"
       camera_serials: []
+
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "pickle"
+      only_success: False
+      robot_type: "dosw1"
+      fps: 10

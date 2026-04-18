@@ -240,10 +240,14 @@ class DOSW1Env(gym.Env):
             or abs(self.robot_state.right_gripper - prev_right_gripper) > 1e-6
         )
         reward = self._calc_step_reward(obs, gripper_changed=gripper_changed)
-        terminated = False
+        terminated = bool(self.manual_done)
         truncated = self._num_steps >= self.config.max_num_steps
 
-        info: dict = {"control_mode": self.control_mode.value, "manual_done": self.manual_done}
+        info: dict = {
+            "control_mode": self.control_mode.value,
+            "manual_done": self.manual_done,
+            "success": bool(self.manual_done),
+        }
         if self.control_mode == ControlMode.TELEOP:
             info["intervene_action"] = actual_action
         return obs, reward, terminated, truncated, info
