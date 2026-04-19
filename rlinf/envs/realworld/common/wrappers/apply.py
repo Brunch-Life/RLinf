@@ -65,9 +65,7 @@ def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
     return env
 
 
-def apply_single_arm_wrappers(
-    env: gym.Env, cfg: Mapping[str, Any]
-) -> gym.Env:
+def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for single-arm realworld envs (franka single, xsquare)."""
     no_gripper = cfg.get("no_gripper", True)
     if no_gripper:
@@ -99,9 +97,7 @@ def apply_single_arm_wrappers(
     return env
 
 
-def apply_dual_arm_wrappers(
-    env: gym.Env, cfg: Mapping[str, Any]
-) -> gym.Env:
+def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for dual-arm realworld envs (dual-franka today)."""
     if cfg.get("no_gripper", True):
         # No DualGripperCloseEnv yet, so a 12D action would blow up as reshape(2,7).

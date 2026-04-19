@@ -25,7 +25,6 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
-from .franka import FrankaRobot
 
 
 @dataclass
@@ -75,16 +74,6 @@ class DualFrankaRobot(Hardware):
 
         dual_infos: list[DualFrankaHWInfo] = []
         for config in robot_configs:
-            if not config.disable_validate:
-                camera_type = config.camera_type or "zed"
-                cameras = FrankaRobot.enumerate_cameras(camera_type)
-
-                if config.left_camera_serials is None:
-                    config.left_camera_serials = sorted(cameras)[:1]
-                if config.right_camera_serials is None:
-                    remaining = sorted(cameras - set(config.left_camera_serials))
-                    config.right_camera_serials = remaining[:1]
-
             dual_infos.append(
                 DualFrankaHWInfo(
                     type=cls.HW_TYPE,
@@ -144,9 +133,6 @@ class DualFrankaConfig(HardwareConfig):
     right_controller_node_rank: Optional[int] = None
     """Node rank for the right arm's FrankaController.
     ``None`` means co-located with the env worker."""
-
-    disable_validate: bool = False
-    """Skip IP ping and camera serial validation."""
 
     def __post_init__(self):  # noqa: D105
         assert isinstance(self.node_rank, int), (
