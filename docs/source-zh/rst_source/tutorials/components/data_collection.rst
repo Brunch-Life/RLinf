@@ -38,12 +38,9 @@ Episode 数据采集
   将重置后的初始观测带入下一 episode。
 - 写入操作在独立后台线程异步执行，不阻塞 RL 训练主循环。
 - LeRobot writer 在第一条 episode 写入时懒初始化，自动推断图像尺寸、状态维度、动作维度。
-- LeRobot 导出支持保存 ``image``、``wrist_image``，以及在观测中存在时的
-  单路 ``extra_view_image``。
-- 对于双臂环境（如 ``DualFrankaEnv``），当观测中存在 ``left_wrist_images`` /
-  ``right_wrist_images`` 时，LeRobot 会额外导出 ``left_wrist_image`` 与
-  ``right_wrist_image`` 两列。这两个列名与 pi0/pi0.5 的图像 dict key 一致，
-  pi0 策略适配器读取该数据集时无需做任何 key 重映射。
+- LeRobot 导出支持保存 ``image`` 与 ``extra_view_image``；当 ``extra_view_images``
+  为 ``[N, H, W, C]`` 多视角堆叠时，会自动按索引展开成 ``extra_view_image-0``、
+  ``extra_view_image-1`` …… 等列。
 - ``only_success=True`` 可过滤失败 episode，节省磁盘空间。
 
 构造参数
@@ -210,14 +207,9 @@ Episode 数据采集
      - 说明
    * - ``image``
      - 主摄像头图像（bytes + path），uint8
-   * - ``wrist_image``
-     - 腕部摄像头图像（bytes + path），uint8；无腕部摄像头时列为空
-   * - ``extra_view_image``
-     - 一路额外视角图像（bytes + path），uint8；无额外视角时列为空
-   * - ``left_wrist_image``
-     - 左腕部摄像头（仅双臂）；当观测中存在 ``left_wrist_images`` 时写入
-   * - ``right_wrist_image``
-     - 右腕部摄像头（仅双臂）；当观测中存在 ``right_wrist_images`` 时写入
+   * - ``extra_view_image`` / ``extra_view_image-N``
+     - 额外视角图像（bytes + path），uint8；多视角堆叠时展开为
+       ``extra_view_image-0``、``extra_view_image-1`` …… 无额外视角时列为空
    * - ``state``
      - 机器人状态向量，``float32[state_dim]``
    * - ``actions``
@@ -247,14 +239,9 @@ Episode 数据采集
      - 查找键（按优先级）
    * - 主图像
      - ``main_images`` → ``image`` → ``full_image``
-   * - 腕部图像
-     - ``wrist_images`` → ``wrist_image``
    * - 额外视角图像
-     - ``extra_view_images``（若有多路，仅取第一路）→ ``extra_view_image``
-   * - 左腕部图像（双臂）
-     - ``left_wrist_images`` → ``left_wrist_image``
-   * - 右腕部图像（双臂）
-     - ``right_wrist_images`` → ``right_wrist_image``
+     - ``extra_view_images`` → ``extra_view_image``（``[N, H, W, C]`` 会按索引
+       展开为 ``extra_view_image-0``、``extra_view_image-1`` ……）
    * - 状态
      - ``states`` → ``state``
 

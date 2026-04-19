@@ -47,10 +47,6 @@ from rlinf.envs.realworld.common.wrappers.spacemouse_intervention import (
 )
 
 
-def _cfg(env_cfg: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
-    return env_cfg if env_cfg is not None else {}
-
-
 def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
     if use_spacemouse and use_gello:
         raise ValueError(
@@ -70,11 +66,9 @@ def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
 
 
 def apply_single_arm_wrappers(
-    env: gym.Env, env_cfg: Optional[Mapping[str, Any]]
+    env: gym.Env, cfg: Mapping[str, Any]
 ) -> gym.Env:
     """Wrapper stack for single-arm realworld envs (franka single, xsquare)."""
-    cfg = _cfg(env_cfg)
-
     no_gripper = cfg.get("no_gripper", True)
     if no_gripper:
         env = GripperCloseEnv(env)
@@ -106,11 +100,9 @@ def apply_single_arm_wrappers(
 
 
 def apply_dual_arm_wrappers(
-    env: gym.Env, env_cfg: Optional[Mapping[str, Any]]
+    env: gym.Env, cfg: Mapping[str, Any]
 ) -> gym.Env:
     """Wrapper stack for dual-arm realworld envs (dual-franka today)."""
-    cfg = _cfg(env_cfg)
-
     if cfg.get("no_gripper", True):
         # No DualGripperCloseEnv yet, so a 12D action would blow up as reshape(2,7).
         raise NotImplementedError(

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 import gymnasium as gym
 from gymnasium.envs.registration import register
@@ -39,7 +39,7 @@ def create_franka_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = FrankaEnv(
         override_cfg=override_cfg,
@@ -55,7 +55,7 @@ def create_dual_franka_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = DualFrankaEnv(
         override_cfg=override_cfg,
@@ -71,7 +71,7 @@ def create_peg_insertion_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = PegInsertionEnv(
         override_cfg=override_cfg,
@@ -87,7 +87,7 @@ def create_franka_bin_relocation_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = FrankaBinRelocationEnv(
         override_cfg=override_cfg,
@@ -103,7 +103,7 @@ def create_bottle_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = BottleEnv(
         override_cfg=override_cfg,

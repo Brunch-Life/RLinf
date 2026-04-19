@@ -44,12 +44,9 @@ Key Features
   block the RL training loop.
 - The LeRobot writer is lazily initialized on the first episode write, with image
   shape, state dimension, and action dimension inferred automatically.
-- LeRobot export can store ``image``, ``wrist_image``, and one
-  ``extra_view_image`` channel when the observation provides them.
-- For dual-arm environments (e.g. ``DualFrankaEnv``), the LeRobot export also
-  stores ``left_wrist_image`` and ``right_wrist_image`` columns when the
-  observation provides them, mirroring the pi0/pi0.5 image dict keys so a pi0
-  policy adapter can consume the dataset without any key remapping.
+- LeRobot export can store ``image`` and ``extra_view_image``. When
+  ``extra_view_images`` is a stacked ``[N, H, W, C]`` tensor, the columns are
+  fanned out by index (``extra_view_image-0``, ``extra_view_image-1``, …).
 - Set ``only_success=True`` to filter out failed episodes and save disk space.
 
 Constructor Arguments
@@ -219,16 +216,10 @@ Parquet column schema:
      - Description
    * - ``image``
      - Main camera image (bytes + path), uint8
-   * - ``wrist_image``
-     - Wrist camera image (bytes + path), uint8; empty when no wrist camera
-   * - ``extra_view_image``
-     - One auxiliary camera image (bytes + path), uint8; empty when no extra view
-   * - ``left_wrist_image``
-     - Left wrist camera (dual-arm only); present when the env exposes
-       ``left_wrist_images`` in its observation dict
-   * - ``right_wrist_image``
-     - Right wrist camera (dual-arm only); present when the env exposes
-       ``right_wrist_images`` in its observation dict
+   * - ``extra_view_image`` / ``extra_view_image-N``
+     - Auxiliary camera image (bytes + path), uint8. Multi-view stacks are
+       fanned out into ``extra_view_image-0``, ``extra_view_image-1``, …;
+       empty when no extra view is present.
    * - ``state``
      - Robot state vector, ``float32[state_dim]``
    * - ``actions``
@@ -258,14 +249,9 @@ Observation key lookup order (first match wins):
      - Keys checked (in priority order)
    * - Main image
      - ``main_images`` → ``image`` → ``full_image``
-   * - Wrist image
-     - ``wrist_images`` → ``wrist_image``
    * - Extra-view image
-     - ``extra_view_images`` (first extra view only when multiple are present) → ``extra_view_image``
-   * - Left wrist image (dual-arm)
-     - ``left_wrist_images`` → ``left_wrist_image``
-   * - Right wrist image (dual-arm)
-     - ``right_wrist_images`` → ``right_wrist_image``
+     - ``extra_view_images`` → ``extra_view_image`` (``[N, H, W, C]`` stacks
+       fan out to ``extra_view_image-0``, ``extra_view_image-1``, …)
    * - State
      - ``states`` → ``state``
 

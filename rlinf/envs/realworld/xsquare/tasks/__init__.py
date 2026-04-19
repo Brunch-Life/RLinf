@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 import gymnasium as gym
 from gymnasium.envs.registration import register
@@ -30,7 +30,7 @@ def create_button_env(
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
-    env_cfg: Optional[Mapping[str, Any]] = None,
+    env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = ButtonEnv(
         override_cfg=override_cfg,
