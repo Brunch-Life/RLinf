@@ -39,7 +39,9 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
         if keyboard is None:
             return None
         manual_episode_control_only = bool(
-            getattr(getattr(base_env, "config", None), "manual_episode_control_only", False)
+            getattr(
+                getattr(base_env, "config", None), "manual_episode_control_only", False
+            )
         )
         in_free_teleop = bool(getattr(base_env, "in_free_teleop", False))
         key = keyboard.get_key()
@@ -113,12 +115,20 @@ class LeaderFollowerKeyboardIntervention(gym.Wrapper):
         observation = obs_fn()
         control_mode = getattr(base_env, "control_mode", None)
         control_mode_value = (
-            getattr(control_mode, "value", control_mode) if control_mode is not None else 0
+            getattr(control_mode, "value", control_mode)
+            if control_mode is not None
+            else 0
         )
-        return observation, 0.0, False, True, {
-            "control_mode": control_mode_value,
-            "manual_done": bool(getattr(base_env, "manual_done", False)),
-        }
+        return (
+            observation,
+            0.0,
+            False,
+            True,
+            {
+                "control_mode": control_mode_value,
+                "manual_done": bool(getattr(base_env, "manual_done", False)),
+            },
+        )
 
     def _log_info(self, message: str, *args) -> None:
         logger = getattr(self._base_env(), "_logger", None)

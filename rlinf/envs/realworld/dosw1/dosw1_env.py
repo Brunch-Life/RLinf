@@ -211,9 +211,7 @@ class DOSW1Env(gym.Env):
                 getattr(self.config, "manual_episode_control_only", False)
             )
             next_mode = (
-                ControlMode.TELEOP
-                if manual_episode_control_only
-                else ControlMode.MODEL
+                ControlMode.TELEOP if manual_episode_control_only else ControlMode.MODEL
             )
             self.set_control_mode(next_mode, source="reset_after_start_key")
         else:
@@ -285,9 +283,7 @@ class DOSW1Env(gym.Env):
     def task_description(self) -> str:
         return "Perform the DOSW1 dual-arm manipulation task."
 
-    def set_control_mode(
-        self, mode: ControlMode, *, source: str = "unknown"
-    ) -> None:
+    def set_control_mode(self, mode: ControlMode, *, source: str = "unknown") -> None:
         self.control_mode = mode
         self._set_leader_follow_enabled(
             enabled=bool(self.in_free_teleop or mode == ControlMode.TELEOP),
@@ -365,9 +361,7 @@ class DOSW1Env(gym.Env):
         return current_joint + lo * (target_joint - current_joint)
 
     @staticmethod
-    def _ee_in_box(
-        ee: np.ndarray, lo: np.ndarray, hi: np.ndarray
-    ) -> bool:
+    def _ee_in_box(ee: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> bool:
         n = min(len(lo), len(ee))
         return bool(np.all(ee[:n] >= lo[:n]) and np.all(ee[:n] <= hi[:n]))
 
@@ -462,7 +456,9 @@ class DOSW1Env(gym.Env):
         left_joint = self._clip_joint_to_ee_safety_box(
             cur_left, left_joint, side="left"
         )
-        left_gripper = self._clip_gripper_width(float(init_follow_left[6] + delta_left_gripper))
+        left_gripper = self._clip_gripper_width(
+            float(init_follow_left[6] + delta_left_gripper)
+        )
 
         delta_right_joint = lead_right[:6] - init_lead_right[:6]
         delta_right_gripper = gripper_scale * (lead_right[6] - init_lead_right[6])
@@ -516,9 +512,7 @@ class DOSW1Env(gym.Env):
                 break
             now = time.time()
             if now - last_log >= self._FREE_TELEOP_LOG_INTERVAL_S:
-                self._logger.info(
-                    "[DOSW1Env] FreeTeleop waiting for 's' key"
-                )
+                self._logger.info("[DOSW1Env] FreeTeleop waiting for 's' key")
                 last_log = now
             self._forward_leader_to_follower()
             time.sleep(1.0 / self.config.step_frequency)
@@ -529,7 +523,11 @@ class DOSW1Env(gym.Env):
             return
 
         # Fallback when wrapper is disabled: keep reset-phase "s to start".
-        if reset_phase and self._keyboard is not None and self._keyboard.get_key() == "s":
+        if (
+            reset_phase
+            and self._keyboard is not None
+            and self._keyboard.get_key() == "s"
+        ):
             self.start_episode_requested = True
 
     def _forward_leader_to_follower(self) -> None:
@@ -693,5 +691,7 @@ class DOSW1Env(gym.Env):
                 value = getattr(config, attr, None)
                 if value is not None:
                     setattr(self.config, attr, int(value))
-        elif hasattr(hardware_info, "camera_serials") and not self.config.camera_serials:
+        elif (
+            hasattr(hardware_info, "camera_serials") and not self.config.camera_serials
+        ):
             self.config.camera_serials = list(hardware_info.camera_serials)

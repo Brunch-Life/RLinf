@@ -160,9 +160,9 @@ class EnvWorker(Worker):
             # train env
             train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
             if train_override_cfgs is not None:
-                assert (
-                    len(train_override_cfgs) > self._rank
-                ), f"{len(train_override_cfgs)=} > {self._rank=}"
+                assert len(train_override_cfgs) > self._rank, (
+                    f"{len(train_override_cfgs)=} > {self._rank=}"
+                )
 
                 general_train_override_cfg = OmegaConf.to_container(
                     self.cfg.env.train.get("override_cfg", {}), resolve=True
@@ -178,9 +178,9 @@ class EnvWorker(Worker):
         self._inject_realworld_reward_cfg(self.cfg.env.train)
         eval_override_cfgs = self.cfg.env.eval.get("override_cfgs", None)
         if eval_override_cfgs is not None:
-            assert (
-                len(eval_override_cfgs) > self._rank
-            ), f"{len(eval_override_cfgs)=} > {self._rank=}"
+            assert len(eval_override_cfgs) > self._rank, (
+                f"{len(eval_override_cfgs)=} > {self._rank=}"
+            )
 
             general_eval_override_cfg = OmegaConf.to_container(
                 self.cfg.env.eval.get("override_cfg", {}), resolve=True
@@ -203,14 +203,14 @@ class EnvWorker(Worker):
         reward_placements = self._component_placement.get_strategy(
             "reward"
         ).get_placement(Cluster())
-        assert (
-            len(reward_placements) > 0
-        ), "Reward placement must contain at least one worker."
+        assert len(reward_placements) > 0, (
+            "Reward placement must contain at least one worker."
+        )
         reward_placement = reward_placements[0]
         reward_hardware_ranks = self._component_placement.get_hardware_ranks("reward")
-        assert (
-            len(reward_hardware_ranks) > 0
-        ), "Reward placement must contain at least one hardware rank."
+        assert len(reward_hardware_ranks) > 0, (
+            "Reward placement must contain at least one hardware rank."
+        )
 
         override_cfg = OmegaConf.to_container(
             env_cfg.get("override_cfg", {}), resolve=True
@@ -602,9 +602,9 @@ class EnvWorker(Worker):
             chunk_action.append(action_i)
         chunk_action = np.concatenate(chunk_action, axis=0)
         expected_total_size = sum(size for _, size in src_ranks_and_sizes)
-        assert (
-            chunk_action.shape[0] == expected_total_size
-        ), f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
+        assert chunk_action.shape[0] == expected_total_size, (
+            f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
+        )
         return chunk_action
 
     @Worker.timer("recv_rollout_results")

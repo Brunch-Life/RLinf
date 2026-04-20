@@ -33,9 +33,9 @@ from rlinf.scheduler import WorkerInfo
 
 class RealWorldEnv(gym.Env):
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
-        assert (
-            num_envs == 1
-        ), f"Currently, only 1 realworld env can be started per worker, but {num_envs=} is received."
+        assert num_envs == 1, (
+            f"Currently, only 1 realworld env can be started per worker, but {num_envs=} is received."
+        )
 
         self.cfg = cfg
         self.override_cfg = OmegaConf.to_container(
