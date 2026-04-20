@@ -406,10 +406,10 @@ _CONFIGS = [
             pi05=True, action_horizon=20, discrete_state_input=False
         ),
         data=DualFrankaDataConfig(
-            repo_id="YinuoTHU/Dual-franka-test",
+            repo_id="YinuoTHU/Dual-franka-tcp",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
-            extra_delta_transform=False,  # pi05_base is pretrained on absolute actions
+            extra_delta_transform=True,  # dataset now stores absolute target EE pose; pipeline subtracts state[0] at training time to form delta TCP pose
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),

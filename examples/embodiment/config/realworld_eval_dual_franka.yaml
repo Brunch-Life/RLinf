@@ -92,8 +92,12 @@ env:
     max_episode_steps: 300
     override_cfg:
       task_description: "pick up the cylinder with the left hand, hand it over to the right hand, and place it on the plate"
-      joint_action_mode: "absolute"
-      teleop_direct_stream: false  # env.step writes move_joints itself
+      # SFT model outputs absolute TCP-pose target (xyz+euler_xyz per arm) in the
+      # 16-d layout matching the preprocessed Dual-franka-tcp dataset; env.step
+      # parses it and dispatches franky.CartesianMotion per arm. Observation is
+      # auto-switched to the matching EE-pose proprio layout.
+      joint_action_mode: "tcp_target"
+      teleop_direct_stream: false  # env.step owns motion; not compatible with tcp_target
       target_ee_pose:
         - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
         - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]

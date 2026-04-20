@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 import gymnasium as gym
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 from rlinf.scheduler import DualFrankaHWInfo
 
@@ -50,7 +51,14 @@ class DualFrankaJointRobotConfig(DualFrankaRobotConfig):
         default_factory=lambda: JOINT_LIMITS_UPPER.copy()
     )
     joint_velocity_limit: float = 0.5
-    joint_action_mode: str = "absolute"  # "absolute" or "delta"
+    # "absolute"  = 16-d action is [L7joints, L_grip, R7joints, R_grip] in radians
+    # "delta"     = same layout but joints are scaled increments on current q
+    # "tcp_target"= action is absolute EE-pose target in the SFT TCP-pose layout
+    #               [L_xyz(3), L_euler(3), _pad, L_grip_trig,
+    #                R_xyz(3), R_euler(3), _pad, R_grip_trig]. Euler = XYZ,
+    #               gripper trigger unchanged. Observation is automatically
+    #               switched to the matching "tcp_euler" proprio layout.
+    joint_action_mode: str = "absolute"
     joint_action_scale: float = 0.1  # rad per unit action (delta mode)
 
     # When True, env.step() does NOT forward joint targets to either
@@ -200,7 +208,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
                 )
             )
 
-        # 16D action: 2 x [7 joints + 1 gripper].
+        # 16D action: 2 x [7 joints + 1 gripper] or 2 x [xyz+euler+pad + grip].
         if self.config.joint_action_mode == "absolute":
             arm_low = np.concatenate(
                 [self.config.joint_position_limits_lower, np.array([-1.0])]
@@ -210,6 +218,39 @@ class DualFrankaJointEnv(DualFrankaEnv):
             )
             act_low = np.concatenate([arm_low, arm_low]).astype(np.float32)
             act_high = np.concatenate([arm_high, arm_high]).astype(np.float32)
+        elif self.config.joint_action_mode == "tcp_target":
+            # Per-arm: [xyz (3, m), euler_xyz (3, rad), pad (1), gripper_trig (1)].
+            # xyz/rpy bounds come from the safe-box config; pad slot kept at 0.
+            arm_low = np.concatenate(
+                [
+                    self.config.ee_pose_limit_min[0, :3],
+                    self.config.ee_pose_limit_min[0, 3:],
+                    np.array([0.0, -1.0]),
+                ]
+            )
+            arm_high = np.concatenate(
+                [
+                    self.config.ee_pose_limit_max[0, :3],
+                    self.config.ee_pose_limit_max[0, 3:],
+                    np.array([0.0, 1.0]),
+                ]
+            )
+            right_low = np.concatenate(
+                [
+                    self.config.ee_pose_limit_min[1, :3],
+                    self.config.ee_pose_limit_min[1, 3:],
+                    np.array([0.0, -1.0]),
+                ]
+            )
+            right_high = np.concatenate(
+                [
+                    self.config.ee_pose_limit_max[1, :3],
+                    self.config.ee_pose_limit_max[1, 3:],
+                    np.array([0.0, 1.0]),
+                ]
+            )
+            act_low = np.concatenate([arm_low, right_low]).astype(np.float32)
+            act_high = np.concatenate([arm_high, right_high]).astype(np.float32)
         else:  # delta
             act_low = np.ones(NUM_ARMS * ACTION_DIM_PER_ARM, dtype=np.float32) * -1.0
             act_high = np.ones(NUM_ARMS * ACTION_DIM_PER_ARM, dtype=np.float32) * 1.0
@@ -254,9 +295,13 @@ class DualFrankaJointEnv(DualFrankaEnv):
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def step(self, action: np.ndarray):
-        """Take a 16D joint-space step.
+        """Take a 16D step in either joint-space or TCP-pose mode.
 
-        ``action = [left_j1..j7, left_grip, right_j1..j7, right_grip]``.
+        - ``joint_action_mode in ("absolute", "delta")``: action is
+          ``[left_j1..j7, left_grip, right_j1..j7, right_grip]``.
+        - ``joint_action_mode == "tcp_target"``: action is
+          ``[L_xyz(3), L_euler_xyz(3), _pad, L_grip, R_xyz(3), R_euler_xyz(3), _pad, R_grip]``
+          matching the SFT TCP-pose dataset layout.
         """
         start_time = time.time()
         action = np.clip(action, self.action_space.low, self.action_space.high)
@@ -266,23 +311,47 @@ class DualFrankaJointEnv(DualFrankaEnv):
         states = [self._left_state, self._right_state]
         ctrls = [self._left_ctrl, self._right_ctrl]
 
+        tcp_mode = self.config.joint_action_mode == "tcp_target"
+
         if not self.config.is_dummy:
             dt = 1.0 / self.config.step_frequency
-            target_joints = []
-            for arm in range(NUM_ARMS):
-                joint_action = actions[arm, :JOINT_DIM_PER_ARM]
-                if self.config.joint_action_mode == "absolute":
-                    tj = joint_action.copy()
-                else:
-                    tj = (
-                        states[arm].arm_joint_position
-                        + joint_action * self.config.joint_action_scale
-                    )
-                tj = self._clip_joints_to_limits(tj)
-                tj = self._clip_joint_velocity(tj, states[arm].arm_joint_position, dt)
-                target_joints.append(tj)
 
-            # Grippers first so they don't contend with a fresh move_joints.
+            target_joints: list[np.ndarray] = []
+            tcp_targets: list[np.ndarray] = []  # per-arm [xyz, quat_xyzw]
+            if tcp_mode:
+                for arm in range(NUM_ARMS):
+                    xyz = actions[arm, 0:3]
+                    euler = actions[arm, 3:6]
+                    # pad slot at index 6 is ignored by design.
+                    xyz = np.clip(
+                        xyz,
+                        self.config.ee_pose_limit_min[arm, :3],
+                        self.config.ee_pose_limit_max[arm, :3],
+                    )
+                    euler = np.clip(
+                        euler,
+                        self.config.ee_pose_limit_min[arm, 3:],
+                        self.config.ee_pose_limit_max[arm, 3:],
+                    )
+                    quat = R.from_euler("xyz", euler).as_quat()  # xyzw
+                    tcp_targets.append(np.concatenate([xyz, quat]))
+            else:
+                for arm in range(NUM_ARMS):
+                    joint_action = actions[arm, :JOINT_DIM_PER_ARM]
+                    if self.config.joint_action_mode == "absolute":
+                        tj = joint_action.copy()
+                    else:
+                        tj = (
+                            states[arm].arm_joint_position
+                            + joint_action * self.config.joint_action_scale
+                        )
+                    tj = self._clip_joints_to_limits(tj)
+                    tj = self._clip_joint_velocity(
+                        tj, states[arm].arm_joint_position, dt
+                    )
+                    target_joints.append(tj)
+
+            # Grippers first so they don't contend with a fresh motion command.
             for arm in range(NUM_ARMS):
                 gripper_val = (
                     actions[arm, JOINT_DIM_PER_ARM] * self.config.action_scale[2]
@@ -291,11 +360,15 @@ class DualFrankaJointEnv(DualFrankaEnv):
                     ctrls[arm], states[arm], gripper_val
                 )
 
-            # Only env.step owns motion commands when teleop is NOT
-            # direct-streaming.  Direct-stream mode leaves move_joints
-            # to the 1 kHz wrapper daemon to avoid two writers racing
-            # on franky's motion queue.
-            if not self.config.teleop_direct_stream:
+            # Motion dispatch. Direct-stream teleop mode leaves motion commands
+            # to the 1 kHz wrapper daemon (joint-space only); TCP mode always
+            # owns motion from env.step.
+            if tcp_mode:
+                left_f = ctrls[0].move_arm(tcp_targets[0].astype(np.float32))
+                right_f = ctrls[1].move_arm(tcp_targets[1].astype(np.float32))
+                left_f.wait()
+                right_f.wait()
+            elif not self.config.teleop_direct_stream:
                 left_f = ctrls[0].move_joints(target_joints[0].astype(np.float32))
                 right_f = ctrls[1].move_joints(target_joints[1].astype(np.float32))
                 left_f.wait()
@@ -358,6 +431,21 @@ class DualFrankaJointEnv(DualFrankaEnv):
         if self.config.is_dummy:
             return self._base_observation_space.sample()
         frames = self._get_camera_frames()
+
+        joint_position = np.concatenate(
+            [
+                self._left_state.arm_joint_position,
+                self._right_state.arm_joint_position,
+            ]
+        )
+        if self.config.joint_action_mode == "tcp_target":
+            # Dataset state[0:16] after alphabetical concat must be
+            #   [L_grip, R_grip, L_xyz(3), L_euler(3), 0pad, R_xyz(3), R_euler(3), 0pad]
+            # to match the preprocessed SFT layout. gripper_position fills
+            # [0:2] already; we overload the joint_position slot [2:16] with
+            # the EE-pose encoding so the downstream _rearrange_state in
+            # dual_franka_policy.py sees the right 16-d prefix.
+            joint_position = self._tcp_euler_14d()
         state = {
             "tcp_pose": np.concatenate(
                 [self._left_state.tcp_pose, self._right_state.tcp_pose]
@@ -365,12 +453,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
             "tcp_vel": np.concatenate(
                 [self._left_state.tcp_vel, self._right_state.tcp_vel]
             ),
-            "joint_position": np.concatenate(
-                [
-                    self._left_state.arm_joint_position,
-                    self._right_state.arm_joint_position,
-                ]
-            ),
+            "joint_position": joint_position,
             "joint_velocity": np.concatenate(
                 [
                     self._left_state.arm_joint_velocity,
@@ -392,3 +475,18 @@ class DualFrankaJointEnv(DualFrankaEnv):
             ),
         }
         return copy.deepcopy({"state": state, "frames": frames})
+
+    def _tcp_euler_14d(self) -> np.ndarray:
+        """Build the [L_xyz, L_euler_xyz, 0pad, R_xyz, R_euler_xyz, 0pad] vector.
+
+        Quat is xyzw (franky convention, see franka/utils.py:107); euler is
+        extrinsic xyz to match ``DualQuat2EulerWrapper`` and the SFT
+        preprocessing in ``toolkits/dual_franka/preprocess_tcp_pose.py``.
+        """
+        out = np.zeros(14, dtype=np.float32)
+        for arm, st in enumerate((self._left_state, self._right_state)):
+            base = arm * 7
+            out[base : base + 3] = st.tcp_pose[:3]
+            out[base + 3 : base + 6] = R.from_quat(st.tcp_pose[3:]).as_euler("xyz")
+            # out[base + 6] = 0  # padding slot kept at zero
+        return out

@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: dual-franka-openpi
-    experiment_name: "test_openpi"
+    experiment_name: "dual_franka_tcp_v1"
     wandb_entity: striding-algo
     logger_backends: ["wandb"] # tensorboard, swanlab
 
