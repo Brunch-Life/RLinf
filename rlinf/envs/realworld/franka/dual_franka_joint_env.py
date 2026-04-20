@@ -362,10 +362,14 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
             # Motion dispatch. Direct-stream teleop mode leaves motion commands
             # to the 1 kHz wrapper daemon (joint-space only); TCP mode always
-            # owns motion from env.step.
+            # owns motion from env.step via a Cartesian impedance stream.
             if tcp_mode:
-                left_f = ctrls[0].move_arm(tcp_targets[0].astype(np.float32))
-                right_f = ctrls[1].move_arm(tcp_targets[1].astype(np.float32))
+                left_f = ctrls[0].stream_tcp_impedance(
+                    tcp_targets[0].astype(np.float32)
+                )
+                right_f = ctrls[1].stream_tcp_impedance(
+                    tcp_targets[1].astype(np.float32)
+                )
                 left_f.wait()
                 right_f.wait()
             elif not self.config.teleop_direct_stream:

@@ -74,6 +74,17 @@ _DEFAULT_FORCE_THRESHOLD = [100.0, 100.0, 100.0, 25.0, 25.0, 25.0]
 _DEFAULT_JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _DEFAULT_JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
+# Cartesian impedance gains used by ``stream_tcp_impedance`` — franky
+# defaults translate to N/m for xyz and Nm/rad for rotation.  Kept at
+# franky defaults; bump if the TCP-pose policy's tracking is too soft.
+_DEFAULT_TRANS_STIFFNESS = 2000.0
+_DEFAULT_ROT_STIFFNESS = 200.0
+# Per-motion "duration" the impedance controller runs before it settles;
+# each ``stream_tcp_impedance`` call submits a new motion asynchronously
+# and franky preempts the previous one, so we just need this > env.step
+# period (100 ms at 10 Hz) to keep the motion active between calls.
+_TCP_STREAM_DURATION_S = 0.3
+
 # Global dynamics factor scales JointMotion/CartesianMotion planned
 # moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
 # the torque-mode impedance tracker.
@@ -494,6 +505,56 @@ class FrankyController(Worker):
             self._logger.debug(f"Joint reset complete: {final}")
         except Exception:
             pass
+
+    def stream_tcp_impedance(
+        self,
+        position: np.ndarray,
+        duration_s: float = _TCP_STREAM_DURATION_S,
+        translational_stiffness: float = _DEFAULT_TRANS_STIFFNESS,
+        rotational_stiffness: float = _DEFAULT_ROT_STIFFNESS,
+    ):
+        """Update the Cartesian impedance reference (non-blocking).
+
+        Submits a ``CartesianImpedanceMotion`` asynchronously with the
+        given 7-d target ``[xyz, quat_xyzw]``.  franky's async preemption
+        replaces any previous in-flight motion on the C++ side, so at
+        10 Hz this keeps the impedance controller permanently running
+        with a freshly-updated reference — no per-call trajectory
+        replanning, and no repeated tracker teardown (the difference
+        from ``move_arm``, which uses the planned ``CartesianMotion``).
+
+        Stops the joint impedance tracker on first use; leaves it off
+        afterwards (the joint and Cartesian torque modes can't coexist).
+        """
+        assert len(position) == 7, (
+            f"Invalid position, expected 7 dims but got {len(position)}"
+        )
+        self._stop_tracking_motion()
+        franky = self._franky
+
+        translation = np.asarray(position[:3], dtype=np.float64)
+        quat = np.asarray(position[3:], dtype=np.float64)
+        rotation_matrix = R.from_quat(quat).as_matrix()
+        T = np.eye(4)
+        T[:3, :3] = rotation_matrix
+        T[:3, 3] = translation
+
+        motion = franky.CartesianImpedanceMotion(
+            franky.Affine(T),
+            franky.Duration(duration_s),
+            translational_stiffness=translational_stiffness,
+            rotational_stiffness=rotational_stiffness,
+            return_when_finished=False,
+        )
+        try:
+            self._robot.move(motion, asynchronous=True)
+        except Exception as e:
+            self._logger.warning(f"Cartesian impedance update failed: {e}")
+            try:
+                self._robot.join_motion()
+            except Exception:
+                pass
+            self.clear_errors()
 
     def move_arm(self, position: np.ndarray):
         """Submit a Cartesian target (non-blocking).
