@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl", "dosw1")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1")
 
 #=======================Utility Functions=======================
 
@@ -994,9 +994,31 @@ install_dosw1_env() {
     # transformers/imageio/gymnasium dependency set as other embodied envs.
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install evdev opencv-python
-    # install dosw1-sdk
-    uv pip install ~/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl
-    uv pip install -e ~/dos_w1/airbot/airbot_api
+
+    # Install DOSW1 SDK. The wheel / airbot_api source are pre-deployed on the
+    # DOS-W1 robot under ~/dos_w1/airbot by default; on a generic server they
+    # are usually absent. Users may override the paths via env vars:
+    #   DOSW1_SDK_WHEEL  - path to airbot_py-*.whl
+    #   DOSW1_API_PATH   - path to the airbot_api source tree
+    # If the paths are missing, we skip the SDK install with a warning so the
+    # rest of the env still gets set up (e.g. for server-side training runs
+    # that talk to the robot over gRPC and do not need the local SDK).
+    local dosw1_sdk_wheel="${DOSW1_SDK_WHEEL:-$HOME/dos_w1/airbot/5.1.6/airbot_py-5.1.6-py3-none-any.whl}"
+    local dosw1_api_path="${DOSW1_API_PATH:-$HOME/dos_w1/airbot/airbot_api}"
+
+    if [ -f "$dosw1_sdk_wheel" ]; then
+        uv pip install "$dosw1_sdk_wheel"
+    else
+        echo "[dosw1] WARNING: DOSW1 SDK wheel not found at '$dosw1_sdk_wheel'." >&2
+        echo "[dosw1] WARNING: Skipping 'airbot_py' install. Set DOSW1_SDK_WHEEL to the wheel path if you need the local SDK." >&2
+    fi
+
+    if [ -d "$dosw1_api_path" ]; then
+        uv pip install -e "$dosw1_api_path"
+    else
+        echo "[dosw1] WARNING: DOSW1 airbot_api source not found at '$dosw1_api_path'." >&2
+        echo "[dosw1] WARNING: Skipping 'airbot_api' install. Set DOSW1_API_PATH to the source directory if you need the local SDK." >&2
+    fi
 
     local repo_root
     repo_root="$(dirname "$SCRIPT_DIR")"

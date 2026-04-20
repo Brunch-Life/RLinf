@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import gymnasium as gym
 
+
 class LeaderFollowerKeyboardIntervention(gym.Wrapper):
     """Keyboard intervention wrapper for leader-follower teleoperation envs."""
 

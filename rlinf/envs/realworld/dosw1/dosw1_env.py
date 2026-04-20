@@ -184,17 +184,28 @@ class DOSW1Env(gym.Env):
         if self.config.is_dummy:
             return self._get_observation(), {}
 
+        options = options or {}
+        skip_wait_for_start = bool(options.get("skip_wait_for_start", False))
+
         if self.config.enable_human_in_loop:
             self.in_free_teleop = True
             self.start_episode_requested = False
             self._set_leader_follow_enabled(
                 enabled=True, source="reset_enter_free_teleop"
             )
-            self._logger.info(
-                "[DOSW1Env] FreeTeleop mode active. "
-                "Move arms freely via leader arm. Press 's' to start episode."
-            )
-            self._free_teleop_loop()
+            if skip_wait_for_start:
+                # Caller explicitly asked not to block on the 's' key, e.g.
+                # the final reset in collect_real_data.py after the last episode.
+                self._logger.info(
+                    "[DOSW1Env] Skipping free-teleop start wait "
+                    "(options.skip_wait_for_start=True)."
+                )
+            else:
+                self._logger.info(
+                    "[DOSW1Env] FreeTeleop mode active. "
+                    "Move arms freely via leader arm. Press 's' to start episode."
+                )
+                self._free_teleop_loop()
             self.snapshot_teleop_init()
             manual_episode_control_only = bool(
                 getattr(self.config, "manual_episode_control_only", False)
@@ -645,8 +656,8 @@ class DOSW1Env(gym.Env):
             start_y = (height - crop) // 2
             cropped = frame_rgb[start_y : start_y + crop, start_x : start_x + crop]
             resized = cv2.resize(cropped, (IMAGE_W, IMAGE_H))
-            frames[camera._camera_info.name] = resized[..., ::-1]
-            display_frames[camera._camera_info.name] = resized
+            frames[camera.name] = resized[..., ::-1]
+            display_frames[camera.name] = resized
         self._camera_player.put_frame(display_frames)
         return frames
 
