@@ -86,6 +86,13 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
     CONFIG_CLS: type[DualFrankaJointRobotConfig] = DualFrankaJointRobotConfig
 
+    # Set by ``create_dual_franka_joint_env`` based on whether an outer teleop
+    # wrapper will own reset-alignment. When False (teleop wrapper present),
+    # ``_go_to_rest`` is a no-op so the wrapper can slew to its device pose
+    # without a prior "home then drop" glitch. When True (autonomous policy
+    # rollout / eval), ``_go_to_rest`` drives both arms to ``joint_reset_qpos``.
+    _autonomous_reset: bool = False
+
     def _setup_hardware(self):
         """Launch two FrankyController Ray actors (one per arm)."""
         from .franky_controller import FrankyController
@@ -176,16 +183,24 @@ class DualFrankaJointEnv(DualFrankaEnv):
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
     def _go_to_rest(self, joint_reset: bool = False):
-        """No-op — the outer GELLO wrapper aligns both arms to GELLO's live pose.
+        """Drive both arms to ``joint_reset_qpos`` when owning the reset.
 
-        Going to ``joint_reset_qpos`` first and then letting
-        ``DualGelloJointIntervention._align_to_gello`` slew onto GELLO causes
-        a visible "home then drop" since GELLO's rest configuration is
-        typically below home.  Since this env is only used under GELLO joint
-        teleop, we skip the home step entirely and let the outer wrapper
-        drive the single reset motion straight to GELLO.
+        Gated by :attr:`_autonomous_reset`: if an outer teleop wrapper will
+        re-align the arms (GELLO/spacemouse), this is a no-op, since going
+        home first and then slewing to the device pose produces a visible
+        "home then drop" glitch. In autonomous rollout / eval no wrapper
+        owns alignment, so we drive the arms home ourselves.
         """
         del joint_reset
+        if not self._autonomous_reset:
+            return
+        left_f = self._left_ctrl.reset_joint(self.config.joint_reset_qpos[0])
+        right_f = self._right_ctrl.reset_joint(self.config.joint_reset_qpos[1])
+        left_f.wait()
+        right_f.wait()
+        time.sleep(0.5)
+        self._left_state = self._left_ctrl.get_state().wait()[0]
+        self._right_state = self._right_ctrl.get_state().wait()[0]
 
     def _init_action_obs_spaces(self):
         # Per-arm Cartesian safety boxes — kept for informational clipping

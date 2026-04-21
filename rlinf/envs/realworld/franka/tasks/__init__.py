@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -212,6 +212,13 @@ def create_dual_franka_joint_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
+    # Autonomous-policy rollout (no teleop wrapper) → env.reset() must
+    # drive the arms home itself; otherwise the outer teleop wrapper does.
+    teleop_active = env_cfg is not None and any(
+        env_cfg.get(k, False)
+        for k in ("use_spacemouse", "use_gello", "use_gello_joint")
+    )
+    env._autonomous_reset = not teleop_active
     return _apply_common_wrappers(env, env_cfg)
 
 

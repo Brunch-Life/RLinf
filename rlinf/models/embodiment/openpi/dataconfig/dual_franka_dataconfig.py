@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,19 +38,18 @@ class DualFrankaDataConfig(DataConfigFactory):
     def create(
         self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig
     ) -> DataConfig:
-        # Rename raw parquet feature keys into the structure expected by
-        # ``DualFrankaInputs``. Camera mapping is taken from
-        # DUAL_FRANKA_GELLO_COLLECT.md Section 8.
+        # Map LeRobot keys into the `observation/*` layout DualFrankaInputs
+        # shares with eval's obs_processor. Camera mapping is taken from
+        # DUAL_FRANKA_GELLO_COLLECT.md Section 8: main = left wrist,
+        # extra_view_image-0 = base, extra_view_image-1 = right wrist.
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "images": {
-                            "cam_base": "extra_view_image-0",
-                            "cam_left_wrist": "image",
-                            "cam_right_wrist": "extra_view_image-1",
-                        },
-                        "state": "state",
+                        "observation/image": "image",
+                        "observation/extra_view_image-0": "extra_view_image-0",
+                        "observation/extra_view_image-1": "extra_view_image-1",
+                        "observation/state": "state",
                         "actions": "actions",
                         "prompt": "prompt",
                     }

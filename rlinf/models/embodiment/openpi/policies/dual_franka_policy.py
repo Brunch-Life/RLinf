@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ Dataset layout (see DUAL_FRANKA_GELLO_COLLECT.md):
   [8:15] right 7 joints, [15] right gripper trigger.
 - images: ``cam_base`` (3rd-person), ``cam_left_wrist``, ``cam_right_wrist``.
 """
+
 import dataclasses
 
 import einops
 import numpy as np
 from openpi import transforms
 from openpi.models import model as _model
-
 
 # State slice we feed the model: 16 dims laid out to mirror action order.
 _STATE_SLICE_DIM = 16
@@ -50,6 +50,25 @@ def _rearrange_state(state: np.ndarray) -> np.ndarray:
     )
 
 
+def _extract_extra_views(data: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(base, right_wrist)`` images from whichever layout is present.
+
+    Inference (``openpi_action_model.obs_processor``) hands us a single
+    stacked tensor under ``observation/extra_view_image`` (alphabetical:
+    base, right). LeRobot training samples arrive as separate per-view
+    keys ``observation/extra_view_image-0`` / ``-1``. We normalize both
+    into a single ``(base, right)`` tuple so ``__call__`` can stay linear.
+    """
+    stacked = data.get("observation/extra_view_image")
+    if stacked is not None:
+        extra = np.asarray(stacked)
+        return _parse_image(extra[0]), _parse_image(extra[1])
+    return (
+        _parse_image(data["observation/extra_view_image-0"]),
+        _parse_image(data["observation/extra_view_image-1"]),
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class DualFrankaInputs(transforms.DataTransformFn):
     """Feeds dual-Franka observations into the pi0 / pi05 model."""
@@ -61,13 +80,12 @@ class DualFrankaInputs(transforms.DataTransformFn):
     model_type: _model.ModelType = _model.ModelType.PI0
 
     def __call__(self, data: dict) -> dict:
-        state = _rearrange_state(data["state"])
+        state = _rearrange_state(data["observation/state"])
         state = transforms.pad_to_dim(state, self.action_dim)
 
-        images = data["images"]
-        base_image = _parse_image(images["cam_base"])
-        left_wrist_image = _parse_image(images["cam_left_wrist"])
-        right_wrist_image = _parse_image(images["cam_right_wrist"])
+        # Main view is always the left wrist (main_image_key convention).
+        left_wrist_image = _parse_image(data["observation/image"])
+        base_image, right_wrist_image = _extract_extra_views(data)
 
         inputs = {
             "state": state,
