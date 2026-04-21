@@ -700,6 +700,92 @@ class FrankyController(Worker):
         self._prev_tcp_target = np.concatenate([translation, quat])
         self._prev_tcp_target_ts = now
 
+    def move_waypoints(
+        self,
+        positions: np.ndarray,
+        velocities: Optional[np.ndarray] = None,
+        relative_dynamics_factor: Optional[float] = None,
+    ):
+        """Submit a pose-chunk as one Ruckig-planned ``CartesianWaypointMotion``.
+
+        Args:
+            positions: ``(N, 7)`` array of ``[xyz, quat_xyzw]`` waypoints.
+            velocities: Optional ``(N, 6)`` array of ``[linear(3),
+                angular(3)]`` twists attached to each waypoint. Non-zero
+                rows tell Ruckig to blend **through** the waypoint at that
+                speed rather than decelerate to zero (franky's default for
+                pose-only waypoints). Typical usage: finite-difference the
+                pose stream and pass all rows except the last, leaving the
+                last as zeros for a graceful stop that the next chunk will
+                preempt. ``angular`` is rotvec (axis * rate, rad/s) — not
+                Euler rates — to match franky's ``Twist`` convention.
+            relative_dynamics_factor: Optional Ruckig v/a/j scale on top
+                of the robot-level factor. Defaults to the motion's own
+                default (1.0) if ``None``.
+
+        Submitted with ``asynchronous=True`` + ``return_when_finished=False``
+        so the next chunk can preempt via another ``robot.move`` call
+        before Ruckig finishes decelerating on the current chunk's last
+        waypoint. Any impedance tracker (joint- or Cartesian-space) is
+        stopped first — franky forbids control-mode switches mid-flight.
+        """
+        positions = np.asarray(positions, dtype=np.float64)
+        assert positions.ndim == 2 and positions.shape[1] == 7, (
+            f"positions must be (N, 7) [xyz, quat_xyzw]; got {positions.shape}"
+        )
+        if velocities is not None:
+            velocities = np.asarray(velocities, dtype=np.float64)
+            assert velocities.shape == (positions.shape[0], 6), (
+                f"velocities must be (N, 6) matching positions; got {velocities.shape}"
+            )
+
+        n = positions.shape[0]
+        if n == 0:
+            return
+
+        self._stop_tracking_motion()
+        franky = self._franky
+
+        waypoints = []
+        for i in range(n):
+            pos = positions[i, :3]
+            quat = positions[i, 3:]
+            T = np.eye(4)
+            T[:3, :3] = R.from_quat(quat).as_matrix()
+            T[:3, 3] = pos
+            affine = franky.Affine(T)
+
+            if velocities is not None and float(np.linalg.norm(velocities[i])) > 1e-8:
+                twist = franky.Twist(
+                    linear_velocity=velocities[i, :3],
+                    angular_velocity=velocities[i, 3:],
+                )
+                target = franky.CartesianState(affine, twist)
+            else:
+                # Pose-only waypoint: Ruckig decelerates here. Use on the
+                # final waypoint for graceful stop.
+                target = affine
+
+            waypoints.append(franky.CartesianWaypoint(target))
+
+        kwargs = {"return_when_finished": False}
+        if relative_dynamics_factor is not None:
+            kwargs["relative_dynamics_factor"] = relative_dynamics_factor
+        motion = franky.CartesianWaypointMotion(waypoints, **kwargs)
+
+        try:
+            self._robot.move(motion, asynchronous=True)
+        except Exception as e:
+            # Preempt-of-other-modes or stored errors from prior motions
+            # surface here; clear and let the caller retry on the next
+            # chunk instead of killing the whole rollout.
+            self._logger.warning(f"move_waypoints dispatch failed: {e}")
+            try:
+                self._robot.join_motion()
+            except Exception:
+                pass
+            self.clear_errors()
+
     def move_arm(self, position: np.ndarray):
         """Submit a Cartesian target (non-blocking).
 

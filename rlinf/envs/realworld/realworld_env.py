@@ -315,6 +315,33 @@ class RealWorldEnv(gym.Env):
 
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
+
+        # Give TCP-pose envs a chance to submit the whole chunk as one
+        # planned trajectory per arm (CartesianWaypointMotion) up-front,
+        # rather than have the per-step loop below stream 100 ms impedance
+        # target steps into a torque controller. Inner envs that don't
+        # implement ``dispatch_chunk`` fall through to the legacy per-step
+        # dispatch inside their own ``step``. num_envs==1 in realworld;
+        # SyncVectorEnv.call broadcasts to the single sub-env.
+        if chunk_size > 0:
+            try:
+                actions_t = chunk_actions[0]
+                if isinstance(actions_t, torch.Tensor):
+                    actions_np = actions_t.detach().cpu().numpy()
+                else:
+                    actions_np = np.asarray(actions_t)
+                self.env.call("dispatch_chunk", actions_np)
+            except AttributeError:
+                # Inner env does not implement dispatch_chunk → legacy path.
+                pass
+            except Exception as e:
+                # Non-fatal: fall back to per-step dispatch if the whole-
+                # chunk submission errored (bad pose, preempt race, etc.).
+                print(
+                    f"[realworld_env] dispatch_chunk failed, "
+                    f"falling back to per-step: {e}"
+                )
+
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(

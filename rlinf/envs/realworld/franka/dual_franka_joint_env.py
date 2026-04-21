@@ -300,6 +300,106 @@ class DualFrankaJointEnv(DualFrankaEnv):
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
+    def dispatch_chunk(self, chunk_actions: np.ndarray) -> None:
+        """Submit a whole TCP-pose chunk as one planned motion per arm.
+
+        Called once per 20-step policy chunk in ``tcp_target`` mode, at
+        the start of ``RealWorldEnv.chunk_step``, before the per-step
+        ``env.step`` loop begins. Each arm receives one
+        ``CartesianWaypointMotion`` built from the full chunk, with
+        finite-differenced twists attached to every intermediate
+        waypoint so Ruckig blends through them at the policy's intended
+        speed instead of decelerating to zero between each 100 ms
+        policy sample (the old per-step ``stream_tcp_impedance`` path
+        fed the impedance controller 100 ms step jumps, which caused
+        J7 chatter + TCP overshoot once the target plateaued).
+
+        Subsequent chunks preempt the in-flight motion via another
+        asynchronous ``robot.move`` call. The last waypoint of each
+        chunk is left with zero velocity so that if the stream halts
+        (end of eval, termination) the arm comes to a graceful stop
+        on the trajectory that's already been planned.
+
+        No-op outside ``tcp_target`` mode — joint-space ``move_joints``
+        streaming is already smooth because the 7-DOF joint task leaves
+        no redundant DOF free to chatter, and no-op in dummy mode.
+        """
+        if self.config.is_dummy:
+            return
+        if self.config.joint_action_mode != "tcp_target":
+            return
+
+        chunk_actions = np.asarray(chunk_actions, dtype=np.float64)
+        expected_dim = NUM_ARMS * ACTION_DIM_PER_ARM
+        assert chunk_actions.ndim == 2 and chunk_actions.shape[1] == expected_dim, (
+            f"chunk_actions must be (chunk_size, {expected_dim}); "
+            f"got {chunk_actions.shape}"
+        )
+        chunk_size = chunk_actions.shape[0]
+        if chunk_size == 0:
+            return
+
+        dt = 1.0 / self.config.step_frequency
+
+        left_poses = np.zeros((chunk_size, 7), dtype=np.float64)
+        right_poses = np.zeros((chunk_size, 7), dtype=np.float64)
+        for t in range(chunk_size):
+            action = np.clip(
+                chunk_actions[t],
+                self.action_space.low,
+                self.action_space.high,
+            )
+            per_arm = action.reshape(NUM_ARMS, ACTION_DIM_PER_ARM)
+            for arm, out in enumerate((left_poses, right_poses)):
+                xyz = np.clip(
+                    per_arm[arm, 0:3],
+                    self.config.ee_pose_limit_min[arm, :3],
+                    self.config.ee_pose_limit_max[arm, :3],
+                )
+                euler = np.clip(
+                    per_arm[arm, 3:6],
+                    self.config.ee_pose_limit_min[arm, 3:],
+                    self.config.ee_pose_limit_max[arm, 3:],
+                )
+                # pad slot at index 6 is ignored by design.
+                quat = R.from_euler("xyz", euler).as_quat()  # xyzw
+                out[t, :3] = xyz
+                out[t, 3:] = quat
+
+        left_vels = self._finite_diff_twists(left_poses, dt)
+        right_vels = self._finite_diff_twists(right_poses, dt)
+
+        left_f = self._left_ctrl.move_waypoints(left_poses, left_vels)
+        right_f = self._right_ctrl.move_waypoints(right_poses, right_vels)
+        left_f.wait()
+        right_f.wait()
+
+    @staticmethod
+    def _finite_diff_twists(poses: np.ndarray, dt: float) -> np.ndarray:
+        """Estimate per-waypoint twist ``[v, ω]`` from a pose sequence.
+
+        Central differences on intermediate waypoints, forward diff on
+        the first. Last row left as zeros so Ruckig plans a clean stop
+        at chunk end — the next chunk preempts this before it fires.
+
+        Angular component is ``(R_{i+1} · R_{i−1}⁻¹).as_rotvec() / Δt``
+        (axis * angle-rate, rad/s), matching franky's ``Twist`` convention
+        (rotvec, not Euler rates).
+        """
+        n = poses.shape[0]
+        twists = np.zeros((n, 6), dtype=np.float64)
+        if n < 2:
+            return twists
+        for t in range(n - 1):  # last row left zero → graceful stop
+            if t == 0:
+                lo, hi, h = 0, 1, dt
+            else:
+                lo, hi, h = t - 1, t + 1, 2.0 * dt
+            twists[t, :3] = (poses[hi, :3] - poses[lo, :3]) / h
+            drot = R.from_quat(poses[hi, 3:]) * R.from_quat(poses[lo, 3:]).inv()
+            twists[t, 3:] = drot.as_rotvec() / h
+        return twists
+
     def step(self, action: np.ndarray):
         """Take a 16D step in either joint-space or TCP-pose mode.
 
@@ -366,18 +466,16 @@ class DualFrankaJointEnv(DualFrankaEnv):
                     ctrls[arm], states[arm], gripper_val
                 )
 
-            # Motion dispatch. Direct-stream teleop mode leaves motion commands
-            # to the 1 kHz wrapper daemon (joint-space only); TCP mode always
-            # owns motion from env.step via a Cartesian impedance stream.
+            # Motion dispatch. Direct-stream teleop mode leaves motion
+            # commands to the 1 kHz wrapper daemon (joint-space only);
+            # in tcp_target mode, motion is *already in flight* — the
+            # whole chunk was submitted as one CartesianWaypointMotion
+            # per arm by dispatch_chunk at the start of
+            # RealWorldEnv.chunk_step, so per-step env.step here just
+            # paces 10 Hz and samples state.
+            del tcp_targets  # not re-sent per-step in chunked waypoint mode
             if tcp_mode:
-                left_f = ctrls[0].stream_tcp_impedance(
-                    tcp_targets[0].astype(np.float32)
-                )
-                right_f = ctrls[1].stream_tcp_impedance(
-                    tcp_targets[1].astype(np.float32)
-                )
-                left_f.wait()
-                right_f.wait()
+                pass  # motion already in flight; see dispatch_chunk
             elif not self.config.teleop_direct_stream:
                 left_f = ctrls[0].move_joints(target_joints[0].astype(np.float32))
                 right_f = ctrls[1].move_joints(target_joints[1].astype(np.float32))
