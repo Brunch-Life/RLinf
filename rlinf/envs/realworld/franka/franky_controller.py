@@ -95,11 +95,15 @@ _TCP_ANG_VEL_LIMIT = 2.5  # rad/s
 # Null-space stiffness for the Cartesian impedance tracker. Franka has
 # 7 DOF while the TCP task constrains 6, so the remaining redundant DOF
 # (chiefly J7 / elbow circle) is an undamped oscillator when this is
-# zero — the arm chatters the moment the TCP target stops moving. A
-# small-but-nonzero value pulls the null-space configuration back toward
-# the q snapshot taken at tracker start, giving J7 an effective spring
-# + damping without fighting the 6-DOF Cartesian task.
-_DEFAULT_NULLSPACE_STIFFNESS = 20.0
+# zero. We cannot refresh nullspace_target at runtime (franky's Tracker
+# API only takes it once at construction), so we anchor on the
+# configuration q at tracker start. A large stiffness then pulls q back
+# toward that frozen snapshot as the TCP moves — the null-space torque
+# is in principle orthogonal to the 6-DOF task, but in practice anything
+# above single digits visibly disturbs Cartesian tracking. Keep it small
+# so it only supplies damping on the redundant DOF; J7 runaway is still
+# bounded by the joint-limit pushback the tracker applies below.
+_DEFAULT_NULLSPACE_STIFFNESS = 5.0
 
 # Global dynamics factor scales JointMotion/CartesianMotion planned
 # moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
