@@ -13,10 +13,14 @@
 # limitations under the License.
 # openpi model configs
 
+import logging
 import os
+import sys
 
 import torch
 from omegaconf import DictConfig
+
+_logger = logging.getLogger(__name__)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -93,13 +97,36 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    norm_stats = None
-    if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
+    # Prefer norm stats pinned in the checkpoint so inference uses the exact
+    # normalization seen during training. Fall back to repo-level assets (already
+    # loaded into ``data_config.norm_stats`` from ``actor_train_config.assets_dirs``
+    # above) for checkpoints that weren't pinned — with a loud warning, since
+    # any drift in the repo copy would silently corrupt inference.
+    if data_config.asset_id is None:
+        raise ValueError("Asset id is required to load norm stats.")
+    norm_stats_path = os.path.join(
+        checkpoint_dir, data_config.asset_id, "norm_stats.json"
+    )
+    if os.path.exists(norm_stats_path):
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
+    else:
+        norm_stats = data_config.norm_stats
+        if norm_stats is None:
+            raise FileNotFoundError(
+                f"No norm stats at {norm_stats_path} and no repo-asset fallback "
+                f"for asset_id={data_config.asset_id!r}."
+            )
+        _banner = "!" * 78
+        _msg = (
+            f"\n{_banner}\n"
+            f"!! NORM STATS FALLBACK\n"
+            f"!! No pinned norm_stats.json at {norm_stats_path}\n"
+            f"!! Using repo-level assets copy for asset_id={data_config.asset_id!r}.\n"
+            f"!! If repo assets have drifted from training, inference will be WRONG.\n"
+            f"{_banner}"
+        )
+        print(_msg, file=sys.stderr, flush=True)
+        _logger.warning(_msg)
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None
