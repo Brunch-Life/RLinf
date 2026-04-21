@@ -92,6 +92,15 @@ _TCP_STREAM_DURATION_S = 0.3
 _TCP_LIN_VEL_LIMIT = 1.0  # m/s
 _TCP_ANG_VEL_LIMIT = 2.5  # rad/s
 
+# Null-space stiffness for the Cartesian impedance tracker. Franka has
+# 7 DOF while the TCP task constrains 6, so the remaining redundant DOF
+# (chiefly J7 / elbow circle) is an undamped oscillator when this is
+# zero — the arm chatters the moment the TCP target stops moving. A
+# small-but-nonzero value pulls the null-space configuration back toward
+# the q snapshot taken at tracker start, giving J7 an effective spring
+# + damping without fighting the 6-DOF Cartesian task.
+_DEFAULT_NULLSPACE_STIFFNESS = 20.0
+
 # Global dynamics factor scales JointMotion/CartesianMotion planned
 # moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
 # the torque-mode impedance tracker.
@@ -480,7 +489,15 @@ class FrankyController(Worker):
         self._prev_target_ts = now
 
     def _stop_tracking_motion(self):
-        """Stop any active impedance tracker (joint and/or Cartesian)."""
+        """Stop any active impedance tracker (joint and/or Cartesian).
+
+        After stopping, also flush any in-flight motion and clear errors
+        so libfranka is guaranteed to be in a quiescent state on return.
+        Without this, a tracker that was oscillating (e.g. Cartesian
+        nullspace chatter) can leave stale torque commands that prevent
+        the next motion from switching control mode cleanly.
+        """
+        had_tracker = self._tracker is not None or self._cart_tracker is not None
         if self._tracker is not None:
             try:
                 self._tracker.stop()
@@ -497,6 +514,16 @@ class FrankyController(Worker):
         self._prev_target_ts = None
         self._prev_tcp_target = None
         self._prev_tcp_target_ts = None
+
+        if had_tracker:
+            try:
+                self._robot.join_motion()
+            except Exception:
+                pass
+            try:
+                self._robot.recover_from_errors()
+            except Exception:
+                pass
 
     def _ensure_cart_tracking_motion(
         self,
@@ -526,12 +553,37 @@ class FrankyController(Worker):
             pass
         self.clear_errors()
 
+        # Snapshot the current joints as the null-space anchor. Without
+        # this Franka's redundant DOF (J7 / elbow) floats freely and
+        # chatters violently once the TCP target stops moving. Also pass
+        # the per-joint limits so the tracker pushes back softly before
+        # we hit libfranka's hard limit + reflex state.
+        try:
+            current_q = np.asarray(
+                self._robot.current_joint_positions, dtype=np.float64
+            )
+        except Exception as e:
+            self._logger.warning(
+                f"Could not read current_joint_positions for nullspace anchor: {e}; "
+                f"starting tracker without null-space target"
+            )
+            current_q = None
+
         self._cart_tracker = self._franky.CartesianImpedanceTracker(
             self._robot,
             translational_stiffness=translational_stiffness,
             rotational_stiffness=rotational_stiffness,
+            nullspace_target=current_q,
+            nullspace_stiffness=(
+                _DEFAULT_NULLSPACE_STIFFNESS if current_q is not None else 0.0
+            ),
+            lower_joint_limits=JOINT_LIMITS_LOWER,
+            upper_joint_limits=JOINT_LIMITS_UPPER,
         )
-        self._logger.info("Cartesian impedance tracking motion started")
+        self._logger.info(
+            "Cartesian impedance tracking motion started "
+            f"(nullspace_stiffness={_DEFAULT_NULLSPACE_STIFFNESS if current_q is not None else 0.0})"
+        )
 
     def reset_joint(self, reset_pos: list[float]):
         """Blocking joint reset — matches env ``reset()`` semantics.
