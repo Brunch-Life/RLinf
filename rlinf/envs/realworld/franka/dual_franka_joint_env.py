@@ -86,13 +86,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
     CONFIG_CLS: type[DualFrankaJointRobotConfig] = DualFrankaJointRobotConfig
 
-    # Set by ``create_dual_franka_joint_env`` based on whether an outer teleop
-    # wrapper will own reset-alignment. When False (teleop wrapper present),
-    # ``_go_to_rest`` is a no-op so the wrapper can slew to its device pose
-    # without a prior "home then drop" glitch. When True (autonomous policy
-    # rollout / eval), ``_go_to_rest`` drives both arms to ``joint_reset_qpos``.
-    _autonomous_reset: bool = False
-
     def _setup_hardware(self):
         """Launch two FrankyController Ray actors (one per arm)."""
         from .franky_controller import FrankyController
@@ -183,17 +176,15 @@ class DualFrankaJointEnv(DualFrankaEnv):
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
     def _go_to_rest(self, joint_reset: bool = False):
-        """Drive both arms to ``joint_reset_qpos`` when owning the reset.
+        """Drive both arms to ``joint_reset_qpos`` — the primary reset pose.
 
-        Gated by :attr:`_autonomous_reset`: if an outer teleop wrapper will
-        re-align the arms (GELLO/spacemouse), this is a no-op, since going
-        home first and then slewing to the device pose produces a visible
-        "home then drop" glitch. In autonomous rollout / eval no wrapper
-        owns alignment, so we drive the arms home ourselves.
+        This is what eval / autonomous rollout needs so the policy's first
+        obs is in-distribution. Teleop wrappers (e.g.
+        :class:`DualGelloJointIntervention`) layer their own device-pose
+        alignment on top in their :py:meth:`reset`, so collect mode gets
+        ``joint_reset_qpos`` → device pose as two sequential motions.
         """
         del joint_reset
-        if not self._autonomous_reset:
-            return
         left_f = self._left_ctrl.reset_joint(self.config.joint_reset_qpos[0])
         right_f = self._right_ctrl.reset_joint(self.config.joint_reset_qpos[1])
         left_f.wait()
