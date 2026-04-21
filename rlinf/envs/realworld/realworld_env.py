@@ -237,13 +237,17 @@ class RealWorldEnv(gym.Env):
         raw_images = OrderedDict(sorted(frames.items()))
         raw_images.pop(self.main_image_key)
 
+        extra_view_image_names = None
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
-            # Names travel with the stack so policies can verify index→view.
-            obs["extra_view_image_names"] = tuple(raw_images.keys())
+            extra_view_image_names = tuple(raw_images.keys())
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
+        # Names travel alongside the image stack so policies can verify
+        # index→view; kept as a str-tuple (not tensorized) on purpose.
+        if extra_view_image_names is not None:
+            obs["extra_view_image_names"] = extra_view_image_names
         return obs
 
     def step(self, actions=None, auto_reset=True):

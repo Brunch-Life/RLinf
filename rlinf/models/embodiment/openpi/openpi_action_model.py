@@ -255,6 +255,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         else:
             inputs = {key: inputs[key] for key in inputs.keys() if "/" in key}
 
+        # Non-tensor str fields (e.g. camera-name order) must bypass jax.tree
+        # which would otherwise recurse into the tuple and hit .shape on str.
+        extra_view_names = inputs.pop("observation/extra_view_image_names", None)
+
         # tensor -> numpy
         inputs = jax.tree.map(
             lambda x: np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x, inputs
@@ -278,6 +282,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 sample["prompt"] = obs["prompt"][i]
             else:
                 sample["prompt"] = "xxxx"
+            if extra_view_names is not None:
+                # merge_env_outputs wraps non-tensor fields as a per-env list.
+                sample["observation/extra_view_image_names"] = tuple(
+                    extra_view_names[i]
+                )
             transformed_sample = self._input_transform(sample)
             transformed_samples.append(transformed_sample)
         # recombine
