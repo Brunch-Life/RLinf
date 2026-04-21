@@ -541,7 +541,7 @@ class FrankyController(Worker):
 
         motion = franky.CartesianImpedanceMotion(
             franky.Affine(T),
-            franky.Duration(duration_s),
+            franky.Duration(int(duration_s * 1000)),
             translational_stiffness=translational_stiffness,
             rotational_stiffness=rotational_stiffness,
             return_when_finished=False,
