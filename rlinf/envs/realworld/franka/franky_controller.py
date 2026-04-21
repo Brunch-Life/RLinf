@@ -188,8 +188,11 @@ class FrankyController(Worker):
             port=gripper_connection,
         )
 
-        # Impedance tracking motion handle (lazy-started on first move_joints).
+        # Joint-space impedance tracker (lazy-started on first move_joints).
+        # Cartesian impedance tracker (lazy-started on first stream_tcp_impedance).
+        # They are mutually exclusive in franky — starting one stops the other.
         self._tracker = None
+        self._cart_tracker = None
 
         # Previous commanded target + timestamp, used to derive the
         # dq feedforward passed to the tracker each move_joints call.
@@ -462,15 +465,56 @@ class FrankyController(Worker):
         self._prev_target_ts = now
 
     def _stop_tracking_motion(self):
-        """Stop the impedance tracking motion if active."""
+        """Stop any active impedance tracker (joint and/or Cartesian)."""
         if self._tracker is not None:
             try:
                 self._tracker.stop()
             except Exception:
                 pass
             self._tracker = None
+        if self._cart_tracker is not None:
+            try:
+                self._cart_tracker.stop()
+            except Exception:
+                pass
+            self._cart_tracker = None
         self._prev_target_q = None
         self._prev_target_ts = None
+
+    def _ensure_cart_tracking_motion(
+        self,
+        *,
+        translational_stiffness: float = _DEFAULT_TRANS_STIFFNESS,
+        rotational_stiffness: float = _DEFAULT_ROT_STIFFNESS,
+    ):
+        """Lazy-start a long-lived ``CartesianImpedanceTracker`` session.
+
+        The joint tracker cannot coexist with Cartesian torque mode, so
+        it is stopped first. Subsequent ``stream_tcp_impedance`` calls
+        just update the reference via ``set_target``.
+        """
+        if self._cart_tracker is not None:
+            return
+        if self._tracker is not None:
+            try:
+                self._tracker.stop()
+            except Exception:
+                pass
+            self._tracker = None
+            self._prev_target_q = None
+            self._prev_target_ts = None
+        try:
+            self._robot.join_motion()
+        except Exception:
+            pass
+        self.clear_errors()
+
+        self._cart_tracker = self._franky.CartesianImpedanceTracker(
+            self._robot,
+            translational_stiffness=translational_stiffness,
+            rotational_stiffness=rotational_stiffness,
+        )
+        self._logger.info("Cartesian impedance tracking motion started")
 
     def reset_joint(self, reset_pos: list[float]):
         """Blocking joint reset — matches env ``reset()`` semantics.
@@ -509,27 +553,30 @@ class FrankyController(Worker):
     def stream_tcp_impedance(
         self,
         position: np.ndarray,
-        duration_s: float = _TCP_STREAM_DURATION_S,
+        duration_s: float = _TCP_STREAM_DURATION_S,  # noqa: ARG002 — kept for API compat
         translational_stiffness: float = _DEFAULT_TRANS_STIFFNESS,
         rotational_stiffness: float = _DEFAULT_ROT_STIFFNESS,
     ):
         """Update the Cartesian impedance reference (non-blocking).
 
-        Submits a ``CartesianImpedanceMotion`` asynchronously with the
-        given 7-d target ``[xyz, quat_xyzw]``.  franky's async preemption
-        replaces any previous in-flight motion on the C++ side, so at
-        10 Hz this keeps the impedance controller permanently running
-        with a freshly-updated reference — no per-call trajectory
-        replanning, and no repeated tracker teardown (the difference
-        from ``move_arm``, which uses the planned ``CartesianMotion``).
+        Uses franky's long-lived ``CartesianImpedanceTracker`` session —
+        lazy-started on first call — then just refreshes the target via
+        ``set_target``. This is the Cartesian analogue of ``move_joints``
+        on top of ``JointImpedanceTracker``.
 
-        Stops the joint impedance tracker on first use; leaves it off
-        afterwards (the joint and Cartesian torque modes can't coexist).
+        The earlier implementation submitted a fresh ``CartesianImpedance
+        Motion`` with ``asynchronous=True`` on every call; at 10 Hz each
+        submission pre-empted the previous motion before its tracker
+        finished spinning up, leaving the robot motionless until the
+        stream stopped. The tracker session avoids that entirely.
+
+        The joint impedance tracker cannot coexist with Cartesian torque
+        mode, so it is stopped inside ``_ensure_cart_tracking_motion`` on
+        first use.
         """
         assert len(position) == 7, (
             f"Invalid position, expected 7 dims but got {len(position)}"
         )
-        self._stop_tracking_motion()
         franky = self._franky
 
         translation = np.asarray(position[:3], dtype=np.float64)
@@ -539,17 +586,15 @@ class FrankyController(Worker):
         T[:3, :3] = rotation_matrix
         T[:3, 3] = translation
 
-        motion = franky.CartesianImpedanceMotion(
-            franky.Affine(T),
-            franky.Duration(int(duration_s * 1000)),
-            translational_stiffness=translational_stiffness,
-            rotational_stiffness=rotational_stiffness,
-            return_when_finished=False,
-        )
         try:
-            self._robot.move(motion, asynchronous=True)
+            self._ensure_cart_tracking_motion(
+                translational_stiffness=translational_stiffness,
+                rotational_stiffness=rotational_stiffness,
+            )
+            self._cart_tracker.set_target(franky.Affine(T))
         except Exception as e:
             self._logger.warning(f"Cartesian impedance update failed: {e}")
+            self._stop_tracking_motion()
             try:
                 self._robot.join_motion()
             except Exception:
