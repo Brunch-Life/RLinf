@@ -493,6 +493,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # extra view image observation
         if env_obs["extra_view_images"] is not None:
             processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
+            names = env_obs.get("extra_view_image_names")
+            if names is not None:
+                # Pass camera-name order through so per-env policies can
+                # verify index→view and fail loud if the rig is reordered.
+                processed_obs["observation/extra_view_image_names"] = names
         # store used keys
         return processed_obs
 

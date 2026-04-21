@@ -31,6 +31,10 @@ from openpi.models import model as _model
 # State slice we feed the model: 16 dims laid out to mirror action order.
 _STATE_SLICE_DIM = 16
 
+# Stack order ``_wrap_obs`` must produce (alphabetical after removing main =
+# left wrist). ``_extract_extra_views`` asserts this so a rig rename fails loud.
+_EXPECTED_EXTRA_VIEW_ORDER = ("base_0_rgb", "right_wrist_0_rgb")
+
 
 def _parse_image(image) -> np.ndarray:
     image = np.asarray(image)
@@ -51,16 +55,15 @@ def _rearrange_state(state: np.ndarray) -> np.ndarray:
 
 
 def _extract_extra_views(data: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(base, right_wrist)`` images from whichever layout is present.
-
-    Inference (``openpi_action_model.obs_processor``) hands us a single
-    stacked tensor under ``observation/extra_view_image`` (alphabetical:
-    base, right). LeRobot training samples arrive as separate per-view
-    keys ``observation/extra_view_image-0`` / ``-1``. We normalize both
-    into a single ``(base, right)`` tuple so ``__call__`` can stay linear.
-    """
+    """Return ``(base, right_wrist)`` from stacked (inference) or split (training) layout."""
     stacked = data.get("observation/extra_view_image")
     if stacked is not None:
+        names = data.get("observation/extra_view_image_names")
+        if names is not None and tuple(names) != _EXPECTED_EXTRA_VIEW_ORDER:
+            raise AssertionError(
+                f"extra-view camera order drifted: got {tuple(names)}, "
+                f"expected {_EXPECTED_EXTRA_VIEW_ORDER}."
+            )
         extra = np.asarray(stacked)
         return _parse_image(extra[0]), _parse_image(extra[1])
     return (

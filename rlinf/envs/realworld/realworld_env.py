@@ -239,6 +239,8 @@ class RealWorldEnv(gym.Env):
 
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            # Names travel with the stack so policies can verify index→view.
+            obs["extra_view_image_names"] = tuple(raw_images.keys())
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
