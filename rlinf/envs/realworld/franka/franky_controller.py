@@ -79,11 +79,18 @@ _DEFAULT_JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 # franky defaults; bump if the TCP-pose policy's tracking is too soft.
 _DEFAULT_TRANS_STIFFNESS = 2000.0
 _DEFAULT_ROT_STIFFNESS = 200.0
-# Per-motion "duration" the impedance controller runs before it settles;
-# each ``stream_tcp_impedance`` call submits a new motion asynchronously
-# and franky preempts the previous one, so we just need this > env.step
-# period (100 ms at 10 Hz) to keep the motion active between calls.
+# Per-motion "duration" legacy constant — retained for
+# ``stream_tcp_impedance``'s API signature (kept for backwards compat).
+# The current implementation uses a long-lived CartesianImpedanceTracker
+# and does not submit per-call motions, so this value is unused.
 _TCP_STREAM_DURATION_S = 0.3
+
+# TCP velocity feedforward clamps — mirror the joint-space JOINT_VEL_LIMITS
+# role. Ballpark Franka TCP ceilings are ~1.7 m/s linear and ~2.5 rad/s
+# angular; these are conservative enough that a bad policy step can't
+# drive an unsafe step-velocity into the impedance controller.
+_TCP_LIN_VEL_LIMIT = 1.0  # m/s
+_TCP_ANG_VEL_LIMIT = 2.5  # rad/s
 
 # Global dynamics factor scales JointMotion/CartesianMotion planned
 # moves (reset path).  0.3 ≈ polymetis min-jerk feel; not applied to
@@ -193,6 +200,14 @@ class FrankyController(Worker):
         # They are mutually exclusive in franky — starting one stops the other.
         self._tracker = None
         self._cart_tracker = None
+
+        # Previous commanded TCP target [xyz, quat_xyzw] + timestamp, used
+        # to derive the linear/angular velocity feedforward passed to the
+        # Cartesian tracker on each stream_tcp_impedance call. Mirrors the
+        # joint-space dq feedforward — see the docstring on move_joints
+        # for why feedforward is essential at 10 Hz env.step cadence.
+        self._prev_tcp_target: Optional[np.ndarray] = None
+        self._prev_tcp_target_ts: Optional[float] = None
 
         # Previous commanded target + timestamp, used to derive the
         # dq feedforward passed to the tracker each move_joints call.
@@ -480,6 +495,8 @@ class FrankyController(Worker):
             self._cart_tracker = None
         self._prev_target_q = None
         self._prev_target_ts = None
+        self._prev_tcp_target = None
+        self._prev_tcp_target_ts = None
 
     def _ensure_cart_tracking_motion(
         self,
@@ -586,12 +603,34 @@ class FrankyController(Worker):
         T[:3, :3] = rotation_matrix
         T[:3, 3] = translation
 
+        # Velocity feedforward from finite-differenced targets — without
+        # it the PD eats all tracking error through position alone, which
+        # at 10 Hz env.step cadence produces visible chatter/overshoot
+        # even when each target itself is reachable (same reason the
+        # joint path passes dq_ff to JointImpedanceTracker.set_target).
+        now = time.perf_counter()
+        twist = None
+        if self._prev_tcp_target is not None and self._prev_tcp_target_ts is not None:
+            dt = max(now - self._prev_tcp_target_ts, _DQ_MIN_DT_S)
+            prev_t = self._prev_tcp_target[:3]
+            prev_q = self._prev_tcp_target[3:]
+            linear = (translation - prev_t) / dt
+            lin_norm = float(np.linalg.norm(linear))
+            if lin_norm > _TCP_LIN_VEL_LIMIT:
+                linear = linear * (_TCP_LIN_VEL_LIMIT / lin_norm)
+            rot_delta = R.from_quat(quat) * R.from_quat(prev_q).inv()
+            angular = rot_delta.as_rotvec() / dt
+            ang_norm = float(np.linalg.norm(angular))
+            if ang_norm > _TCP_ANG_VEL_LIMIT:
+                angular = angular * (_TCP_ANG_VEL_LIMIT / ang_norm)
+            twist = franky.Twist(linear_velocity=linear, angular_velocity=angular)
+
         try:
             self._ensure_cart_tracking_motion(
                 translational_stiffness=translational_stiffness,
                 rotational_stiffness=rotational_stiffness,
             )
-            self._cart_tracker.set_target(franky.Affine(T))
+            self._cart_tracker.set_target(franky.Affine(T), twist=twist)
         except Exception as e:
             self._logger.warning(f"Cartesian impedance update failed: {e}")
             self._stop_tracking_motion()
@@ -600,6 +639,10 @@ class FrankyController(Worker):
             except Exception:
                 pass
             self.clear_errors()
+            return
+
+        self._prev_tcp_target = np.concatenate([translation, quat])
+        self._prev_tcp_target_ts = now
 
     def move_arm(self, position: np.ndarray):
         """Submit a Cartesian target (non-blocking).
