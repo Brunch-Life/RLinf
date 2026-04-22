@@ -17,6 +17,10 @@ from .dosw1 import tasks as dosw1_tasks
 from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 from .franka import tasks as franka_tasks
 from .franka.dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
+from .franka.dual_franka_joint_env import (
+    DualFrankaJointEnv,
+    DualFrankaJointRobotConfig,
+)
 from .realworld_env import RealWorldEnv
 from .xsquare import Turtle2Env, Turtle2RobotConfig, Turtle2RobotState
 from .xsquare import tasks as xsquare_tasks
@@ -25,6 +29,8 @@ RealWorldEnv.realworld_setup()
 
 __all__ = [
     "DualFrankaEnv",
+    "DualFrankaJointEnv",
+    "DualFrankaJointRobotConfig",
     "DualFrankaRobotConfig",
     "DOSW1Config",
     "DOSW1Env",

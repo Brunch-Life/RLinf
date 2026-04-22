@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import time
 
 import hydra
 import numpy as np
@@ -84,6 +85,14 @@ class DataCollector(Worker):
             trajectory_format="pt",
         )
 
+        # Outer rate limiter for envs (e.g. DualFrankaJointEnv direct-stream)
+        # that deliberately don't self-pace. Target period comes from
+        # data_collection.fps so parquet metadata matches wall-clock rate.
+        fps = None
+        if self.cfg.env.eval.get("data_collection") is not None:
+            fps = self.cfg.env.eval.data_collection.get("fps")
+        self._target_step_period = 1.0 / float(fps) if fps else None
+
     def _process_obs(self, obs):
         """Reshape env obs into the dict EmbodiedRolloutResult expects."""
         if not self.cfg.runner.record_task_description:
@@ -100,6 +109,17 @@ class DataCollector(Worker):
                 ret_obs[key] = val.clone()
         return ret_obs
 
+    @staticmethod
+    def _unwrap_info_scalar(val):
+        """Info fields from SyncVectorEnv arrive as len-1 arrays/lists."""
+        if val is None:
+            return None
+        if isinstance(val, (list, tuple)):
+            return val[0] if val else None
+        if isinstance(val, np.ndarray):
+            return val.reshape(-1)[0] if val.size else None
+        return val
+
     def run(self):
         obs, _ = self.env.reset()
         success_cnt = 0
@@ -114,9 +134,18 @@ class DataCollector(Worker):
         current_obs_processed = self._process_obs(obs)
 
         while success_cnt < self.num_data_episodes:
+            iter_start = time.perf_counter()
             # Teleop wrapper overrides this via info["intervene_action"].
             action = np.zeros((1, self.action_dim))
             next_obs, reward, terminated, truncated, info = self.env.step(action)
+
+            # Keyboard wrappers (KeyboardStartEndWrapper etc.) surface the
+            # operator's current phase via info. ``kb_phase is None`` means
+            # no wrapper is attached — preserve upstream "record every step".
+            kb_event = self._unwrap_info_scalar(info.get("keyboard_event"))
+            kb_phase = self._unwrap_info_scalar(info.get("keyboard_phase"))
+            if kb_event:
+                self.log_info(f"[keyboard] {kb_event}")
 
             if "intervene_action" in info:
                 action = info["intervene_action"]
@@ -140,10 +169,18 @@ class DataCollector(Worker):
                 forward_inputs={"action": action_tensor},
             )
 
-            current_rollout.append_step_result(step_result)
-            current_rollout.append_transitions(
-                curr_obs=current_obs_processed, next_obs=next_obs_processed
-            )
+            # Rebuild the rollout on ``a``/``restart`` so pre-record frames
+            # are excluded; append in "rec" (or unconditionally when no
+            # keyboard wrapper is attached).
+            if kb_event in ("start", "restart"):
+                current_rollout = EmbodiedRolloutResult(
+                    max_episode_length=self.cfg.env.eval.max_episode_steps,
+                )
+            if kb_phase in (None, "rec"):
+                current_rollout.append_step_result(step_result)
+                current_rollout.append_transitions(
+                    curr_obs=current_obs_processed, next_obs=next_obs_processed
+                )
 
             obs = next_obs
             current_obs_processed = next_obs_processed
@@ -200,6 +237,15 @@ class DataCollector(Worker):
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
+
+            # Pin step + record + wrappers to target period. On ``done``
+            # iterations env.reset typically blows past the budget and
+            # sleep_for <= 0 — a graceful no-op.
+            if self._target_step_period is not None:
+                elapsed = time.perf_counter() - iter_start
+                sleep_for = self._target_step_period - elapsed
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
 
         self.buffer.close()
         self.log_info(

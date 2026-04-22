@@ -1,0 +1,110 @@
+defaults:
+  - env/realworld_franka_joint_dual@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      hardware:
+        type: DualFranka
+        configs:
+          # Both arms use the same FCI IP because each controller runs on
+          # its own node (left on node 0, right on node 1); each node is
+          # cabled to its own Franka.
+          - left_robot_ip: "172.16.0.2"
+            right_robot_ip: "172.16.0.2"
+            # Full three-camera rig:
+            #   - base_0_rgb:       Intel RealSense D435i  (third-person)
+            #   - left_wrist_0_rgb: XVisio vSLAM ...1218   (left Lumos)
+            #   - right_wrist_0_rgb: XVisio vSLAM ...1173  (right Lumos)
+            # RealSense serial is the librealsense device serial reported
+            # by `rs.context().devices`, NOT the /dev/v4l/by-id USB id.
+            base_camera_serials:
+              - "941322072906"
+            base_camera_type: realsense
+            left_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+            left_camera_type: lumos
+            right_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            # Robotiq 2F-85 on RS-485 — stable /dev/serial/by-id/ paths so
+            # the port survives reboots and USB re-enumeration.
+            # Left adapter: DAAIT8PU on node 0 (sohu-dual-slave, local host).
+            # Right adapter: DAAIR00N on node 1 (sohu-dual-master, 192.168.120.42).
+            left_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0"  # on node 0
+            right_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIR00N-if00-port0"  # on node 1
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "collect-data-gello-joint-dual-franka"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 200
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # Defer truncation entirely to the keyboard wrapper (`c`/`b`).
+    max_episode_steps: null
+    no_gripper: False
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: False
+    use_gello: False
+    use_gello_joint: True
+    # Keyboard wrapper for gated demonstration collection during GELLO teleop:
+    #   a = start recording (pre-`a` frames are skipped; `a` rebases buffer)
+    #   b = fail-end  (reward=-1, done)  → episode dropped
+    #   c = success-end (reward=+1, done) → episode saved as parquet
+    keyboard_reward_wrapper: "start_end"
+    # GELLO serial ports — inherited from env/realworld_franka_joint_dual.
+    # Override here only if you swap GELLO units for a session.
+    left_gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0"
+    right_gello_port: "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAM5DHY-if00-port0"
+    override_cfg:
+      task_description: "pick up the cylinder with the left hand, hand it over to the right hand, and place it on the plate"
+      joint_action_mode: "absolute"
+      # Safe dual-arm bookkeeping pose (joint-space step does NOT consume
+      # these, but DualFrankaEnv keeps the fields populated for downstream
+      # tooling); same values as the Cartesian collect config.
+      target_ee_pose:
+        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
+      reset_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      success_hold_steps: 1
+      # Keep direct_stream ON so the 1 kHz daemon owns move_joints and
+      # env.step only reads state / grippers.  Pair with
+      # use_gello_joint=True above.
+      teleop_direct_stream: true
+
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "dual_panda"
+      fps: 10

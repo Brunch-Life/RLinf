@@ -297,6 +297,24 @@ class CollectEpisode(gym.Wrapper):
                     env_info.pop("final_observation")
                     env_info.pop("final_info")
 
+            # Record-gate flags from KeyboardStartEndWrapper; absent flags
+            # preserve the original "always-on" recording behavior.
+            record_reset = self._bool_from_env_info(env_info, "record_reset")
+            pre_record = self._bool_from_env_info(env_info, "pre_record")
+
+            if record_reset:
+                self._buffers[env_idx] = self._new_buffer()
+                self._episode_success[env_idx] = False
+                self._buffers[env_idx]["observations"].append(env_obs)
+                self._buffers[env_idx]["rewards"].append(0.0)
+                self._buffers[env_idx]["terminated"].append(False)
+                self._buffers[env_idx]["truncated"].append(False)
+                self._buffers[env_idx]["infos"].append({})
+                continue
+
+            if pre_record:
+                continue
+
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
             buf["actions"].append(self._slice_copy(action, env_idx))
@@ -605,6 +623,22 @@ class CollectEpisode(gym.Wrapper):
         val = info.get("intervene_flag")
         if val is None:
             return False
+        arr = CollectEpisode._to_numpy(val)
+        if arr is None:
+            return False
+        return bool(np.asarray(arr, dtype=bool).reshape(-1).any())
+
+    @staticmethod
+    def _bool_from_env_info(env_info: Any, key: str) -> bool:
+        """Read a boolean flag from a per-env info dict, tolerating arrays."""
+        if not isinstance(env_info, dict):
+            return False
+        val = env_info.get(key)
+        if val is None:
+            return False
+        scalar = CollectEpisode._to_bool_scalar(val)
+        if scalar is not None:
+            return scalar
         arr = CollectEpisode._to_numpy(val)
         if arr is None:
             return False

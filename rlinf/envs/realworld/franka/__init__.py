@@ -13,6 +13,16 @@
 # limitations under the License.
 
 
+from .dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
+from .dual_franka_joint_env import DualFrankaJointEnv, DualFrankaJointRobotConfig
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 
-__all__ = ["FrankaEnv", "FrankaRobotState", "FrankaRobotConfig"]
+__all__ = [
+    "DualFrankaEnv",
+    "DualFrankaJointEnv",
+    "DualFrankaJointRobotConfig",
+    "DualFrankaRobotConfig",
+    "FrankaEnv",
+    "FrankaRobotConfig",
+    "FrankaRobotState",
+]
