@@ -326,16 +326,12 @@ if chunk_size > 0:
 
 ---
 
-## 8. 用这份文档复现本次分析
+## 8. 复现本次分析
 
-```bash
-# 1. 跑一次 eval（写 trajectory 日志）
-RLINF_TCP_DEBUG_LOG=1 bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka
-
-# 2. 用分析工具回看
-python toolkits/realworld_check/analyze_tcp_debug.py \
-    logs/tcp_trajectory_debug/<timestamp>_dualfranka_env0_pid*.jsonl
-```
-
-工具产出的 `start-jump` 字段 = `‖cmd_first_waypoint_pose  ⊖  robot.current_tcp_pose_at_dispatch‖`。
-**这个差 = policy 内部 delta + obs-dispatch 期间机器人实际漂移**。两者都会吃进去。要把它们拆开，就需要同时记录"policy 用的 obs state"和"dispatch 时刻 state"，目前 logger 只记了后者——如果要做路线 A/B，需要补一行把前者也写进 JSONL。
+真机 eval 的轨迹抓取工具（`_trajectory_debug.py` + `analyze_tcp_debug.py`）已
+随 wrap-fix 一起清理掉。如需复跑这类诊断，可以用 `verify_sft_on_dataset.py`
+在 dataset 上比对 policy 预测 vs GT action，或者自己临时加一段 JSONL hook
+到 `dual_franka_joint_env._dispatch_chunk` 里记录 `pre_state` / `cmd_poses` /
+`move_waypoints` 状态。关键观测量：
+`start-jump = ‖cmd_first_waypoint_pose  ⊖  robot.current_tcp_pose_at_dispatch‖`
+(policy 内部 delta + obs→dispatch 之间机器人实际漂移之和)。

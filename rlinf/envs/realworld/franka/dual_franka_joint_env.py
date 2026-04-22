@@ -356,11 +356,10 @@ class DualFrankaJointEnv(DualFrankaEnv):
                     self.config.ee_pose_limit_min[arm, :3],
                     self.config.ee_pose_limit_max[arm, :3],
                 )
-                euler = np.clip(
-                    per_arm[arm, 3:6],
-                    self.config.ee_pose_limit_min[arm, 3:],
-                    self.config.ee_pose_limit_max[arm, 3:],
-                )
+                # Euler left uncliped: yaml euler bounds are [-π, π] and the
+                # SFT policy's wrist distribution saturated tight windows (e.g.
+                # yaw clipped to -0.5 rad pinned all waypoints to -28.6°).
+                euler = per_arm[arm, 3:6]
                 # pad slot at index 6 is ignored by design.
                 quat = R.from_euler("xyz", euler).as_quat()  # xyzw
                 out[t, :3] = xyz
@@ -426,19 +425,13 @@ class DualFrankaJointEnv(DualFrankaEnv):
             tcp_targets: list[np.ndarray] = []  # per-arm [xyz, quat_xyzw]
             if tcp_mode:
                 for arm in range(NUM_ARMS):
-                    xyz = actions[arm, 0:3]
-                    euler = actions[arm, 3:6]
-                    # pad slot at index 6 is ignored by design.
                     xyz = np.clip(
-                        xyz,
+                        actions[arm, 0:3],
                         self.config.ee_pose_limit_min[arm, :3],
                         self.config.ee_pose_limit_max[arm, :3],
                     )
-                    euler = np.clip(
-                        euler,
-                        self.config.ee_pose_limit_min[arm, 3:],
-                        self.config.ee_pose_limit_max[arm, 3:],
-                    )
+                    # pad slot at index 6 ignored; euler uncliped (see dispatch_chunk).
+                    euler = actions[arm, 3:6]
                     quat = R.from_euler("xyz", euler).as_quat()  # xyzw
                     tcp_targets.append(np.concatenate([xyz, quat]))
             else:
@@ -506,6 +499,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
             self._success_hold_counter >= self.config.success_hold_steps
         )
         truncated = self._num_steps >= self.config.max_num_steps
+
         return observation, reward, terminated, truncated, {}
 
     def _clip_joints_to_limits(self, q: np.ndarray) -> np.ndarray:
