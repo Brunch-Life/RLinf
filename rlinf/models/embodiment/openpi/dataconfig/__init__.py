@@ -413,6 +413,26 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
+    # Wrap-aware variant: same model + data pipeline as pi05_dualfranka, but
+    # the underlying dataset is produced by the updated preprocess_tcp_pose.py
+    # that writes ``action_euler = state_euler[t] + wrap_to_pi(Δeuler)`` so the
+    # training-time DeltaActions no longer produces ±2π artifacts on
+    # boundary-crossing euler channels (dual-Franka grippers face down, so
+    # roll sits on the ±π boundary). Use together with the wrap-aware
+    # preprocessed dataset (suggested repo_id below).
+    TrainConfig(
+        name="pi05_dualfranka_wrapfix",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, discrete_state_input=False
+        ),
+        data=DualFrankaDataConfig(
+            repo_id="YinuoTHU/Dual-franka-tcp-wrapfix",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
 ]
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
