@@ -101,9 +101,16 @@ class RealWorldEnv(gym.Env):
         with node_lock:
             ros_proc_names = ["roscore", "rosmaster", "rosout"]
             for proc in psutil.process_iter():
-                if proc.name() in ros_proc_names:
-                    proc.kill()
-                    time.sleep(0.5)
+                try:
+                    if proc.name() in ros_proc_names:
+                        proc.kill()
+                        time.sleep(0.5)
+                except (
+                    psutil.AccessDenied,
+                    psutil.NoSuchProcess,
+                    psutil.ZombieProcess,
+                ):
+                    pass
 
     def _init_env(self):
         env_fns = [
@@ -219,6 +226,10 @@ class RealWorldEnv(gym.Env):
         full_states = np.concatenate(full_states, axis=-1)
         obs["states"] = full_states
 
+        # Process images: main_image_key picks the primary image; everything
+        # else is stacked alphabetically into extra_view_images. For dual-arm
+        # envs, set main_image_key to the preferred wrist camera (e.g.
+        # "left_wrist_0_rgb") and the remaining views flow into extra.
         frames = raw_obs["frames"]
         if self.main_image_key not in frames:
             raise KeyError(
@@ -228,11 +239,17 @@ class RealWorldEnv(gym.Env):
         raw_images = OrderedDict(sorted(frames.items()))
         raw_images.pop(self.main_image_key)
 
+        extra_view_image_names = None
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
+            extra_view_image_names = tuple(raw_images.keys())
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
+        # Names travel alongside the image stack so policies can verify
+        # index→view; kept as a str-tuple (not tensorized) on purpose.
+        if extra_view_image_names is not None:
+            obs["extra_view_image_names"] = extra_view_image_names
         return obs
 
     def step(self, actions=None, auto_reset=True):

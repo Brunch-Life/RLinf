@@ -51,6 +51,7 @@ import time
 from typing import Optional
 
 import numpy as np
+from serial import SerialException
 
 from rlinf.utils.logging import get_logger
 
@@ -162,7 +163,13 @@ class RobotiqGripper(BaseGripper):
     # ── Modbus helpers ───────────────────────────────────────────────
 
     def _activate(self) -> None:
-        """Run the Robotiq activation sequence (clear → activate → wait)."""
+        """Run the Robotiq activation sequence (clear → activate → wait).
+
+        The right gripper on the dual-arm rig is slower to activate than the
+        left — Modbus status reads during the calibration sweep occasionally
+        time out, eating the per-iteration budget.  Bumping to 15 s wall clock
+        absorbs those retries without masking a genuinely stuck gripper.
+        """
         # 1. Clear (deactivate)
         self._write_output_regs(0x0000, 0x0000, 0x0000)
         time.sleep(0.5)
@@ -171,7 +178,8 @@ class RobotiqGripper(BaseGripper):
         self._write_output_regs(_rACT << 8, 0x0000, 0x0000)
 
         # 3. Wait for gSTA == 0x03 (fully activated)
-        for _ in range(50):
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
             time.sleep(0.1)
             status = self._read_status()
             if status is not None and status["gSTA"] == 0x03:
@@ -179,7 +187,7 @@ class RobotiqGripper(BaseGripper):
                 return
 
         raise RuntimeError(
-            f"Robotiq gripper on {self._port} did not activate within 5 s"
+            f"Robotiq gripper on {self._port} did not activate within 15 s"
         )
 
     def _goto(self, position: int, speed: float, force: float) -> None:
@@ -202,22 +210,79 @@ class RobotiqGripper(BaseGripper):
         reg2 = (spd << 8) | frc
         self._write_output_regs(reg0, reg1, reg2)
 
-    def _write_output_regs(self, reg0: int, reg1: int, reg2: int) -> None:
-        self._client.write_registers(
-            address=_OUTPUT_REG_ADDR,
-            values=[reg0, reg1, reg2],
-            **{self._slave_kwarg: self._slave_id},
+    def _reconnect(self) -> None:
+        """Close and reopen the Modbus client after a serial transient."""
+        try:
+            self._client.close()
+        except Exception:
+            pass
+        time.sleep(0.15)
+        self._client = _create_modbus_client(self._port)
+        self._client.connect()
+
+    def _write_output_regs(
+        self, reg0: int, reg1: int, reg2: int, retries: int = 3
+    ) -> None:
+        """Write the three output registers, retrying on RS-485 transients.
+
+        FTDI-USB-RS485 adapters occasionally raise ``SerialException: device
+        reports readiness to read but returned no data`` when the gripper is
+        slow to respond to a write (mid-activation, state transitions).
+        Reconnect and retry — the write is idempotent for our use.
+        """
+        last_exc: Optional[BaseException] = None
+        for attempt in range(retries):
+            try:
+                self._client.write_registers(
+                    address=_OUTPUT_REG_ADDR,
+                    values=[reg0, reg1, reg2],
+                    **{self._slave_kwarg: self._slave_id},
+                )
+                return
+            except SerialException as e:
+                last_exc = e
+                self._logger.debug(
+                    f"Robotiq write_registers transient on {self._port} "
+                    f"(attempt {attempt + 1}/{retries}): {e}"
+                )
+                self._reconnect()
+                time.sleep(0.1)
+        raise RuntimeError(
+            f"Robotiq write_registers failed on {self._port} after "
+            f"{retries} retries: {last_exc}"
         )
 
     def _read_status(self) -> Optional[dict]:
-        """Read the three input registers and decode the status fields."""
-        resp = self._client.read_holding_registers(
-            address=_INPUT_REG_ADDR,
-            count=_NUM_REGS,
-            **{self._slave_kwarg: self._slave_id},
-        )
-        if resp.isError():
-            self._logger.warning(f"Robotiq Modbus read error: {resp}")
+        """Read the three input registers and decode the status fields.
+
+        Retries internally on SerialException (FTDI RS-485 half-duplex
+        TX→RX switching occasionally returns empty reads immediately after
+        a write).  Returns ``None`` only after exhausting retries or on a
+        genuine Modbus error / short read — callers poll in a loop so
+        dropping a single sample is still harmless.
+        """
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = self._client.read_holding_registers(
+                    address=_INPUT_REG_ADDR,
+                    count=_NUM_REGS,
+                    **{self._slave_kwarg: self._slave_id},
+                )
+                break
+            except SerialException as e:
+                self._logger.debug(
+                    f"Robotiq read_holding_registers transient on "
+                    f"{self._port} (attempt {attempt + 1}/3): {e}"
+                )
+                self._reconnect()
+        else:
+            return None
+        if resp is None or resp.isError():
+            self._logger.debug(f"Robotiq Modbus read error: {resp}")
+            return None
+        if not resp.registers or len(resp.registers) < 3:
+            self._logger.debug(f"Robotiq Modbus short read: {resp.registers}")
             return None
 
         r0, r1, r2 = resp.registers

@@ -19,25 +19,19 @@ from typing import Any
 
 from rlinf.utils.logging import get_logger
 
+# HuggingFace ``datasets`` prints ``Map:`` and ``Creating parquet from Arrow
+# format:`` tqdm bars for every ``save_episode()`` call.  At 10 Hz collection
+# the terminal is unreadable — silence them once at module import.
+try:
+    import datasets as _hf_datasets
+
+    _hf_datasets.disable_progress_bar()
+except ImportError:
+    pass
+
 
 class LeRobotDatasetWriter:
-    """
-    Wrapper for LeRobotDataset that provides a simplified interface for writing episodes.
-
-    Usage:
-        writer = LeRobotDatasetWriter()
-        writer.create(
-            repo_id="my-dataset",
-            robot_type="franka_panda",
-            fps=5,
-            features={...}
-        )
-
-        for episode_data in episodes:
-            writer.add_episode(episode_data)
-
-        writer.finalize(push_to_hub=False)
-    """
+    """Simplified LeRobotDataset wrapper for writing episodes."""
 
     def __init__(self):
         """Initialize the writer."""
