@@ -25,6 +25,10 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from rlinf.scheduler import DualFrankaHWInfo
+from rlinf.utils.rot6d import (
+    matrix_to_rot6d,
+    rot6d_to_quat_xyzw_safe,
+)
 
 from .dual_franka_env import (
     _RIGHT_ARM_ENV_IDX_OFFSET,
@@ -34,11 +38,6 @@ from .dual_franka_env import (
     DualFrankaEnv,
     DualFrankaRobotConfig,
 )
-from rlinf.utils.rot6d import (
-    matrix_to_rot6d,
-    rot6d_to_quat_xyzw_safe,
-)
-
 from .franky_controller import JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER
 
 JOINT_DIM_PER_ARM = 7
@@ -124,7 +123,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
                     hw, "base_camera_serials", None
                 )
             if self.config.camera_type is None:
-                self.config.camera_type = getattr(hw, "camera_type", "zed")
+                self.config.camera_type = getattr(hw, "camera_type", "realsense")
             if self.config.base_camera_type is None:
                 self.config.base_camera_type = getattr(hw, "base_camera_type", None)
             if self.config.left_camera_type is None:
@@ -238,7 +237,10 @@ class DualFrankaJointEnv(DualFrankaEnv):
             )
             act_low = np.concatenate([arm_low, arm_low]).astype(np.float32)
             act_high = np.concatenate([arm_high, arm_high]).astype(np.float32)
-        elif self.config.joint_action_mode in ("tcp_rot6d_waypoint", "tcp_rot6d_per_step"):
+        elif self.config.joint_action_mode in (
+            "tcp_rot6d_waypoint",
+            "tcp_rot6d_per_step",
+        ):
             # Per-arm: [xyz (3, m), rot6d (6, unit), gripper_trigger (1)].
             # xyz bounds come from the safe-box config; rot6d bounds are widened
             # to [-1.5, 1.5] so normalized model outputs have headroom before
@@ -270,7 +272,10 @@ class DualFrankaJointEnv(DualFrankaEnv):
         # `realworld_env._wrap_obs` produces state[0:20] in the SFT layout.
         # The declared space must match that real width so `sample()` (dummy
         # mode) and any downstream space-driven tooling agree with runtime.
-        if self.config.joint_action_mode in ("tcp_rot6d_waypoint", "tcp_rot6d_per_step"):
+        if self.config.joint_action_mode in (
+            "tcp_rot6d_waypoint",
+            "tcp_rot6d_per_step",
+        ):
             joint_position_dim = NUM_ARMS * PROPRIO_DIM_PER_ARM_ROT6D
         else:
             joint_position_dim = NUM_ARMS * JOINT_DIM_PER_ARM
@@ -452,7 +457,9 @@ class DualFrankaJointEnv(DualFrankaEnv):
             "tcp_rot6d_per_step",
         )
         per_arm_dim = ACTION_DIM_PER_ARM_ROT6D if rot6d_mode else ACTION_DIM_PER_ARM
-        grip_idx = 9 if rot6d_mode else JOINT_DIM_PER_ARM  # slot 9 for rot6d, 7 for joint
+        grip_idx = (
+            9 if rot6d_mode else JOINT_DIM_PER_ARM
+        )  # slot 9 for rot6d, 7 for joint
 
         start_time = time.time()
         action = np.clip(action, self.action_space.low, self.action_space.high)
@@ -505,9 +512,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
             # Grippers first so they don't contend with a fresh motion command.
             for arm in range(NUM_ARMS):
-                gripper_val = (
-                    actions[arm, grip_idx] * self.config.action_scale[2]
-                )
+                gripper_val = actions[arm, grip_idx] * self.config.action_scale[2]
                 is_gripper_effective[arm] = self._gripper_action(
                     ctrls[arm], states[arm], gripper_val
                 )
@@ -595,7 +600,10 @@ class DualFrankaJointEnv(DualFrankaEnv):
                 self._right_state.arm_joint_position,
             ]
         )
-        if self.config.joint_action_mode in ("tcp_rot6d_waypoint", "tcp_rot6d_per_step"):
+        if self.config.joint_action_mode in (
+            "tcp_rot6d_waypoint",
+            "tcp_rot6d_per_step",
+        ):
             # Dataset state[0:20] after alphabetical concat (see
             # RealWorldEnv._wrap_obs) must be
             #   [L_grip, R_grip, L_xyz(3), L_rot6d(6), R_xyz(3), R_rot6d(6)]
