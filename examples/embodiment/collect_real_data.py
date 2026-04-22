@@ -97,11 +97,16 @@ class DataCollector(Worker):
         """Reshape env obs into the dict EmbodiedRolloutResult expects."""
         if not self.cfg.runner.record_task_description:
             obs.pop("task_descriptions", None)
+        # Str-tuple of extra camera names: debugging metadata from
+        # RealWorldEnv; drop so it doesn't reach the Trajectory tensor path.
+        obs.pop("extra_view_image_names", None)
 
         ret_obs = {}
         for key, val in obs.items():
             if isinstance(val, np.ndarray):
                 val = torch.from_numpy(val)
+            if not isinstance(val, torch.Tensor):
+                continue
             val = val.cpu()
             if key == "images":
                 ret_obs["main_images"] = val.clone()
