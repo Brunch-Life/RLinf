@@ -55,14 +55,24 @@ Both packages should be installed on the node that runs the GELLO device
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Choose a directory to install the GELLO software, then clone the repository
-and initialize its submodules (which include the **Dynamixel SDK**):
+and initialize only the **Dynamixel SDK** submodule:
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule init && git submodule update
+   git submodule update --init third_party/DynamixelSDK
+
+.. note::
+
+   ``gello_software`` also registers ``third_party/mujoco_menagerie`` (a
+   large repository of robot MJCF assets used only by the upstream mujoco
+   demo scripts). RLinf's GELLO teleop path goes through
+   ``gello-teleop`` which ships its own Franka MJCF, so the menagerie
+   submodule is not needed. ``git submodule update --init <path>``
+   registers and clones only the requested submodule; a plain
+   ``git submodule init`` would also queue the menagerie.
 
 Install the ``gello`` package and the **Dynamixel SDK** (bundled as a
 third-party submodule):

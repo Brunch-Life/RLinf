@@ -47,14 +47,23 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
 1. 安装 ``gello`` （gello_software）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-选择一个安装目录，然后克隆仓库并初始化其子模块（包含 **Dynamixel SDK**）：
+选择一个安装目录，然后克隆仓库并**仅**初始化 **Dynamixel SDK** 子模块：
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule init && git submodule update
+   git submodule update --init third_party/DynamixelSDK
+
+.. note::
+
+   ``gello_software`` 还注册了 ``third_party/mujoco_menagerie``
+   （一个体量较大的机器人 MJCF 资产仓库，仅被上游的 mujoco 演示脚本
+   使用）。RLinf 的 GELLO 遥操作走 ``gello-teleop``，它自带 Franka
+   的 MJCF，并不需要 menagerie 子模块。
+   ``git submodule update --init <path>`` 只会注册并克隆指定的子模块；
+   如果执行裸的 ``git submodule init``，则会把 menagerie 一并排入队列。
 
 安装 ``gello`` 包和 **Dynamixel SDK** （作为第三方子模块）：
 
