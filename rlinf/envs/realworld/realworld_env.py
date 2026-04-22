@@ -258,7 +258,12 @@ class RealWorldEnv(gym.Env):
 
         self._elapsed_steps += 1
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
+        # ``max_episode_steps: null`` in YAML means "no step-count timeout — an
+        # external wrapper (e.g. KeyboardRewardDoneWrapper) owns episode end".
+        if self.cfg.max_episode_steps is None:
+            timeout_truncations = np.zeros_like(truncations, dtype=bool)
+        else:
+            timeout_truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         if not self.manual_episode_control_only:
             truncations = timeout_truncations
 
