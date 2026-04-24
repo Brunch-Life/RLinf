@@ -255,7 +255,16 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         return True
 
     def reset(self, **kwargs):
-        """Pause streaming during reset to avoid racing with reset_joint."""
+        """Pause streaming during reset to avoid racing with reset_joint.
+
+        Also tells the inner env to skip its ``reset_joint(home)`` slew:
+        we immediately ``_align_to_gello()`` below, and a "home → GELLO"
+        double-slew just breaks teleop's "tracking continues" feel.
+        """
+        options = dict(kwargs.get("options") or {})
+        options.setdefault("skip_reset_to_home", True)
+        kwargs["options"] = options
+
         self._stream_paused.clear()
         aligned = False
         try:
