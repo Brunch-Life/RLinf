@@ -17,11 +17,12 @@ Dataset layout (produced by ``toolkits/dual_franka/backfill_rot6d.py``,
 which rewrites a joint-space-collected LeRobot dataset's ``state[0:20]``
 and ``actions[0:20]`` into the rot6d_v1 schema below):
 
-- **state[0:20]** (env ``_wrap_obs`` alphabetical concat of
-  ``gripper_position`` + the rot6d-overloaded ``joint_position`` slot):
-  ``[L_grip, R_grip, L_xyz(3), L_rot6d(6), R_xyz(3), R_rot6d(6)]``.
-  Slots ``[20:]`` are either zero (live env) or legacy debug data
-  (backfilled datasets) — pi05 ignores them after ``_rearrange_state``.
+- **state[0:20]** (env ``_wrap_obs`` concat driven by
+  :class:`DualFrankaRot6dEnv`'s ``STATE_LAYOUT = (gripper_position,
+  tcp_pose_rot6d)``): ``[L_grip, R_grip, L_xyz(3), L_rot6d(6),
+  R_xyz(3), R_rot6d(6)]``. Slots ``[20:]`` are either zero (live env) or
+  legacy debug data (backfilled datasets) — pi05 ignores them after
+  ``_rearrange_state``.
 - **actions[0:20]** (policy-facing, already in training layout):
   ``[L_xyz(3), L_rot6d(6), L_grip_trigger(1),
      R_xyz(3), R_rot6d(6), R_grip_trigger(1)]``.
@@ -56,9 +57,9 @@ def _parse_image(image) -> np.ndarray:
 
 
 def _rearrange_state(state: np.ndarray) -> np.ndarray:
-    """Reorder env-alphabetical state prefix into the training layout.
+    """Reorder env-side state prefix into the training layout.
 
-    Input  (env side, alphabetical):
+    Input  (env side, driven by ``DualFrankaRot6dEnv.STATE_LAYOUT``):
         state[:20] = [L_grip, R_grip, L_xyz(3), L_rot6d(6), R_xyz(3), R_rot6d(6)]
 
     Output (policy side, per-arm grouped):

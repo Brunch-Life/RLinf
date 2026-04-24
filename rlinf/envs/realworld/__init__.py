@@ -22,6 +22,10 @@ from .franka.dual_franka_joint_env import (
     DualFrankaJointEnv,
     DualFrankaJointRobotConfig,
 )
+from .franka.dual_franka_rot6d_env import (
+    DualFrankaRot6dEnv,
+    DualFrankaRot6dRobotConfig,
+)
 from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
 from .gim_arm import tasks as gim_arm_tasks
 from .realworld_env import RealWorldEnv
@@ -36,6 +40,8 @@ __all__ = [
     "DualFrankaJointEnv",
     "DualFrankaJointRobotConfig",
     "DualFrankaRobotConfig",
+    "DualFrankaRot6dEnv",
+    "DualFrankaRot6dRobotConfig",
     "DOSW1Config",
     "DOSW1Env",
     "dosw1_tasks",
