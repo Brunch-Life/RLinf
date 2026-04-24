@@ -14,6 +14,7 @@
 
 import math
 import random
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -29,6 +30,7 @@ from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.diag_logger import log_jsonl
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
@@ -621,6 +623,28 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "prev_values": prev_values,
             "forward_inputs": forward_inputs,
         }
+
+        # Diagnostics: raw (normalized) vs absolute first/last frames.
+        # Cheap (~40 floats per chunk) and only the first sample in batch.
+        try:
+            raw = outputs["actions"]
+            log_jsonl(
+                "policy_out",
+                {
+                    "t": time.time(),
+                    "mode": mode,
+                    "raw_shape": list(raw.shape),
+                    "raw_first": raw[0, 0].detach().float().cpu().tolist(),
+                    "raw_last": raw[0, -1].detach().float().cpu().tolist(),
+                    "abs_shape": list(actions.shape),
+                    "abs_first": actions[0, 0].detach().float().cpu().tolist(),
+                    "abs_last": actions[0, -1].detach().float().cpu().tolist(),
+                    "state_first": observation.state[0].detach().float().cpu().tolist(),
+                },
+            )
+        except Exception:
+            pass
+
         return actions, result
 
     @torch.no_grad()
