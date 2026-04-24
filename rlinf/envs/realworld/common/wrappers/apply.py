@@ -147,8 +147,13 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     return env
 
 
-def apply_dual_arm_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
-    """Wrapper stack for dual-arm joint-space envs (DualFrankaJointEnv).
+def apply_dual_arm_franky_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
+    """Wrapper stack for dual-arm envs driven through ``FrankyController``.
+
+    Works for both joint-space (:class:`DualFrankaJointEnv`) and TCP-rot6d
+    (:class:`DualFrankaRot6dEnv`) subclasses — teleop is gated by
+    ``cfg['use_gello_joint']`` so autonomous rot6d rollouts with
+    ``use_gello_joint=False`` simply skip the GELLO wrapper.
 
     Differs from ``apply_dual_arm_wrappers`` in two ways:
     - Teleop is GELLO-joint only. Spacemouse / Cartesian-gello would need IK
@@ -167,7 +172,7 @@ def apply_dual_arm_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.E
 
     if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
         raise ValueError(
-            "DualFrankaJointEnv only supports GELLO-joint teleop. "
+            "Dual-arm franky envs only support GELLO-joint teleop. "
             "Set use_gello_joint=True (not use_spacemouse / use_gello)."
         )
 
@@ -186,9 +191,7 @@ def apply_dual_arm_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.E
             left_port=left_port,
             right_port=right_port,
             gripper_enabled=gripper_enabled,
-            use_delta=(
-                getattr(env.config, "joint_action_mode", "absolute") == "delta"
-            ),
+            use_delta=(getattr(env.config, "joint_action_mode", "absolute") == "delta"),
             action_scale=getattr(env.config, "joint_action_scale", 0.1),
             direct_stream=getattr(env.config, "teleop_direct_stream", False),
             stream_period=cfg.get("gello_joint_stream_period", 0.001),

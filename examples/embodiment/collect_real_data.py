@@ -85,7 +85,7 @@ class DataCollector(Worker):
             trajectory_format="pt",
         )
 
-        # Outer rate limiter for envs (e.g. DualFrankaJointEnv direct-stream)
+        # Outer rate limiter for envs (e.g. DualFrankaFrankyEnv direct-stream)
         # that deliberately don't self-pace. Target period comes from
         # data_collection.fps so parquet metadata matches wall-clock rate.
         fps = None
