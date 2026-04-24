@@ -29,6 +29,17 @@ from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
 
+def _truthy(val) -> bool:
+    """Accept bool, int, or str (``1/true/yes/on``, case-insensitive)."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true", "yes", "on")
+    return bool(val)
+
+
 class DataCollector(Worker):
     def __init__(self, cfg):
         super().__init__()
@@ -69,7 +80,21 @@ class DataCollector(Worker):
                 finalize_interval=getattr(
                     self.cfg.env.eval.data_collection, "finalize_interval", 100
                 ),
+                resume=_truthy(
+                    getattr(self.cfg.env.eval.data_collection, "resume", False)
+                ),
             )
+            self._preexisting_success = int(
+                getattr(self.env, "preexisting_episode_count", 0)
+            )
+            if self._preexisting_success:
+                self.log_info(
+                    f"[resume] found {self._preexisting_success} pre-existing "
+                    f"episodes under {self.cfg.env.eval.data_collection.save_dir}; "
+                    f"continuing toward {self.num_data_episodes}"
+                )
+        else:
+            self._preexisting_success = 0
 
         # Read from the wrapped action space so GripperCloseEnv / dual-arm all just work.
         self.action_dim = int(self.env.action_space.shape[-1])
@@ -127,9 +152,20 @@ class DataCollector(Worker):
 
     def run(self):
         obs, _ = self.env.reset()
-        success_cnt = 0
+        # Seed from preexisting successful episodes so resume shows the
+        # bar at the right starting position and we stop at the right target.
+        success_cnt = self._preexisting_success
+        if success_cnt >= self.num_data_episodes:
+            self.log_info(
+                f"[resume] already have {success_cnt} episodes, target "
+                f"{self.num_data_episodes} already met — nothing to do."
+            )
+            self.env.close()
+            return
         progress_bar = tqdm(
-            range(self.num_data_episodes), desc="Collecting Data Episodes:"
+            total=self.num_data_episodes,
+            initial=success_cnt,
+            desc="Collecting Data Episodes:",
         )
 
         current_rollout = EmbodiedRolloutResult(

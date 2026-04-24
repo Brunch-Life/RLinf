@@ -103,7 +103,15 @@ env:
 
     data_collection:
       enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
+      # ``RLINF_COLLECT_SAVE_DIR`` lets you point successive collect runs at
+      # the same dataset root (each run's log_path still lives under logs/);
+      # leave unset to default to this run's timestamped logs/ subdir.
+      save_dir: ${oc.env:RLINF_COLLECT_SAVE_DIR,${runner.logger.log_path}/collected_data}
+      # ``RLINF_COLLECT_RESUME=1`` makes the wrapper seed its episode
+      # counter from shards already on disk under save_dir and lets the
+      # collector's progress bar start from there. New episodes still go
+      # into a fresh ``id_{N}`` shard so we never touch finalized data.
+      resume: ${oc.env:RLINF_COLLECT_RESUME,false}
       export_format: "lerobot"
       only_success: True
       robot_type: "dual_panda"
