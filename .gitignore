@@ -22,3 +22,4 @@ PKG-INFO
 *.egg-info/
 /datasets
 /models
+/checkpoints
