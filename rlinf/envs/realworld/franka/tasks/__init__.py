@@ -20,7 +20,7 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 
 from rlinf.envs.realworld.common.wrappers import (
-    apply_dual_arm_joint_wrappers,
+    apply_dual_arm_franky_wrappers,
     apply_dual_arm_wrappers,
     apply_single_arm_wrappers,
 )
@@ -83,7 +83,7 @@ def create_dual_franka_joint_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_arm_joint_wrappers(env, env_cfg)
+    return apply_dual_arm_franky_wrappers(env, env_cfg)
 
 
 def create_peg_insertion_env(

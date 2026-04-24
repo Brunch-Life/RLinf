@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from .apply import (
-    apply_dual_arm_joint_wrappers,
+    apply_dual_arm_franky_wrappers,
     apply_dual_arm_wrappers,
     apply_single_arm_wrappers,
 )
@@ -50,7 +50,7 @@ __all__ = [
     "Quat2EulerWrapper",
     "RelativeFrame",
     "SpacemouseIntervention",
-    "apply_dual_arm_joint_wrappers",
+    "apply_dual_arm_franky_wrappers",
     "apply_dual_arm_wrappers",
     "apply_single_arm_wrappers",
 ]

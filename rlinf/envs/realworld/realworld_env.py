@@ -121,6 +121,19 @@ class RealWorldEnv(gym.Env):
         self.task_descriptions = list(
             self.env.call("get_wrapper_attr", "task_description")
         )
+        # Explicit per-env flat-state layout as a tuple of dict keys.
+        # When set, ``_wrap_obs`` concatenates ``raw_obs['state'][k]`` in
+        # this order instead of falling back to alphabetical sort — load-
+        # bearing when a policy hard-codes slice offsets against the flat
+        # state (e.g. the dual-Franka rot6d SFT policy's ``state[:20]``).
+        # Envs that don't declare it keep the legacy alphabetical path.
+        try:
+            layouts = self.env.call("get_wrapper_attr", "STATE_LAYOUT")
+        except AttributeError:
+            self._state_layout = None
+        else:
+            first = layouts[0] if layouts else None
+            self._state_layout = tuple(first) if first else None
 
     @property
     def action_space(self):
@@ -218,11 +231,26 @@ class RealWorldEnv(gym.Env):
         """
         obs = {}
 
-        # Process states
-        full_states = []
-        raw_states = OrderedDict(sorted(raw_obs["state"].items()))
-        for value in raw_states.values():
-            full_states.append(value)
+        # Flat-state concat order:
+        # - Preferred: inner env declared ``STATE_LAYOUT`` (tuple of keys).
+        #   Missing keys are a loud ``KeyError`` so schema drift can't
+        #   silently reshuffle bytes. Keys present in the dict but absent
+        #   from ``STATE_LAYOUT`` are dropped from the flat tensor — useful
+        #   for diagnostic-only fields we don't want to feed the policy.
+        # - Legacy: no ``STATE_LAYOUT`` declared → alphabetical sort. Byte
+        #   order is implicit; do NOT hard-code slice offsets against it.
+        state = raw_obs["state"]
+        if self._state_layout is not None:
+            missing = [k for k in self._state_layout if k not in state]
+            if missing:
+                raise KeyError(
+                    f"STATE_LAYOUT references missing keys: {missing}. "
+                    f"Inner env emits {sorted(state)}."
+                )
+            full_states = [state[k] for k in self._state_layout]
+        else:
+            raw_states = OrderedDict(sorted(state.items()))
+            full_states = list(raw_states.values())
         full_states = np.concatenate(full_states, axis=-1)
         obs["states"] = full_states
 
@@ -322,13 +350,11 @@ class RealWorldEnv(gym.Env):
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
 
-        # Give TCP-pose envs a chance to submit the whole chunk as one
-        # planned trajectory per arm (CartesianWaypointMotion) up-front,
-        # rather than have the per-step loop below stream 100 ms impedance
-        # target steps into a torque controller. Inner envs that don't
-        # implement ``dispatch_chunk`` fall through to the legacy per-step
-        # dispatch inside their own ``step``. num_envs==1 in realworld;
-        # SyncVectorEnv.call broadcasts to the single sub-env.
+        # Give TCP-pose envs a chance to peek at the whole chunk up-front
+        # (currently used for logging / future chunk-level preprocessing).
+        # Inner envs that don't implement ``dispatch_chunk`` are unaffected;
+        # per-step dispatch still happens in their own ``step``. num_envs==1
+        # in realworld; SyncVectorEnv.call broadcasts to the single sub-env.
         if chunk_size > 0:
             try:
                 actions_t = chunk_actions[0]
