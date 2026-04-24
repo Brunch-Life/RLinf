@@ -30,12 +30,17 @@ Typical two-terminal usage (on the same node that runs the collector):
     python toolkits/realworld_check/collect_monitor.py run_embodiment.log
 
 The monitor waits for the log file to exist, so it can be started either
-before or after the collector.
+before or after the collector. On startup it replays the existing file so
+episodes already saved before the monitor launched are reflected in the
+bar's initial position; pass ``--no-replay`` to tail from EOF instead.
 """
+
 from __future__ import annotations
 
 import argparse
+import glob
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Iterator, Optional
@@ -48,12 +53,49 @@ _KB_RE = re.compile(r"\[keyboard\]\s+(\S+)")
 _SUCCESS_RE = re.compile(r"Success\s*\(reward=([-\d.]+)")
 
 
-def _follow(path: Path, poll_s: float) -> Iterator[str]:
-    """Yield new lines appended to ``path``. Waits for the file to appear."""
+_ENVGROUP_PID_RE = re.compile(r"EnvGroup\(rank=0\)\s+pid=(\d+)")
+
+
+def _find_worker_file(tee_log: Path) -> Optional[Path]:
+    """Locate the Ray per-worker stdout file for EnvGroup(rank=0).
+
+    Ray forwards worker stdout through log_monitor to the driver, which can
+    introduce multi-second (observed: 1-2 min under load) batching delays.
+    Tailing the worker file directly bypasses that path — latency then comes
+    only from Python's line-buffered stdout.
+
+    We get the worker pid from the tee'd log (which prints ``(EnvGroup(rank=0)
+    pid=NNNNN)`` in front of forwarded lines) and glob the session logs dir.
+    Returns None if the tee log doesn't have the pid yet or the worker file
+    isn't on this host (e.g. EnvGroup is on a different Ray node).
+    """
+    if not tee_log.exists():
+        return None
+    try:
+        head = tee_log.read_text(errors="replace")
+    except OSError:
+        return None
+    m = _ENVGROUP_PID_RE.search(head)
+    if not m:
+        return None
+    pid = m.group(1)
+    candidates = sorted(
+        glob.glob(f"/tmp/ray/session_latest/logs/worker-*-{pid}.out"),
+        key=lambda p: Path(p).stat().st_mtime,
+        reverse=True,
+    )
+    return Path(candidates[0]) if candidates else None
+
+
+def _follow(path: Path, poll_s: float, replay: bool) -> Iterator[str]:
+    """Yield lines from ``path``. If ``replay`` is true, read existing content
+    from the start before switching to tail mode; otherwise jump straight to
+    EOF. Waits for the file to appear either way."""
     while not path.exists():
         time.sleep(poll_s)
     with path.open("r", errors="replace") as f:
-        f.seek(0, 2)  # start at EOF so existing content is not re-played
+        if not replay:
+            f.seek(0, 2)
         while True:
             line = f.readline()
             if not line:
@@ -76,31 +118,86 @@ def main() -> None:
     ap.add_argument(
         "--poll",
         type=float,
-        default=0.5,
-        help="Tail poll interval in seconds (default: 0.5).",
+        default=0.1,
+        help="Tail poll interval in seconds (default: 0.1).",
+    )
+    ap.add_argument(
+        "--no-replay",
+        action="store_true",
+        help="Skip replaying existing file content on startup (legacy behavior).",
+    )
+    ap.add_argument(
+        "--source",
+        choices=("auto", "worker", "tee"),
+        default="auto",
+        help=(
+            "Which file to tail. 'worker' tails the Ray worker stdout file "
+            "directly (bypasses log_monitor batching, ~1-2 min faster). "
+            "'tee' tails the driver's tee'd log (works across nodes but slow). "
+            "'auto' tries worker first, falls back to tee."
+        ),
+    )
+    ap.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print each matched event line to stderr.",
     )
     args = ap.parse_args()
+
+    source_path = args.log_path
+    if args.source in ("auto", "worker"):
+        worker_file = _find_worker_file(args.log_path)
+        if worker_file is not None:
+            source_path = worker_file
+            print(
+                f"[monitor] tailing Ray worker file: {worker_file}",
+                file=sys.stderr,
+                flush=True,
+            )
+        elif args.source == "worker":
+            print(
+                "[monitor] --source=worker requested but no EnvGroup worker "
+                "file found under /tmp/ray/session_latest/logs/. Is EnvGroup "
+                "on a different Ray node?",
+                file=sys.stderr,
+                flush=True,
+            )
+            sys.exit(2)
+        else:
+            print(
+                f"[monitor] no worker file yet, falling back to tee log: "
+                f"{args.log_path}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     pbar: Optional[tqdm] = None
     last_saved = 0
     last_event = ""
     last_reward: Optional[str] = None
 
+    def _dbg(tag: str, line: str) -> None:
+        if args.debug:
+            print(f"[monitor {tag}] {line}", file=sys.stderr, flush=True)
+
     try:
-        for line in _follow(args.log_path, args.poll):
+        for line in _follow(source_path, args.poll, replay=not args.no_replay):
             m_tot = _TOTAL_RE.search(line)
             if m_tot:
                 saved = int(m_tot.group(1))
                 target = int(m_tot.group(2))
+                _dbg("total", f"saved={saved} target={target}")
                 if pbar is None:
                     pbar = tqdm(
                         total=target,
+                        initial=saved,
                         dynamic_ncols=True,
                         desc="collect",
                         unit="ep",
                         leave=True,
                     )
-                if saved > last_saved:
+                    last_saved = saved
+                elif saved > last_saved:
                     pbar.update(saved - last_saved)
                     last_saved = saved
                 if saved >= target:
@@ -110,10 +207,12 @@ def main() -> None:
             m_kb = _KB_RE.search(line)
             if m_kb:
                 last_event = m_kb.group(1)
+                _dbg("kb", last_event)
 
             m_succ = _SUCCESS_RE.search(line)
             if m_succ:
                 last_reward = m_succ.group(1)
+                _dbg("reward", last_reward)
 
             if pbar is not None:
                 post: dict[str, str] = {}
