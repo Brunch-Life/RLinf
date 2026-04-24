@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import atexit
 import copy
+import glob
+import json
 import os
 import pickle
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -29,6 +31,32 @@ import torch
 from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
+
+
+def _count_existing_lerobot_episodes(save_dir: str, rank: int) -> int:
+    """Sum ``total_episodes`` across all existing ``id_*`` shards for ``rank``.
+
+    Used by resume mode to decide the next shard's ``id_{N}`` suffix (so it
+    doesn't collide with a shard from an earlier run) and to seed the
+    collector's success counter so the progress bar reflects real progress.
+
+    Missing / malformed ``info.json`` files are skipped silently — those
+    shards are most likely in-progress leftovers from the crash, and
+    over-counting would be worse than undercounting (we'd create a new
+    shard past them anyway).
+    """
+    pattern = os.path.join(save_dir, f"rank_{rank}", "id_*", "meta", "info.json")
+    total = 0
+    for info_path in sorted(glob.glob(pattern)):
+        try:
+            with open(info_path) as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        count = meta.get("total_episodes")
+        if isinstance(count, int) and count > 0:
+            total += count
+    return total
 
 
 class CollectEpisode(gym.Wrapper):
@@ -58,6 +86,11 @@ class CollectEpisode(gym.Wrapper):
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
+        resume: If True and ``export_format == "lerobot"``, reuse ``save_dir``
+            across sessions — new episodes land in a fresh ``id_{N}`` shard
+            (N = sum of episodes across pre-existing shards) so the in-progress
+            write never touches previously-finalized data. Ignored for pickle.
+            Defaults to False.
     """
 
     def __init__(
@@ -72,6 +105,7 @@ class CollectEpisode(gym.Wrapper):
         fps: int = 10,
         only_success: bool = False,
         finalize_interval: int = 100,
+        resume: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -95,10 +129,22 @@ class CollectEpisode(gym.Wrapper):
         self.finalize_interval = finalize_interval
 
         # LeRobot writer is created lazily on the first completed episode.
+        # In resume mode, seed _episodes_written from existing shards so the
+        # next shard's ``id_{N}`` suffix doesn't collide with prior runs.
+        # This is the full "preexisting count" — also exported via
+        # ``preexisting_episode_count`` so collectors can skip the progress
+        # bar forward.
+        self._preexisting_episode_count = 0
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
-            self._episodes_written = 0  # guarded by _lerobot_lock
+            if resume:
+                self._preexisting_episode_count = _count_existing_lerobot_episodes(
+                    save_dir, rank
+                )
+            self._episodes_written = (
+                self._preexisting_episode_count
+            )  # guarded by _lerobot_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -123,6 +169,11 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
+
+    @property
+    def preexisting_episode_count(self) -> int:
+        """Number of episodes on disk at construction time (resume mode only)."""
+        return self._preexisting_episode_count
 
     @property
     def is_start(self):
