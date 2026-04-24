@@ -24,6 +24,9 @@ loop, so per-step target jumps absorb as impedance tracking error (soft)
 rather than tripping libfranka's Ruckig trajectory reflexes (hard).
 Non-blocking — each set_target returns immediately.
 
+:py:meth:`dispatch_chunk` logs the full planned chunk for offline
+diagnostics but does not submit any motion itself.
+
 Observation schema is minimal: ``gripper_position`` (2,) +
 ``tcp_pose_rot6d`` (18,). The concat order is locked in by
 ``STATE_LAYOUT``, which is consumed by ``RealWorldEnv._wrap_obs`` instead
@@ -35,12 +38,14 @@ policy's ``_rearrange_state`` slicer expects.
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from rlinf.utils.diag_logger import log_jsonl
 from rlinf.utils.rot6d import matrix_to_rot6d, rot6d_to_quat_xyzw_safe
 
 from .dual_franka_env import NUM_ARMS, DualFrankaRobotConfig
@@ -148,6 +153,96 @@ class DualFrankaRot6dEnv(DualFrankaFrankyEnv):
             }
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
+
+    # --------------------------------------------------------- chunk dispatch
+
+    def dispatch_chunk(self, chunk_actions: np.ndarray) -> None:
+        """Log the full planned chunk for offline diagnostics.
+
+        Called once per 20-step policy chunk at the start of
+        :py:meth:`RealWorldEnv.chunk_step`. Motion is *not* dispatched here
+        — per-step targets go through :py:meth:`_dispatch_arm_motion` →
+        :py:meth:`FrankyController.move_tcp_pose` → Cartesian impedance
+        tracker. This method just decodes rot6d → quat (hemisphere-aligned
+        to live TCP for t=0 and to the previous planned pose for t>0) and
+        writes per-arm stats (``xyz_step_m``, ``quat_step_deg``) to the
+        jsonl so we can post-mortem chunk smoothness.
+        """
+        if self.config.is_dummy:
+            return
+
+        chunk_actions = np.asarray(chunk_actions, dtype=np.float64)
+        expected_dim = NUM_ARMS * ACTION_DIM_PER_ARM
+        assert chunk_actions.ndim == 2 and chunk_actions.shape[1] == expected_dim, (
+            f"chunk_actions must be (chunk_size, {expected_dim}); "
+            f"got {chunk_actions.shape}"
+        )
+        chunk_size = chunk_actions.shape[0]
+        if chunk_size == 0:
+            return
+
+        dt = 1.0 / self.config.step_frequency
+
+        left_poses = np.zeros((chunk_size, 7), dtype=np.float64)
+        right_poses = np.zeros((chunk_size, 7), dtype=np.float64)
+        for t in range(chunk_size):
+            action = np.clip(
+                chunk_actions[t],
+                self.action_space.low,
+                self.action_space.high,
+            )
+            per_arm = action.reshape(NUM_ARMS, ACTION_DIM_PER_ARM)
+            for arm, out in enumerate((left_poses, right_poses)):
+                xyz = per_arm[arm, 0:3]
+                if t == 0:
+                    prev_quat = (
+                        self._left_state.tcp_pose[3:]
+                        if arm == 0
+                        else self._right_state.tcp_pose[3:]
+                    )
+                else:
+                    prev_quat = out[t - 1, 3:]
+                rot6d = per_arm[arm, 3:9]
+                quat = rot6d_to_quat_xyzw_safe(rot6d, fallback_quat_xyzw=prev_quat)
+                if np.dot(quat, prev_quat) < 0.0:
+                    quat = -quat
+                out[t, :3] = xyz
+                out[t, 3:] = quat
+
+        for arm_name, poses, live_state in (
+            ("left", left_poses, self._left_state),
+            ("right", right_poses, self._right_state),
+        ):
+            if poses.shape[0] > 1:
+                dxyz = np.diff(poses[:, :3], axis=0)
+                xyz_steps = np.linalg.norm(dxyz, axis=1)
+                max_xyz_step = float(xyz_steps.max())
+                q = poses[:, 3:]
+                q = q / np.linalg.norm(q, axis=1, keepdims=True)
+                dots = np.abs(np.einsum("ij,ij->i", q[:-1], q[1:]))
+                dots = np.clip(dots, 0.0, 1.0)
+                quat_step_deg = (2.0 * np.degrees(np.arccos(dots))).tolist()
+                xyz_steps_list = xyz_steps.tolist()
+            else:
+                max_xyz_step = 0.0
+                quat_step_deg = []
+                xyz_steps_list = []
+            log_jsonl(
+                "dispatch_chunk",
+                {
+                    "t": time.time(),
+                    "arm": arm_name,
+                    "live_tcp_pose": live_state.tcp_pose.tolist(),
+                    "live_joint_pos": live_state.arm_joint_position.tolist(),
+                    "live_joint_vel": live_state.arm_joint_velocity.tolist(),
+                    "planned": poses.tolist(),
+                    "xyz_step_m": xyz_steps_list,
+                    "quat_step_deg": quat_step_deg,
+                    "max_xyz_step_m": max_xyz_step,
+                    "chunk_size": int(poses.shape[0]),
+                    "dt": dt,
+                },
+            )
 
     # --------------------------------------------------------- step dispatch
 
