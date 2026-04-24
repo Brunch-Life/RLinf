@@ -28,6 +28,9 @@ from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFra
 from rlinf.envs.realworld.franka.dual_franka_joint_env import (
     DualFrankaJointEnv as DualFrankaJointEnv,
 )
+from rlinf.envs.realworld.franka.dual_franka_rot6d_env import (
+    DualFrankaRot6dEnv as DualFrankaRot6dEnv,
+)
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
 from rlinf.envs.realworld.franka.tasks.bottle import BottleEnv as BottleEnv
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
@@ -78,6 +81,22 @@ def create_dual_franka_joint_env(
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = DualFrankaJointEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return apply_dual_arm_franky_wrappers(env, env_cfg)
+
+
+def create_dual_franka_rot6d_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = DualFrankaRot6dEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
@@ -147,6 +166,11 @@ register(
 register(
     id="DualFrankaJointEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_joint_env",
+)
+
+register(
+    id="DualFrankaRot6dEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_rot6d_env",
 )
 
 register(

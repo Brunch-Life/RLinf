@@ -1,6 +1,6 @@
 defaults:
-  - env/realworld_franka_joint_dual@env.train
-  - env/realworld_franka_joint_dual@env.eval
+  - env/realworld_franka_rot6d_dual@env.train
+  - env/realworld_franka_rot6d_dual@env.eval
   - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -99,27 +99,29 @@ env:
     override_cfg:
       task_description: "pick up the cylinder with the left hand, hand it over to the right hand, and place it on the plate"
       # SFT model outputs absolute TCP-pose target [xyz(3), rot6d(6), grip(1)]
-      # per arm (20-d total, matches Dual-franka-rot6d dataset). With
-      # "tcp_rot6d_waypoint" mode, the whole 20-step chunk is pre-submitted
-      # per arm as one franky CartesianWaypointMotion (Ruckig blends through
-      # waypoints); observation is auto-switched to the matching rot6d
-      # proprio layout. Use "tcp_rot6d_per_step" instead if you want every
-      # env.step to dispatch its own CartesianMotion.
-      joint_action_mode: "tcp_rot6d_waypoint"
-      teleop_direct_stream: false  # env.step owns motion
+      # per arm (20-d total, matches Dual-franka-rot6d dataset). Per env.step
+      # the decoded pose is pushed into a franky CartesianImpedanceTracker
+      # (see DualFrankaRot6dEnv._dispatch_arm_motion).
+      #
       # Autonomous reset starts from the training-data first-frame joint
       # distribution so the policy's initial obs is in-distribution. Values
-      # are per-joint means over 21 collected episodes (see
-      # logs/20260417-17:57:23/collected_data/rank_0/id_0/data/chunk-000/).
+      # are per-joint means over 17 collected episodes (see
+      # logs/20260422-22:42:45/collected_data/rank_0/id_0/data/chunk-000/).
+      # IMPORTANT: re-compute whenever the SFT dataset changes; a stale
+      # reset pushes the initial TCP ~15 cm out of distribution.
       joint_reset_qpos:
-        - [0.014, 0.118, -0.430, -1.604, 0.166, 2.273, -0.090]
-        - [-0.437, 0.190, 0.681, -1.582, 0.086, 1.987, -0.476]
+        - [0.354, 0.079, -0.736, -1.637, -0.013, 2.423, 0.175]
+        - [-0.506, 0.085, 0.693, -1.695, 0.133, 2.271, -0.486]
+      # Training-data first-frame TCP (xyz mean over the 17 eps above).
+      # Euler orientation is a coarse down-pointing approximation; the real
+      # gripper orientation used by reset is recovered from FK on the joints
+      # above, so these xyz values are the load-bearing ones.
       target_ee_pose:
-        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
-        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
+        - [0.652, -0.247, 0.481, -3.14, 0.0, 0.0]
+        - [0.663,  0.128, 0.414, -3.14, 0.0, 0.0]
       reset_ee_pose:
-        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
-        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.652, -0.247, 0.581, -3.14, 0.0, 0.0]
+        - [0.663,  0.128, 0.514, -3.14, 0.0, 0.0]
       success_hold_steps: 1
 
 rollout:
@@ -132,7 +134,11 @@ rollout:
   collect_prev_infos: False
   sync_weight_nccl_max_ctas: 32
   model:
-    model_path: /home/i-yinuo/models/dual_franka/tcp_v1_14500/  # TCP-pose SFT: /mnt/public1/chenyinuo/RLinf/logs/20260420-21:38:46/dual_franka_tcp_v1/checkpoints/global_step_14500
+    # rot6d_v1 SFT ckpt (openpi pi05_dualfranka_rot6d). Layout:
+    #   <model_path>/actor/model_state_dict/full_weights.pt
+    #   <model_path>/YinuoTHU/Dual-franka-rot6d/norm_stats.json
+    # Source on gxzx-1: /mnt/public1/chenyinuo/RLinf/logs/20260422-23:39:19/dual_franka_rot6d_v1/checkpoints/global_step_10500
+    model_path: /home/i-yinuo/cynws/RLinf/checkpoints/dual_franka_rot6d_v1/global_step_10500/
     precision: ${actor.model.precision}
 
 critic:
