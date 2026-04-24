@@ -51,9 +51,35 @@ from tqdm import tqdm
 _TOTAL_RE = re.compile(r"Total(?:\s+success)?:\s*(\d+)\s*/\s*(\d+)")
 _KB_RE = re.compile(r"\[keyboard\]\s+(\S+)")
 _SUCCESS_RE = re.compile(r"Success\s*\(reward=([-\d.]+)")
+# Matches the collector's own tqdm line, e.g. "Collecting Data Episodes:: 0%|...| 0/20 [00:00<?, ?it/s]".
+# Lets us initialize our bar from the very first render, before any episode
+# has ended — the target count is known the moment the collector starts.
+# Anchors on the ``|`` that closes the tqdm gauge so percentages like "18%"
+# aren't mistaken for the numerator.
+_TQDM_RE = re.compile(r"Collecting Data Episodes:.*?\|\s*(\d+)\s*/\s*(\d+)")
 
 
 _ENVGROUP_PID_RE = re.compile(r"EnvGroup\(rank=0\)\s+pid=(\d+)")
+
+
+def _probe_target(paths: list[Path]) -> Optional[int]:
+    """Return the collector's target episode count by scanning candidate files
+    for the first ``Collecting Data Episodes:.*N/M`` tqdm line.
+
+    Looks at paths in order (use more reliable sources first). tqdm writes
+    stderr using ``\\r`` to overwrite itself, so we split on ``\\r`` as well
+    as lines before matching. Returns None if no match in any file."""
+    for p in paths:
+        try:
+            if not p or not p.exists():
+                continue
+            txt = p.read_text(errors="replace").replace("\r", "\n")
+            m = _TQDM_RE.search(txt)
+            if m:
+                return int(m.group(2))
+        except OSError:
+            continue
+    return None
 
 
 def _find_worker_file(tee_log: Path) -> Optional[Path]:
@@ -179,6 +205,27 @@ def main() -> None:
     def _dbg(tag: str, line: str) -> None:
         if args.debug:
             print(f"[monitor {tag}] {line}", file=sys.stderr, flush=True)
+
+    # Try to pre-create the bar so it shows up before the first episode ends.
+    # tqdm runs on stderr inside the Ray worker, so we also probe the sibling
+    # .err file (if the source is a worker .out) before falling back to the
+    # tee log.
+    probe_candidates: list[Path] = []
+    if source_path.suffix == ".out":
+        probe_candidates.append(source_path.with_suffix(".err"))
+    probe_candidates.append(source_path)
+    if args.log_path != source_path:
+        probe_candidates.append(args.log_path)
+    target_from_probe = _probe_target(probe_candidates)
+    if target_from_probe is not None:
+        pbar = tqdm(
+            total=target_from_probe,
+            dynamic_ncols=True,
+            desc="collect",
+            unit="ep",
+            leave=True,
+        )
+        _dbg("init", f"target={target_from_probe} (from tqdm probe)")
 
     try:
         for line in _follow(source_path, args.poll, replay=not args.no_replay):
