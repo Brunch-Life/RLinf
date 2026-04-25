@@ -195,6 +195,7 @@ def apply_dual_arm_franky_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.
             action_scale=getattr(env.config, "joint_action_scale", 0.1),
             direct_stream=getattr(env.config, "teleop_direct_stream", False),
             stream_period=cfg.get("gello_joint_stream_period", 0.001),
+            default_mode=cfg.get("gello_default_mode", "teleop"),
         )
 
     env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))

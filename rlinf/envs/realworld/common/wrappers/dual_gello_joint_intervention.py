@@ -18,6 +18,22 @@ Supports step-gated mode (action forwarded by env.step) and direct-stream
 mode (daemon thread pushes joint targets to each controller at ~1 kHz,
 bypassing env.step's rate gate — pair with
 ``DualFrankaJointRobotConfig.teleop_direct_stream=True``).
+
+Three runtime modes selectable via :meth:`set_mode` (default chosen at
+construction time, typically wired through the YAML
+``gello_default_mode`` field):
+
+* ``"policy"`` — pass the upstream action through unchanged. GELLO is
+  ignored. Intended for HG-DAgger rollouts where the policy drives the
+  robot until the human clutches in.
+* ``"homing"`` — issue a "stay-in-place" target for both arms (current
+  joints + neutral grippers in absolute mode, zero vector in delta
+  mode). The robot keeps responding every step but does not advance;
+  an external GELLO actuator can use this window to slew the leader to
+  the Franka's joints before teleop hand-off.
+* ``"teleop"`` — overlay the live GELLO joint stream on the action
+  (the legacy collection behaviour). This is the default to preserve
+  existing pure-teleop YAMLs.
 """
 
 from __future__ import annotations
@@ -29,6 +45,8 @@ import gymnasium as gym
 import numpy as np
 
 from rlinf.envs.realworld.common.gello.gello_joint_expert import GelloJointExpert
+
+_VALID_MODES = ("policy", "homing", "teleop")
 
 
 class DualGelloJointIntervention(gym.ActionWrapper):
@@ -62,6 +80,7 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         action_scale: float = 0.1,
         direct_stream: bool = False,
         stream_period: float = 0.001,
+        default_mode: str = "teleop",
     ):
         super().__init__(env)
 
@@ -72,6 +91,14 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         self.right_expert = GelloJointExpert(port=right_port)
         self.last_intervene = 0.0
 
+        if default_mode not in _VALID_MODES:
+            raise ValueError(
+                f"default_mode must be one of {_VALID_MODES}, got {default_mode!r}"
+            )
+        self._default_mode = default_mode
+        self._mode = default_mode
+        self._mode_lock = threading.Lock()
+
         self._direct_stream = direct_stream
         self._stream_period = stream_period
         self._stream_thread: threading.Thread | None = None
@@ -79,6 +106,41 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         self._stream_last_gripper_open: list[bool | None] = [None, None]
         self._stream_paused = threading.Event()
         self._stream_paused.set()  # starts unpaused
+
+    # ------------------------------------------------------------------
+    # Mode API
+    # ------------------------------------------------------------------
+    def set_mode(self, mode: str) -> None:
+        """Switch the runtime intervention mode (thread-safe)."""
+        if mode not in _VALID_MODES:
+            raise ValueError(f"mode must be one of {_VALID_MODES}, got {mode!r}")
+        with self._mode_lock:
+            self._mode = mode
+
+    @property
+    def mode(self) -> str:
+        with self._mode_lock:
+            return self._mode
+
+    def _freeze_action(self) -> np.ndarray:
+        """Stay-in-place action under the current action_mode.
+
+        Absolute: per-arm ``[current_q (7), 0_grip]`` — issuing this as
+        the env action makes the franky controller hold the cached
+        pose. Delta: zero unit vector. Used in ``homing`` and as a
+        safety fall-through in ``teleop`` when GELLOs are not yet
+        streaming, so a placeholder upstream action never reaches the
+        robot.
+        """
+        per_arm_dim = 8 if self.gripper_enabled else 7
+        if self.use_delta:
+            return np.zeros(2 * per_arm_dim, dtype=np.float32)
+        current = self._get_current_joint_positions()  # (2, 7)
+        if self.gripper_enabled:
+            return np.concatenate([current[0], [0.0], current[1], [0.0]]).astype(
+                np.float32
+            )
+        return np.concatenate([current[0], current[1]]).astype(np.float32)
 
     def _start_stream_thread(self) -> None:
         """Spawn the 1 kHz GELLO → controllers pump."""
@@ -278,16 +340,36 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         return result
 
     def step(self, action):
-        new_action, replaced = self.action(action)
+        mode = self.mode
 
-        # Lazy-start the 1 kHz streamer if the controllers weren't
-        # ready at __init__ time.
+        if mode == "policy":
+            effective = action
+            replaced = False
+        elif mode == "homing":
+            effective = self._freeze_action()
+            replaced = False
+        else:  # "teleop"
+            new_action, ok = self.action(action)
+            if ok:
+                effective = new_action
+                replaced = True
+            else:
+                # GELLO not streaming yet (boot window). Freeze rather
+                # than forwarding the upstream action — under
+                # ``default_mode='teleop'`` the upstream is typically a
+                # placeholder zero vector that would otherwise drive
+                # the robot to its joint origin.
+                effective = self._freeze_action()
+                replaced = False
+
+        # Lazy-start the 1 kHz streamer if controllers weren't ready
+        # at __init__ time.
         if self._direct_stream and self._stream_thread is None:
             self._start_stream_thread()
 
-        obs, rew, done, truncated, info = self.env.step(new_action)
+        obs, rew, done, truncated, info = self.env.step(effective)
         if replaced:
-            info["intervene_action"] = new_action
+            info["intervene_action"] = effective
         return obs, rew, done, truncated, info
 
     def close(self):
