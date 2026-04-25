@@ -368,6 +368,7 @@ class DualGelloJointIntervention(gym.ActionWrapper):
             self._start_stream_thread()
 
         obs, rew, done, truncated, info = self.env.step(effective)
+        info["intervene_flag"] = np.array([replaced], dtype=bool)
         if replaced:
             info["intervene_action"] = effective
         return obs, rew, done, truncated, info

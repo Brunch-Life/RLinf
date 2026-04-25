@@ -85,5 +85,6 @@ class GelloIntervention(gym.ActionWrapper):
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
             info["intervene_action"] = new_action
+            info["intervene_flag"] = np.ones(1)
 
         return obs, rew, done, truncated, info
