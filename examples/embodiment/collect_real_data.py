@@ -258,9 +258,6 @@ class DataCollector(Worker):
                     )
 
                     trajectory = current_rollout.to_trajectory()
-                    trajectory.intervene_flags = torch.ones_like(
-                        trajectory.intervene_flags
-                    )
                     self.buffer.add_trajectories([trajectory])
 
                     progress_bar.update(1)
