@@ -1,0 +1,97 @@
+defaults:
+  - env/realworld_franka_rot6d_dual@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# Dataset replay knobs. Override on the CLI:
+#   bash replay_data.sh realworld_replay_rot6d_dual_franka \
+#       replay.dataset_root=/path/to/lerobot_root \
+#       replay.episode_index=3
+replay:
+  dataset_root: /home/i-yinuo/cynws/RLinf/logs/merged_dual_franka_cylinder_handover_20260424
+  episode_index: 0
+  fps: 10
+  start_frame: 0
+  max_frames: null
+  log_every: 20
+  # rot6d replay only has one valid source: state-derived next-frame TCP
+  # rot6d (via build_rot6d_actions). The "action" column on disk is 16-d
+  # joints, not TCP — there is no "GELLO TCP" in the dataset to chase.
+  target_source: state
+  prealign_reset: true
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: "172.16.0.2"
+            right_robot_ip: "172.16.0.2"
+            base_camera_serials:
+              - "941322072906"
+            base_camera_type: realsense
+            left_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+            left_camera_type: lumos
+            right_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0"
+            right_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIR00N-if00-port0"
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "replay-rot6d-dual-franka"
+    logger_backends: ["tensorboard"]
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # Pure dataset replay through the rot6d env: no GELLO, no model, no
+    # keyboard gating. env.step() routes each 20-d target to
+    # FrankyController.move_tcp_pose → CartesianImpedanceTracker.set_target.
+    use_gello: False
+    use_gello_joint: False
+    use_spacemouse: False
+    keyboard_reward_wrapper: null
+    auto_reset: False
+    ignore_terminations: True
+    max_episode_steps: 100000
+    override_cfg:
+      task_description: "dataset replay (rot6d TCP)"
+      success_hold_steps: 1
+      # Bookkeeping pose; rot6d env reset() still goes through the parent
+      # joint-space reset_joint(joint_reset_qpos), so joint_reset_qpos
+      # below is the load-bearing one. ``replay.prealign_reset`` overrides
+      # joint_reset_qpos with dataset[0]'s measured joints before the env
+      # builds, so the impedance tracker sees ~zero err on first dispatch.
+      target_ee_pose:
+        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
+      reset_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      joint_reset_qpos:
+        - [-0.058, 0.075, -0.309, -1.623, -0.012, 2.387, 0.016]
+        - [-0.520, 0.160,  0.748, -1.526,  0.031, 1.978, -0.425]

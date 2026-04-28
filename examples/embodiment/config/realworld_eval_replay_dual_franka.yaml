@@ -1,0 +1,26 @@
+defaults:
+  - realworld_eval_dual_franka
+  - _self_
+
+# Replay-override eval: model loads + runs inference per chunk as usual, but
+# RealWorldEnv.chunk_step swaps the model's chunk with dataset GT before
+# dispatch and writes (model_chunk, gt_chunk, live_state, dataset_state) to
+# ``dump_path`` per chunk. Use to isolate "is dispatch correct?" from "is
+# the model correct?" — the robot tracks the dataset, not the model, while
+# we record what the model would have done given the live obs.
+#
+# Defaults inherit env / model / cluster from realworld_eval_dual_franka,
+# so the rot6d env and the cylinder-handover SFT ckpt are already wired in.
+
+env:
+  eval:
+    replay_override:
+      enabled: true
+      # Same merged 80-ep dataset the SFT model was trained on. Override on
+      # the CLI to test against held-out episodes.
+      dataset_root: /home/i-yinuo/cynws/RLinf/logs/merged_dual_franka_cylinder_handover_20260424
+      episode_index: 0
+      # Land alongside the run's diag dir if the launcher exported one,
+      # otherwise drop into /tmp. Atomic-write via a .tmp.npz rename so a
+      # crashed run still leaves a valid file.
+      dump_path: ${oc.env:RLINF_DIAG_DIR,/tmp}/replay_override.npz

@@ -64,6 +64,7 @@ class RealWorldEnv(gym.Env):
         self._init_metrics()
         self._elapsed_steps = np.zeros(self.num_envs, dtype=np.int32)
         self._init_reset_state_ids()
+        self._init_replay_override()
 
     def _create_env(self, env_idx: int):
         worker_info: WorkerInfo = self.worker_info
@@ -223,6 +224,10 @@ class RealWorldEnv(gym.Env):
             self._reset_metrics(env_idx)
         else:
             self._reset_metrics()
+        # Replay override always resumes from frame 0 on reset; the dataset
+        # is single-episode so episode boundaries map cleanly to step 0.
+        if self._replay_override_cfg is not None:
+            self._replay_override_step = 0
         return extracted_obs, infos
 
     def _wrap_obs(self, raw_obs):
@@ -336,8 +341,172 @@ class RealWorldEnv(gym.Env):
             infos,
         )
 
+    def _init_replay_override(self):
+        """Optional dataset-replay override hook.
+
+        When ``cfg.replay_override.enabled`` is true, :py:meth:`chunk_step`
+        swaps the incoming model chunk with dataset GT *before* dispatch and
+        writes ``(model_chunk, gt_chunk, live_states_per_step,
+        dataset_states_per_step)`` per chunk to ``dump_path`` for offline
+        analysis. Lets us isolate "is dispatch correct?" from "is the model
+        correct?" — replay drives the robot, the model only observes the
+        live obs and emits predictions we log without acting on.
+        """
+        self._replay_override_cfg = None
+        self._replay_override_targets = None  # (T, action_dim) lazy-loaded
+        self._replay_override_dataset_state = None  # (T, state_dim) lazy
+        self._replay_override_step = 0
+        self._replay_override_log = None
+
+        cfg_block = self.cfg.get("replay_override", None)
+        if cfg_block is None or not bool(cfg_block.get("enabled", False)):
+            return
+        self._replay_override_cfg = cfg_block
+        self._replay_override_log = {
+            "frame_indices": [],
+            "model_chunks": [],
+            "gt_chunks": [],
+            "live_states_per_step": [],
+            "dataset_states_per_step": [],
+        }
+
+    def _lazy_load_replay_override(self, action_dim: int) -> None:
+        """Pull the parquet once, cached on first chunk_step. ``action_dim``
+        is used to dispatch joint vs rot6d target builders.
+        """
+        if self._replay_override_targets is not None:
+            return
+        from rlinf.envs.realworld.common.dataset_replay import (
+            load_replay_targets,
+        )
+
+        cfg_block = self._replay_override_cfg
+        dataset_root = pathlib.Path(cfg_block["dataset_root"])
+        episode_index = int(cfg_block.get("episode_index", 0))
+        self._replay_override_targets = load_replay_targets(
+            dataset_root, episode_index, action_dim
+        )
+
+        # Cache the raw state column too so we can compare live vs recorded
+        # state per step. State dim is fixed at 68 in the joint-collected
+        # dataset; the rot6d-backfill rewrites only the [:20] prefix.
+        import pyarrow.parquet as pq
+
+        path = (
+            dataset_root / "data" / "chunk-000" / f"episode_{episode_index:06d}.parquet"
+        )
+        table = pq.read_table(path, columns=["state"])
+        T = table.num_rows
+        self._replay_override_dataset_state = np.stack(
+            [
+                np.asarray(table.column("state")[i].as_py(), dtype=np.float32)
+                for i in range(T)
+            ]
+        )
+        print(
+            f"[realworld_env/replay_override] loaded ep={episode_index} "
+            f"T={T} action_dim={action_dim} from {dataset_root}"
+        )
+
+    def _apply_replay_override(self, model_chunk_actions):
+        """Capture model chunk and substitute dataset GT for dispatch."""
+        if isinstance(model_chunk_actions, torch.Tensor):
+            model_np = model_chunk_actions.detach().cpu().numpy()
+            return_tensor = True
+            device = model_chunk_actions.device
+            dtype = model_chunk_actions.dtype
+        else:
+            model_np = np.asarray(model_chunk_actions)
+            return_tensor = False
+            device = None
+            dtype = None
+
+        num_envs, chunk_size, action_dim = model_np.shape
+        self._lazy_load_replay_override(action_dim)
+
+        T_total = self._replay_override_targets.shape[0]
+        start = int(self._replay_override_step)
+        end = min(start + chunk_size, T_total)
+        actual = end - start
+        gt = np.zeros_like(model_np)
+        if actual > 0:
+            slice_targets = self._replay_override_targets[start:end]
+            for env_id in range(num_envs):
+                gt[env_id, :actual] = slice_targets
+        if actual < chunk_size:
+            # Past the recorded end — hold the last frame.
+            last = self._replay_override_targets[-1]
+            for env_id in range(num_envs):
+                gt[env_id, actual:] = last
+
+        ds_state = np.zeros(
+            (chunk_size, self._replay_override_dataset_state.shape[1]),
+            dtype=np.float32,
+        )
+        if actual > 0:
+            ds_state[:actual] = self._replay_override_dataset_state[start:end]
+        if actual < chunk_size:
+            ds_state[actual:] = self._replay_override_dataset_state[-1]
+
+        self._replay_override_log["frame_indices"].append(start)
+        self._replay_override_log["model_chunks"].append(model_np.copy())
+        self._replay_override_log["gt_chunks"].append(gt.copy())
+        self._replay_override_log["dataset_states_per_step"].append(ds_state)
+
+        self._replay_override_step += chunk_size
+
+        if return_tensor:
+            return torch.as_tensor(gt, dtype=dtype, device=device)
+        return gt
+
+    def _record_replay_override_live(self, obs_list):
+        """Capture live state per step within the just-dispatched chunk."""
+        states_per_step = []
+        for obs in obs_list:
+            s = obs.get("states")
+            if torch.is_tensor(s):
+                s = s.detach().cpu().numpy()
+            else:
+                s = np.asarray(s)
+            states_per_step.append(s)
+        # (num_envs, chunk_size, state_dim)
+        live = np.stack(states_per_step, axis=1)
+        self._replay_override_log["live_states_per_step"].append(live.copy())
+
+    def _dump_replay_override(self) -> None:
+        cfg_block = self._replay_override_cfg
+        dump_path = cfg_block.get("dump_path", None)
+        if dump_path is None:
+            return
+        dump_path = pathlib.Path(dump_path)
+        dump_path.parent.mkdir(parents=True, exist_ok=True)
+        log = self._replay_override_log
+        # Ragged shapes are fine across episodes once auto_reset kicks in;
+        # at chunk-step granularity each entry is regular within itself.
+        np.savez(
+            dump_path.with_suffix(".tmp.npz"),
+            frame_indices=np.asarray(log["frame_indices"], dtype=np.int64),
+            model_chunks=np.stack(log["model_chunks"], axis=0)
+            if log["model_chunks"]
+            else np.zeros((0,), dtype=np.float32),
+            gt_chunks=np.stack(log["gt_chunks"], axis=0)
+            if log["gt_chunks"]
+            else np.zeros((0,), dtype=np.float32),
+            live_states_per_step=np.stack(log["live_states_per_step"], axis=0)
+            if log["live_states_per_step"]
+            else np.zeros((0,), dtype=np.float32),
+            dataset_states_per_step=np.stack(log["dataset_states_per_step"], axis=0)
+            if log["dataset_states_per_step"]
+            else np.zeros((0,), dtype=np.float32),
+        )
+        # Atomic rename so a crashed run still leaves a valid file.
+        os.replace(dump_path.with_suffix(".tmp.npz"), dump_path)
+
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
+        if self._replay_override_cfg is not None:
+            chunk_actions = self._apply_replay_override(chunk_actions)
+
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -388,6 +557,10 @@ class RealWorldEnv(gym.Env):
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
             raw_chunk_truncations.append(truncations)
+
+        if self._replay_override_cfg is not None:
+            self._record_replay_override_live(obs_list)
+            self._dump_replay_override()
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
