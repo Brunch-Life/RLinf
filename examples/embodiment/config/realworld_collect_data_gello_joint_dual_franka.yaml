@@ -74,10 +74,13 @@ env:
     use_spacemouse: False
     use_gello: False
     use_gello_joint: True
-    # Keyboard wrapper for gated demonstration collection during GELLO teleop:
-    #   a = start recording (pre-`a` frames are skipped; `a` rebases buffer)
-    #   b = fail-end  (reward=-1, done)  → episode dropped
-    #   c = success-end (reward=+1, done) → episode saved as parquet
+    # Foot-pedal-driven keyboard wrapper for GELLO collection. The 3-key
+    # pedal maps to:
+    #   a (pre)  → start a new rec episode at the current pose
+    #   a (rec)  → ABORT current episode (drop buffer, return to pre,
+    #              arm stays where it is — no home reset)
+    #   b (rec)  → bump segment_id by 1 (1 s debounce; sub-task boundary)
+    #   c (rec)  → SUCCESS end (reward=+1, done) → episode saved
     keyboard_reward_wrapper: "start_end"
     # GELLO serial ports — inherited from env/realworld_franka_joint_dual.
     # Override here only if you swap GELLO units for a session.
@@ -120,3 +123,15 @@ env:
       only_success: True
       robot_type: "dual_panda"
       fps: 10
+      # Optional multi-task collection. When present, episodes round-robin
+      # across the listed tasks: ep0 → tasks[0], ep1 → tasks[1], ep2 →
+      # tasks[0], … Each task gets its own dataset rooted at
+      # ``<save_dir>/<name>/`` and its own prompt (recorded as the
+      # lerobot frame's ``task`` field). Aborts via foot-pedal A do NOT
+      # consume a task slot — only successes (C) advance the rotation.
+      # Comment out / remove the whole block for legacy single-task mode.
+      # tasks:
+      #   - name: pour_water
+      #     prompt: "Pour water from the cup into the bowl"
+      #   - name: pick_cup
+      #     prompt: "Pick up the cup from the table"

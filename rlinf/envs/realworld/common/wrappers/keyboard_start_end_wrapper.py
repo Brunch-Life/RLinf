@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+import time
 from typing import Any, SupportsFloat
 
 import gymnasium as gym
@@ -21,32 +23,44 @@ from rlinf.envs.realworld.common.keyboard.keyboard_listener import KeyboardListe
 
 
 class KeyboardStartEndWrapper(gym.Wrapper):
-    """Gate recording on `a`; end with `b` (fail, -1) or `c` (success, +1).
+    """Foot-pedal-friendly keyboard wrapper for dual-Franka data collection.
 
-    Uses the listener's lossless press queue (``pop_pressed_keys``) instead of
-    ``get_key``: at 10 Hz step rate a fast tap (<100 ms) often lands entirely
-    between two polls and ``get_key`` never sees it — the queue catches every
-    initial press in the evdev thread.
+    The pedal exposes only ``a`` / ``b`` / ``c`` so the wrapper is rebound
+    to the workflow we actually use, not the legacy "b=fail" semantics:
 
-    Does not print — stdout inside a Ray actor lags the driver terminal via
-    Ray's log monitor.  Events and state are surfaced through ``info`` so the
-    driver-side caller can render realtime output.
+    * ``a`` (pre):  start a fresh rec episode at the current pose.
+    * ``a`` (rec):  abort — drop buffer, return to pre. The arm is **not**
+                    reset (GELLO mode keeps tracking the operator's pose;
+                    other teleop devices that prefer a home-reset on abort
+                    should layer that in their own reset logic).
+    * ``b`` (rec):  bump ``segment_id`` by 1 for the upcoming frames. Used
+                    to mark sub-task boundaries inside one episode.
+                    Debounced at 1 s — back-to-back presses inside the
+                    window are silently ignored so an accidentally held or
+                    bouncing pedal can't shred the segment timeline.
+    * ``c`` (rec):  end with success (reward=+1, done=True). Episode is
+                    saved by the outer collector.
 
     info fields added every step:
-      - ``keyboard_phase``:  ``"pre"`` | ``"rec"``
-      - ``keyboard_event``:  label from the LAST press handled this step —
-            ``"start"`` | ``"restart"`` | ``"end_fail"`` | ``"end_success"``
-            or ``None`` if no relevant press fired.
-      - ``pre_record`` / ``record_reset`` — consumed by CollectEpisode.
+      * ``keyboard_phase``   — ``"pre"`` | ``"rec"``
+      * ``keyboard_event``   — ``"start"`` | ``"abort"`` | ``"segment"`` |
+                               ``"end_success"`` | ``None``
+      * ``pre_record``       — bool, consumed by CollectEpisode to skip recording
+      * ``record_reset``     — bool, consumed by CollectEpisode to clear buffer
+      * ``segment_advance``  — bool, consumed by CollectEpisode to bump seg_id
     """
+
+    SEGMENT_DEBOUNCE_S = 1.0
 
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self.listener = KeyboardListener()
         self._recording = False
+        self._last_segment_ts = -math.inf
 
     def reset(self, *, seed=None, options=None):
         self._recording = False
+        self._last_segment_ts = -math.inf
         # Drain any presses queued during the reset gap so they can't leak
         # into the next episode.
         self.listener.pop_pressed_keys()
@@ -57,27 +71,40 @@ class KeyboardStartEndWrapper(gym.Wrapper):
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # Keyboard is the sole terminator in both phases — pre-record must not
-        # auto-reset either, or `_align_to_gello` jerks the arms every 30 s.
+        # Pedal owns episode boundaries — pre/abort must NOT auto-reset.
         terminated = False
         truncated = False
 
         record_reset = False
+        segment_advance = False
         event: str | None = None
+
         for key in self.listener.pop_pressed_keys():
             if key == "a":
-                event = "restart" if self._recording else "start"
-                self._recording = True
-                record_reset = True
+                if self._recording:
+                    # Drop the in-progress episode but stay where we are.
+                    event = "abort"
+                    self._recording = False
+                    record_reset = True
+                    self._last_segment_ts = -math.inf
+                else:
+                    # Begin a fresh rec episode at the current pose.
+                    event = "start"
+                    self._recording = True
+                    record_reset = True
+                    self._last_segment_ts = -math.inf
             elif key == "b" and self._recording:
-                event = "end_fail"
-                reward = -1.0
-                terminated = True
-                break
+                now = time.monotonic()
+                if now - self._last_segment_ts >= self.SEGMENT_DEBOUNCE_S:
+                    event = "segment"
+                    segment_advance = True
+                    self._last_segment_ts = now
+                # else: silently ignore — keeps mini-segments out of the data.
             elif key == "c" and self._recording:
                 event = "end_success"
                 reward = 1.0
                 terminated = True
+                self._recording = False
                 break
 
         if not isinstance(info, dict):
@@ -86,4 +113,5 @@ class KeyboardStartEndWrapper(gym.Wrapper):
         info["record_reset"] = record_reset
         info["keyboard_phase"] = "rec" if self._recording else "pre"
         info["keyboard_event"] = event
+        info["segment_advance"] = segment_advance
         return obs, reward, terminated, truncated, info

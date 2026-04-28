@@ -136,6 +136,21 @@ class RealWorldEnv(gym.Env):
             first = layouts[0] if layouts else None
             self._state_layout = tuple(first) if first else None
 
+    def set_task_descriptions(self, descriptions: list[str]) -> None:
+        """Override the per-env task prompts emitted in ``obs['task_descriptions']``.
+
+        The baseline list is read once from each inner env's
+        ``task_description`` attribute at init. Multi-task collection
+        (collect_real_data) calls this before each new episode so the
+        recorded ``task`` field matches the active task's prompt.
+        """
+        if len(descriptions) != self.num_envs:
+            raise ValueError(
+                f"set_task_descriptions expects {self.num_envs} entries, "
+                f"got {len(descriptions)}"
+            )
+        self.task_descriptions = list(descriptions)
+
     @property
     def action_space(self):
         return self.env.action_space

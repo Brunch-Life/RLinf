@@ -14,6 +14,7 @@
 
 import os
 import time
+from typing import Optional
 
 import hydra
 import numpy as np
@@ -58,6 +59,30 @@ class DataCollector(Worker):
             total_num_processes=1,
             worker_info=self.worker_info,
         )
+        # Keep an unwrapped handle for set_task_descriptions — CollectEpisode
+        # is a gym.Wrapper and its __getattr__ would forward, but the
+        # explicit handle survives even if wrapping rules ever change.
+        self._raw_env = self.env
+
+        # Multi-task collection: round-robin episodes through ``tasks``.
+        # Each task gets its own save_dir + prompt. When ``tasks`` is
+        # missing/empty the wrapper writes a single dataset like before.
+        self._tasks: Optional[list[dict]] = None
+        self._active_task_idx = 0
+        dc_cfg = cfg.env.eval.get("data_collection")
+        tasks_cfg = dc_cfg.get("tasks") if dc_cfg is not None else None
+        if tasks_cfg:
+            base_save_dir = dc_cfg.save_dir
+            self._tasks = []
+            for t in tasks_cfg:
+                name = t["name"]
+                self._tasks.append(
+                    {
+                        "name": name,
+                        "save_dir": os.path.join(base_save_dir, name),
+                        "prompt": t.get("prompt", ""),
+                    }
+                )
 
         if self.cfg.env.eval.get("data_collection", None) and getattr(
             self.cfg.env.eval.data_collection, "enabled", False
@@ -83,7 +108,10 @@ class DataCollector(Worker):
                 resume=_truthy(
                     getattr(self.cfg.env.eval.data_collection, "resume", False)
                 ),
+                tasks=self._tasks,
             )
+            if self._tasks:
+                self._switch_to_task(self._active_task_idx)
             self._preexisting_success = int(
                 getattr(self.env, "preexisting_episode_count", 0)
             )
@@ -117,6 +145,26 @@ class DataCollector(Worker):
         if self.cfg.env.eval.get("data_collection") is not None:
             fps = self.cfg.env.eval.data_collection.get("fps")
         self._target_step_period = 1.0 / float(fps) if fps else None
+
+    def _switch_to_task(self, idx: int) -> None:
+        """Activate task ``self._tasks[idx]`` for the upcoming episode.
+
+        Updates both the CollectEpisode wrapper (selects which dataset
+        the next flushed episode lands in) and the underlying
+        ``RealWorldEnv`` (so ``obs['task_descriptions']`` carries the
+        active task's prompt — that string ends up as lerobot's ``task``
+        field per frame).
+        """
+        if not self._tasks:
+            return
+        task = self._tasks[idx]
+        if hasattr(self.env, "set_active_task"):
+            self.env.set_active_task(task["name"])
+        self._raw_env.set_task_descriptions([task["prompt"]] * self._raw_env.num_envs)
+        self.log_info(
+            f"[task] switched to {task['name']!r} "
+            f"(idx={idx}, prompt={task['prompt']!r})"
+        )
 
     def _process_obs(self, obs):
         """Reshape env obs into the dict EmbodiedRolloutResult expects."""
@@ -210,10 +258,10 @@ class DataCollector(Worker):
                 forward_inputs={"action": action_tensor},
             )
 
-            # Rebuild the rollout on ``a``/``restart`` so pre-record frames
-            # are excluded; append in "rec" (or unconditionally when no
-            # keyboard wrapper is attached).
-            if kb_event in ("start", "restart"):
+            # Rebuild the rollout when a new rec begins (``start``) or the
+            # in-progress one is aborted (``abort``). ``restart`` is kept
+            # for backward compat with older wrappers that emit it.
+            if kb_event in ("start", "restart", "abort"):
                 current_rollout = EmbodiedRolloutResult(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
@@ -264,6 +312,16 @@ class DataCollector(Worker):
                     self.buffer.add_trajectories([trajectory])
 
                     progress_bar.update(1)
+
+                    # Round-robin to the next task only on successful save.
+                    # Aborts (kb_event="abort") never reach here — the
+                    # KeyboardStartEndWrapper just clears the buffer and
+                    # returns to pre, no done flag, no reset.
+                    if self._tasks:
+                        self._active_task_idx = (self._active_task_idx + 1) % len(
+                            self._tasks
+                        )
+                        self._switch_to_task(self._active_task_idx)
                 else:
                     self.log_info(
                         f"Episode ended (reward={r_val:.2f}). "

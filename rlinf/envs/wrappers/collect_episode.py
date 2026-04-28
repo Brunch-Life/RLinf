@@ -91,6 +91,14 @@ class CollectEpisode(gym.Wrapper):
             (N = sum of episodes across pre-existing shards) so the in-progress
             write never touches previously-finalized data. Ignored for pickle.
             Defaults to False.
+        tasks: Optional list of task dicts ``{"name": str, "save_dir": str,
+            "prompt": str}`` for multi-task collection. Each task gets its
+            own LeRobot dataset rooted at its ``save_dir``; the active task
+            is selected via :py:meth:`set_active_task` (collector calls
+            this before each new episode). When ``None`` (default) the
+            wrapper writes a single dataset under ``save_dir`` like before.
+            Multi-task mode currently only supports ``export_format="lerobot"``
+            and ignores ``resume`` (each session starts fresh shards).
     """
 
     def __init__(
@@ -106,6 +114,7 @@ class CollectEpisode(gym.Wrapper):
         only_success: bool = False,
         finalize_interval: int = 100,
         resume: bool = False,
+        tasks: Optional[list[dict]] = None,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -134,11 +143,32 @@ class CollectEpisode(gym.Wrapper):
         # This is the full "preexisting count" — also exported via
         # ``preexisting_episode_count`` so collectors can skip the progress
         # bar forward.
+        # Multi-task routing. ``self._tasks_by_name`` is the canonical
+        # signal for "are we in multi-task mode?".
+        self._tasks_by_name: Optional[dict[str, dict]] = None
+        self._active_task: Optional[str] = None
+        self._task_writers: dict[str, Any] = {}
+        self._task_episodes_written: dict[str, int] = {}
+        if tasks:
+            if export_format != "lerobot":
+                raise ValueError(
+                    "tasks= is only supported with export_format='lerobot'"
+                )
+            for t in tasks:
+                if "name" not in t or "save_dir" not in t:
+                    raise ValueError(
+                        f"each task entry must have 'name' and 'save_dir'; got {t!r}"
+                    )
+            self._tasks_by_name = {t["name"]: t for t in tasks}
+            self._task_episodes_written = {t["name"]: 0 for t in tasks}
+            # Default active task; collector overrides via set_active_task.
+            self._active_task = tasks[0]["name"]
+
         self._preexisting_episode_count = 0
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
-            if resume:
+            if resume and self._tasks_by_name is None:
                 self._preexisting_episode_count = _count_existing_lerobot_episodes(
                     save_dir, rank
                 )
@@ -156,6 +186,7 @@ class CollectEpisode(gym.Wrapper):
         # Per-environment episode state.
         self._episode_ids = [0] * num_envs
         self._episode_success = [False] * num_envs
+        self._segment_ids: list[int] = [0] * num_envs
         self._global_step = 0
         # Holds the post-reset obs for auto-reset envs to prepend to next episode.
         self._pending_obs: list[Any] = [None] * num_envs
@@ -168,7 +199,28 @@ class CollectEpisode(gym.Wrapper):
         self.logger = get_logger()
 
         os.makedirs(self.save_dir, exist_ok=True)
+        if self._tasks_by_name:
+            for t in self._tasks_by_name.values():
+                os.makedirs(t["save_dir"], exist_ok=True)
         atexit.register(self._finalize_on_exit)
+
+    def set_active_task(self, name: str) -> None:
+        """Select which task's writer the *next* flushed episode lands in.
+
+        No-op in single-task mode. Raises ``ValueError`` if ``name`` was
+        not registered via the ``tasks=`` constructor argument.
+        """
+        if self._tasks_by_name is None:
+            return
+        if name not in self._tasks_by_name:
+            raise ValueError(
+                f"unknown task {name!r}; known: {list(self._tasks_by_name)}"
+            )
+        self._active_task = name
+
+    @property
+    def active_task(self) -> Optional[str]:
+        return self._active_task
 
     @property
     def preexisting_episode_count(self) -> int:
@@ -301,6 +353,7 @@ class CollectEpisode(gym.Wrapper):
             "terminated": [],
             "truncated": [],
             "infos": [],
+            "segment_ids": [],
         }
 
     def _record_reset_obs(self, obs) -> None:
@@ -356,6 +409,7 @@ class CollectEpisode(gym.Wrapper):
             if record_reset:
                 self._buffers[env_idx] = self._new_buffer()
                 self._episode_success[env_idx] = False
+                self._segment_ids[env_idx] = 0
                 self._buffers[env_idx]["observations"].append(env_obs)
                 self._buffers[env_idx]["rewards"].append(0.0)
                 self._buffers[env_idx]["terminated"].append(False)
@@ -366,6 +420,11 @@ class CollectEpisode(gym.Wrapper):
             if pre_record:
                 continue
 
+            # Edge-triggered segment bump from KeyboardStartEndWrapper.
+            # Debounce lives in the wrapper; here we just consume the flag.
+            if self._bool_from_env_info(env_info, "segment_advance"):
+                self._segment_ids[env_idx] += 1
+
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
             buf["actions"].append(self._slice_copy(action, env_idx))
@@ -373,6 +432,7 @@ class CollectEpisode(gym.Wrapper):
             buf["terminated"].append(self._slice_copy(terminated, env_idx))
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
             buf["infos"].append(env_info)
+            buf["segment_ids"].append(int(self._segment_ids[env_idx]))
 
             self._update_success(env_idx, self._slice_data(env_info, env_idx))
 
@@ -381,6 +441,7 @@ class CollectEpisode(gym.Wrapper):
         self._episode_ids[env_idx] += 1
         self._buffers[env_idx] = self._new_buffer()
         self._episode_success[env_idx] = False
+        self._segment_ids[env_idx] = 0
 
         if self._pending_obs[env_idx] is not None:
             self._buffers[env_idx]["observations"].append(self._pending_obs[env_idx])
@@ -424,7 +485,11 @@ class CollectEpisode(gym.Wrapper):
         if self.export_format == "lerobot":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
-                self._submit(self._write_lerobot_episode, ep_data)
+                # Snapshot the active task at flush time — the collector
+                # may flip ``_active_task`` for the *next* episode before
+                # the writer thread drains this one.
+                task_name = self._active_task
+                self._submit(self._write_lerobot_episode, ep_data, task_name)
         else:
             episode_data = self._copy(
                 {
@@ -476,6 +541,7 @@ class CollectEpisode(gym.Wrapper):
         actions = buf["actions"]
         terminated = buf["terminated"]
         obs_steps = buf["observations"]
+        seg_ids = buf.get("segment_ids", [])
         if not actions:
             return None
         if len(obs_steps) > len(actions):
@@ -504,6 +570,7 @@ class CollectEpisode(gym.Wrapper):
             if state is None or np_action is None:
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
+            seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
             frame: dict[str, Any] = {
                 "state": np.asarray(state).astype(np.float32),
                 "actions": np.asarray(np_action).astype(np.float32).flatten(),
@@ -511,6 +578,7 @@ class CollectEpisode(gym.Wrapper):
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
                 "intervene_flag": np.array([intervene_flag], dtype=bool),
+                "segment_id": np.array([seg_id], dtype=np.uint8),
             }
             if image is not None:
                 frame["image"] = self._to_uint8(np.asarray(image))
@@ -532,24 +600,40 @@ class CollectEpisode(gym.Wrapper):
         steps[-1]["done"] = np.array([True], dtype=bool)
         return steps
 
-    def _ensure_lerobot_writer(self, ep_data: dict):
-        """Create the LeRobot writer on first use. Must be called inside the lock.
+    def _ensure_lerobot_writer(self, ep_data: dict, task_name: Optional[str] = None):
+        """Create / fetch the LeRobot writer for ``task_name``.
 
-        ``create()`` is called only when there is no active underlying dataset —
-        either because the writer has never been used, or because a previous
-        batch was flushed by ``finalize()``.
+        Must be called inside ``_lerobot_lock``. ``create()`` runs only
+        when the underlying dataset is missing — either the writer has
+        never been used, or a previous batch was flushed by ``finalize()``.
+
+        In multi-task mode each task name maps to a distinct writer +
+        ``save_dir``. In single-task mode ``task_name`` is ignored.
         """
-        if self._lerobot_writer is None:
-            from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
-            self._lerobot_writer = LeRobotDatasetWriter()
-        if self._lerobot_writer.dataset is None:
+        if self._tasks_by_name is not None:
+            assert task_name is not None
+            writer = self._task_writers.get(task_name)
+            if writer is None:
+                writer = LeRobotDatasetWriter()
+                self._task_writers[task_name] = writer
+            target_save_dir = self._tasks_by_name[task_name]["save_dir"]
+            episodes_written = self._task_episodes_written[task_name]
+        else:
+            if self._lerobot_writer is None:
+                self._lerobot_writer = LeRobotDatasetWriter()
+            writer = self._lerobot_writer
+            target_save_dir = self.save_dir
+            episodes_written = self._episodes_written
+
+        if writer.dataset is None:
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
-            self._lerobot_writer.create(
+            writer.create(
                 repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
+                    target_save_dir, f"rank_{self.rank}", f"id_{episodes_written}"
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
@@ -560,8 +644,9 @@ class CollectEpisode(gym.Wrapper):
                 wrist_image_keys=wrist_image_keys,
                 extra_view_image_keys=extra_view_image_keys,
                 has_intervene_flag="intervene_flag" in first,
+                has_segment_id="segment_id" in first,
             )
-        return self._lerobot_writer
+        return writer
 
     @staticmethod
     def _collect_image_keys(
@@ -581,15 +666,19 @@ class CollectEpisode(gym.Wrapper):
             and frame[k].ndim == 3
         }
 
-    def _write_lerobot_episode(self, ep_data: dict) -> None:
+    def _write_lerobot_episode(
+        self, ep_data: dict, task_name: Optional[str] = None
+    ) -> None:
         with self._lerobot_lock:
-            writer = self._ensure_lerobot_writer(ep_data)
+            writer = self._ensure_lerobot_writer(ep_data, task_name=task_name)
             writer.add_episode(ep_data)
-            self._episodes_written += 1
-            if (
-                self.finalize_interval > 0
-                and self._episodes_written % self.finalize_interval == 0
-            ):
+            if self._tasks_by_name is not None:
+                self._task_episodes_written[task_name] += 1
+                count = self._task_episodes_written[task_name]
+            else:
+                self._episodes_written += 1
+                count = self._episodes_written
+            if self.finalize_interval > 0 and count % self.finalize_interval == 0:
                 writer.finalize()
 
     def _finalize_lerobot(self) -> None:
@@ -598,7 +687,12 @@ class CollectEpisode(gym.Wrapper):
             return
         self._wait_futures()
         with self._lerobot_lock:
-            if self._lerobot_writer is not None:
+            if self._tasks_by_name is not None:
+                for name, writer in list(self._task_writers.items()):
+                    if writer is not None and writer.dataset is not None:
+                        writer.finalize()
+                self._task_writers.clear()
+            elif self._lerobot_writer is not None:
                 self._lerobot_writer.finalize()
                 self._lerobot_writer = None
 
