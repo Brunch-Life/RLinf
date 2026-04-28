@@ -1,0 +1,110 @@
+defaults:
+  - env/realworld_franka_joint_dual@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# Dataset replay knobs. Override on the CLI:
+#   bash replay_data.sh realworld_replay_joint_dual_franka \
+#       replay.dataset_root=/path/to/lerobot_root \
+#       replay.episode_index=3
+replay:
+  dataset_root: /home/i-yinuo/cynws/RLinf/logs/merged_dual_franka_cylinder_handover_20260424
+  episode_index: 0
+  fps: 10
+  start_frame: 0
+  max_frames: null
+  log_every: 20
+  # "state" = use dataset's measured next-frame joint position as target.
+  # Per-step deltas are bounded by what the impedance tracker physically
+  # achieved during collection (~max 1.6 rad/s), so the same tracker can
+  # reproduce them. "action" = raw GELLO read; can lead the arm by ~9°
+  # and produce 2 rad/s peaks that the env's velocity clip silently
+  # truncates. Default is "state" — flip to "action" only if you
+  # intentionally want to chase the operator's hand.
+  target_source: state
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: "172.16.0.2"
+            right_robot_ip: "172.16.0.2"
+            base_camera_serials:
+              - "941322072906"
+            base_camera_type: realsense
+            left_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+            left_camera_type: lumos
+            right_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0"
+            right_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIR00N-if00-port0"
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: null
+    project_name: rlinf
+    experiment_name: "replay-joint-dual-franka"
+    logger_backends: ["tensorboard"]
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # Pure dataset replay: no GELLO, no streaming daemon, no keyboard
+    # gating. ``step()`` itself dispatches ``move_joints`` per frame so
+    # the dataset action lands on hardware.
+    use_gello_joint: False
+    use_gello: False
+    use_spacemouse: False
+    keyboard_reward_wrapper: null
+    auto_reset: False
+    ignore_terminations: True
+    max_episode_steps: 100000
+    override_cfg:
+      task_description: "dataset replay"
+      joint_action_mode: "absolute"
+      # Critical: must be False so DualFrankaJointEnv._dispatch_arm_motion
+      # actually forwards joint targets. ``True`` is collect-time only and
+      # leaves env.step as a state reader.
+      teleop_direct_stream: false
+      success_hold_steps: 1
+      # Bookkeeping pose used by reset; the actual replay path is
+      # determined entirely by the dataset's ``actions`` column. We do
+      # NOT pre-align the live state to dataset frame[0] — the open-loop
+      # offset between env reset and dataset[0] is part of what this
+      # script is here to measure.
+      target_ee_pose:
+        - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
+      reset_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5,  0.2, 0.5, -3.14, 0.0, 0.0]
+      # Reset the arms to the 80-ep mean first-frame joint position so the
+      # open-loop replay starts close to the dataset's first commanded
+      # state. Values copied from realworld_eval_dual_franka.yaml; if you
+      # replay a single episode whose first frame is far from this mean,
+      # the per-step velocity clip ramps in over ~tens of steps.
+      joint_reset_qpos:
+        - [-0.058, 0.075, -0.309, -1.623, -0.012, 2.387, 0.016]
+        - [-0.520, 0.160,  0.748, -1.526,  0.031, 1.978, -0.425]
