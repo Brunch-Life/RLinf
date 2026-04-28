@@ -40,8 +40,6 @@ override_cfg:
   joint_action_mode: "absolute"
   # Scaling factor for delta mode (rad per unit action). Ignored in absolute.
   joint_action_scale: 0.1
-  # Conservative joint velocity limit (rad/s per joint) for safety.
-  joint_velocity_limit: 0.5
   max_num_steps: 300
   # Only [2] (gripper channel) is consumed in joint-space; [0] / [1] are
   # Cartesian-only and ignored here.

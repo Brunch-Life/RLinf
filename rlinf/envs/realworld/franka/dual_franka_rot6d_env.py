@@ -63,7 +63,7 @@ class DualFrankaRot6dRobotConfig(DualFrankaRobotConfig):
     """Config for :class:`DualFrankaRot6dEnv`.
 
     Intentionally does NOT inherit joint-action fields
-    (``joint_action_mode``, ``joint_action_scale``, ``joint_velocity_limit``,
+    (``joint_action_mode``, ``joint_action_scale``,
     ``joint_position_limits_*``, ``teleop_direct_stream``) — rot6d mode
     drives a Cartesian impedance tracker and those knobs have no meaning.
 

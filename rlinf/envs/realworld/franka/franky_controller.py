@@ -51,18 +51,50 @@ _FORCE_THRESHOLD = [100.0, 100.0, 100.0, 25.0, 25.0, 25.0]
 _JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
-# Cartesian impedance tracker gains. Translational halved from franky
-# defaults (2000 → 1000); rotational dropped to a quarter (200 → 50) to
-# calm the wrist. At 10 Hz policy dispatch the default stiffness fed
-# policy quat jitter into j7 (wrist-distal, ~yaw-aligned when the tool
-# points down) through the tracker's 1 kHz loop. Damping is auto-critical
-# on the C++ side so it scales with the new k accordingly.
-_CART_TRANS_STIFFNESS = 1000.0  # N/m
-_CART_ROT_STIFFNESS = 50.0  # Nm/rad
-# Torque slew cap (Nm per 1 kHz control cycle). franky default is 1.0;
-# 0.3 acts as a strong LPF on commanded torque → cuts any residual
-# wrist resonance without hurting the 10 Hz outer-loop tracking.
-_CART_MAX_DELTA_TAU = 0.3
+
+# Cartesian impedance tracker gains. All values overridable via env vars so
+# the user can sweep without rebuilding/redeploying.
+#
+# Defaults match the c18d3ab6 (2026-04-24) project tune (K_t halved, K_r
+# quartered from franky's 2000/200) — that pair drove the rot6d eval at
+# adequate success rate; lowering K below it hurt task success even though
+# it suppressed self-excitation. The self-excitation actually stems from
+# the dataset's tcp_pose having a sub-frame "step" at handover (when L's
+# gripper releases R, the previously-coupled R-arm TCP jumps ~10 cm in
+# the recording). A step input excites *any* underdamped loop regardless
+# of K, so the right fix is rate-limiting the *commanded target* between
+# successive ``move_tcp_pose`` calls rather than softening the spring —
+# see ``_CART_MAX_STEP_*`` below.
+#
+# * translational_error_clip / rotational_error_clip — saturated impedance
+#   done by franky in the RT loop. Bounds steady-state spring force
+#   (K·x_clip) so gripper-coupling contention can't build slingshot energy.
+#   Soft saturation on the spring force, no step on the target.
+def _envf(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return float(raw)
+
+
+_CART_TRANS_STIFFNESS = _envf("RLINF_CART_K_T", 1000.0)  # N/m
+_CART_ROT_STIFFNESS = _envf("RLINF_CART_K_R", 50.0)  # Nm/rad
+_CART_MAX_DELTA_TAU = _envf("RLINF_CART_MAX_DTAU", 0.3)  # Nm / 1 kHz cycle
+_CART_TRANS_ERROR_CLIP_M = _envf("RLINF_CART_ERR_CLIP_M", 0.05)  # m
+_CART_ROT_ERROR_CLIP_RAD = _envf("RLINF_CART_ERR_CLIP_RAD", 0.3)  # rad
+_CART_GAINS_TC = _envf("RLINF_CART_GAINS_TC", 0.1)  # s
+
+# Per-call commanded-target rate limit. Caps ``||target[t] - target[t-1]||``
+# so a sub-frame step in the dataset (e.g. handover release recorded as a
+# ~10 cm TCP jump in one 100 ms frame) becomes a multi-step slew instead of
+# a step input that excites the impedance loop. Differs from
+# ``*_error_clip`` above: error_clip saturates the *spring force*, this
+# saturates the *target velocity*. Both are useful — error_clip catches
+# coupling-induced steady-state buildup, this catches single-frame
+# discontinuities. Defaults: 3 cm and ~9°/step, both ~3× the typical
+# normal-motion step (~1 cm / ~3° at 10 Hz).
+_CART_MAX_STEP_M = _envf("RLINF_CART_MAX_STEP_M", 0.03)  # m / move_tcp_pose call
+_CART_MAX_STEP_RAD = _envf("RLINF_CART_MAX_STEP_RAD", 0.15)  # rad / call
 
 # Scales planned moves (reset / waypoint); not applied in torque mode.
 _DYNAMICS_FACTOR = 0.2
@@ -124,6 +156,11 @@ class FrankyController(Worker):
         # Cartesian counterpart — lazy on first move_tcp_pose. Mutually
         # exclusive with the joint tracker; _ensure_* stops the other.
         self._cart_tracker = None
+        # Previous *commanded* (post-rate-limit) target. Used to clamp
+        # frame-over-frame target deltas; cleared on tracker stop so the
+        # next start re-seeds against live TCP, not a stale target.
+        self._prev_cart_target_xyz: Optional[np.ndarray] = None
+        self._prev_cart_target_quat: Optional[np.ndarray] = None
 
         self._logger.info(f"FrankyController connected to robot at {robot_ip}")
 
@@ -271,13 +308,30 @@ class FrankyController(Worker):
         self._stop_tracking_motion()
         self._safe_join()
         self._robot.recover_from_errors()
+        # ``*_error_clip`` are per-axis saturations on the position error
+        # used inside franky's 1 kHz RT loop — broadcast a scalar to all
+        # axes via a (3,) array.
+        trans_clip = np.full(3, _CART_TRANS_ERROR_CLIP_M, dtype=np.float64)
+        rot_clip = np.full(3, _CART_ROT_ERROR_CLIP_RAD, dtype=np.float64)
         self._cart_tracker = self._franky.CartesianImpedanceTracker(
             self._robot,
             translational_stiffness=_CART_TRANS_STIFFNESS,
             rotational_stiffness=_CART_ROT_STIFFNESS,
+            translational_error_clip=trans_clip,
+            rotational_error_clip=rot_clip,
             max_delta_tau=_CART_MAX_DELTA_TAU,
+            gains_time_constant=_CART_GAINS_TC,
         )
-        self._logger.info("Cartesian impedance tracker started")
+        self._logger.info(
+            f"Cartesian impedance tracker started "
+            f"(K_t={_CART_TRANS_STIFFNESS:.0f} N/m, "
+            f"K_r={_CART_ROT_STIFFNESS:.1f} Nm/rad, "
+            f"max_dtau={_CART_MAX_DELTA_TAU:.2f}, "
+            f"err_clip={_CART_TRANS_ERROR_CLIP_M * 100:.1f} cm/"
+            f"{np.degrees(_CART_ROT_ERROR_CLIP_RAD):.0f}°, "
+            f"max_step={_CART_MAX_STEP_M * 100:.1f} cm/"
+            f"{np.degrees(_CART_MAX_STEP_RAD):.0f}° per call)"
+        )
 
     def _stop_cart_tracking_motion(self) -> None:
         if self._cart_tracker is None:
@@ -287,6 +341,8 @@ class FrankyController(Worker):
         except Exception as e:
             self._logger.warning(f"cart tracker.stop surfaced latched error: {e}")
         self._cart_tracker = None
+        self._prev_cart_target_xyz = None
+        self._prev_cart_target_quat = None
         self._safe_join()
         self._robot.recover_from_errors()
 
@@ -298,19 +354,79 @@ class FrankyController(Worker):
         intentionally NOT supplied: finite-diff'ing 10 Hz policy targets
         produced twist noise that kept feeding j7 oscillation through the
         tracker's 1 kHz loop. Pure PD is slightly laggy but stable.
+
+        Two layers of safeguard:
+
+        * Frame-over-frame **rate limit** here clamps
+          ``||target[t] - target[t-1]||`` so a single-frame discontinuity
+          in the dataset (e.g. handover release recorded as a ~10 cm TCP
+          jump in 100 ms) becomes a multi-step slew, not a step input
+          that excites the impedance loop.
+        * **Position-error saturation** inside the tracker via
+          ``translational_error_clip`` / ``rotational_error_clip`` (passed
+          at construction in :py:meth:`_ensure_cart_tracking_motion`)
+          additionally caps the steady-state spring force from grow-
+          unbounded position error during gripper-coupling contention.
         """
         pose = np.asarray(pose, dtype=np.float64)
         assert pose.shape == (7,), (
             f"pose must be (7,) [xyz, quat_xyzw]; got {pose.shape}"
         )
-        xyz = pose[:3]
-        quat = pose[3:] / np.linalg.norm(pose[3:])
+        xyz_in = pose[:3]
+        quat_in = pose[3:] / np.linalg.norm(pose[3:])
+
+        self._ensure_cart_tracking_motion()
+
+        # Seed prev target from live TCP on first call after start so the
+        # first commanded delta is measured against the arm's actual pose
+        # (which the tracker will read at the same instant), not against
+        # nothing. Without this seeding, the first call would skip rate-
+        # limiting and could itself inject a step.
+        if self._prev_cart_target_xyz is None:
+            live = self._robot.state.O_T_EE
+            self._prev_cart_target_xyz = np.asarray(live.translation, dtype=np.float64)
+            seed_quat = np.asarray(live.quaternion, dtype=np.float64)
+            self._prev_cart_target_quat = seed_quat / np.linalg.norm(seed_quat)
+
+        prev_xyz = self._prev_cart_target_xyz
+        prev_quat = self._prev_cart_target_quat
+
+        # xyz step rate limit — project onto sphere of radius MAX_STEP_M
+        # around prev target.
+        if _CART_MAX_STEP_M > 0:
+            dxyz = xyz_in - prev_xyz
+            d = float(np.linalg.norm(dxyz))
+            if d > _CART_MAX_STEP_M:
+                xyz = prev_xyz + dxyz * (_CART_MAX_STEP_M / d)
+            else:
+                xyz = xyz_in
+        else:
+            xyz = xyz_in
+
+        # rotation step rate limit — slerp prev → target by min(1, MAX/ang).
+        # Hemisphere-align first; quaternion sign doesn't change the
+        # rotation but does change which short-arc we measure.
+        if float(np.dot(quat_in, prev_quat)) < 0.0:
+            quat_in = -quat_in
+        if _CART_MAX_STEP_RAD > 0:
+            delta_R = R.from_quat(quat_in) * R.from_quat(prev_quat).inv()
+            rotvec = delta_R.as_rotvec()
+            ang = float(np.linalg.norm(rotvec))
+            if ang > _CART_MAX_STEP_RAD:
+                rotvec = rotvec * (_CART_MAX_STEP_RAD / ang)
+                quat = (R.from_rotvec(rotvec) * R.from_quat(prev_quat)).as_quat()
+            else:
+                quat = quat_in
+        else:
+            quat = quat_in
+
+        self._prev_cart_target_xyz = xyz
+        self._prev_cart_target_quat = quat / np.linalg.norm(quat)
 
         T = np.eye(4)
         T[:3, :3] = R.from_quat(quat).as_matrix()
         T[:3, 3] = xyz
 
-        self._ensure_cart_tracking_motion()
         self._cart_tracker.set_target(self._franky.Affine(T))
 
     # --------------------------------------------------------- planned motion
