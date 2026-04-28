@@ -1,7 +1,7 @@
 #!/bin/bash
 # Join Ray cluster as worker (node 1) for dual-Franka realworld collection.
 #
-# Usage (run on the worker machine, e.g. sohu-dual-master / 192.168.120.42):
+# Usage (run on the worker machine, master / 192.168.120.140):
 #   bash ray_utils/realworld/start_ray_node1.sh
 #
 # Tears down any stale Ray instance, activates the project venv, exports
@@ -30,11 +30,12 @@ export RLINF_NODE_RANK=1
 # export RLINF_COMM_NET_DEVICES="rlinf"
 
 # --- Ray worker ----------------------------------------------------------
-# Direct point-to-point USB-Ethernet link — see start_ray_node0.sh for the
-# rationale.  node 0 (head) = 10.10.10.1, node 1 (this host) = 10.10.10.2.
-# Old WiFi IPs: HEAD 192.168.120.43, WORKER 192.168.120.42.
-HEAD_IP="10.10.10.1"
+# Shared lab LAN: head (node 0, slave) = 192.168.120.143,
+#                 this host (node 1, master) = 192.168.120.140.
+# Earlier rigs used the 10.10.10.0/24 USB-Ethernet direct link or the
+# older 192.168.120.43/42 LAN IPs — both retired in favour of these.
+HEAD_IP="192.168.120.143"
 RAY_PORT=6379
-WORKER_IP="10.10.10.2"       # <-- this node's IP on the direct link
+WORKER_IP="192.168.120.140"  # <-- this node's IP on the LAN
 
 ray start --address="$HEAD_IP:$RAY_PORT" --node-ip-address="$WORKER_IP"

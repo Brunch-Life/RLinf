@@ -1,7 +1,7 @@
 #!/bin/bash
 # Launch Ray head (node 0) for dual-Franka realworld collection.
 #
-# Usage (run on the head machine, e.g. ubuntu-franka-slave / 192.168.120.43):
+# Usage (run on the head machine, slave / 192.168.120.143):
 #   bash ray_utils/realworld/start_ray_node0.sh
 #
 # Tears down any stale Ray instance, activates the project venv, exports
@@ -27,13 +27,11 @@ export RLINF_NODE_RANK=0
 # export RLINF_COMM_NET_DEVICES="rlinf"
 
 # --- Ray head ------------------------------------------------------------
-# Direct point-to-point USB-Ethernet link between the two nodes:
-#   node 0  enx207bd232e224  10.10.10.1  <--->  10.10.10.2  enx00e04c364742  node 1
-# sub-ms RTT on this link vs ~25 ms mdev over the shared WiFi — Ray cross-
-# node RPC (franky streamer, gripper events, controller state polls) is the
-# only thing we want going through the direct cable, so bind Ray to the
-# direct-link IP here and on node 1.  Old WiFi IP: 192.168.120.43.
-HEAD_IP="10.10.10.1"
+# Shared lab LAN: node 0 (this host, slave) = 192.168.120.143,
+#                 node 1 (master)          = 192.168.120.140.
+# Earlier rigs used a 10.10.10.0/24 USB-Ethernet point-to-point link or
+# the older 192.168.120.43/42 LAN IPs — both retired in favour of these.
+HEAD_IP="192.168.120.143"
 RAY_PORT=6379
 
 ray start --head --port="$RAY_PORT" --node-ip-address="$HEAD_IP"
