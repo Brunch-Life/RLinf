@@ -52,7 +52,6 @@ class DualFrankaJointRobotConfig(DualFrankaRobotConfig):
     joint_position_limits_upper: np.ndarray = field(
         default_factory=lambda: JOINT_LIMITS_UPPER.copy()
     )
-    joint_velocity_limit: float = 0.5
 
     # "absolute" = 16-d action [L7joints, L_grip, R7joints, R_grip] (radians)
     # "delta"    = same layout but joints are scaled increments on current q
@@ -129,7 +128,14 @@ class DualFrankaJointEnv(DualFrankaFrankyEnv):
         ctrls: list,
         dt: float,
     ) -> None:
-        """Compute per-arm joint targets and dispatch (unless direct-stream)."""
+        """Compute per-arm joint targets and dispatch (unless direct-stream).
+
+        Joint targets are sent verbatim to ``move_joints`` →
+        ``JointImpedanceTracker.set_target``. The tracker's PD + franky's
+        reflexes (power/velocity/torque) are the only velocity-side safety;
+        no env-layer per-step velocity clip is applied.
+        """
+        del dt  # not used; tracker + reflexes own pacing
         if self.config.teleop_direct_stream:
             # External 1 kHz daemon owns motion; env.step stays hands-off.
             return
@@ -145,7 +151,6 @@ class DualFrankaJointEnv(DualFrankaFrankyEnv):
                     + joint_action * self.config.joint_action_scale
                 )
             tj = self._clip_joints_to_limits(tj)
-            tj = self._clip_joint_velocity(tj, states[arm].arm_joint_position, dt)
             target_joints.append(tj)
 
         left_f = ctrls[0].move_joints(target_joints[0].astype(np.float32))
@@ -164,13 +169,6 @@ class DualFrankaJointEnv(DualFrankaFrankyEnv):
             self.config.joint_position_limits_lower,
             self.config.joint_position_limits_upper,
         )
-
-    def _clip_joint_velocity(
-        self, target: np.ndarray, current: np.ndarray, dt: float
-    ) -> np.ndarray:
-        max_delta = self.config.joint_velocity_limit * dt
-        delta = np.clip(target - current, -max_delta, max_delta)
-        return current + delta
 
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
