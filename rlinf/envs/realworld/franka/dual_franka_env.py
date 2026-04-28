@@ -551,14 +551,34 @@ class DualFrankaEnv(gym.Env):
         return position
 
     def _gripper_action(self, ctrl, state: FrankaRobotState, position: float) -> bool:
+        """Fire gripper edge as fire-and-forget to match data-collection timing.
+
+        Data collection's GELLO 1 kHz stream pushes ``ctrl.open_gripper()``
+        / ``ctrl.close_gripper()`` without ``.wait()``: env.step keeps
+        ticking at 10 Hz while Robotiq physically actuates over ~250 ms.
+        The dataset's frames N+1, N+2, ... therefore record continuous
+        motion *during* gripper actuation (operator/follower never paused).
+        Eval used to ``.wait() + sleep(0.6)`` here, stretching env.step
+        from 100 ms to ~700 ms at every gripper edge — that 600 ms gap
+        physically slid the arm to ~600 ms of release-transient swing
+        before the next commanded target (which the dataset recorded at
+        only 100 ms post-trigger) was issued. The resulting
+        commanded-vs-actual position mismatch is exactly the dataset's
+        N→N+6 swing magnitude: the impedance loop sees a step input
+        equal to that swing and rings out at j7. Removing the wait
+        re-aligns inference cadence with collection cadence.
+
+        ``state.gripper_open`` is read from the python ``is_open`` flag
+        which is set synchronously in ``Robotiq.open()/close()``, so
+        edge-detection on the next env.step is still correct without a
+        wait.
+        """
         threshold = self.config.binary_gripper_threshold
         if position <= -threshold and state.gripper_open:
-            ctrl.close_gripper().wait()
-            time.sleep(0.6)
+            ctrl.close_gripper()
             return True
         elif position >= threshold and not state.gripper_open:
-            ctrl.open_gripper().wait()
-            time.sleep(0.6)
+            ctrl.open_gripper()
             return True
         return False
 
