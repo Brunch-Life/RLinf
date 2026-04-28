@@ -105,23 +105,23 @@ env:
       #
       # Autonomous reset starts from the training-data first-frame joint
       # distribution so the policy's initial obs is in-distribution. Values
-      # are per-joint means over 17 collected episodes (see
-      # logs/20260422-22:42:45/collected_data/rank_0/id_0/data/chunk-000/).
+      # are per-joint means over 80 episodes from the merged cylinder-handover
+      # SFT dataset (see logs/merged_dual_franka_cylinder_handover_20260424/).
       # IMPORTANT: re-compute whenever the SFT dataset changes; a stale
       # reset pushes the initial TCP ~15 cm out of distribution.
       joint_reset_qpos:
-        - [0.354, 0.079, -0.736, -1.637, -0.013, 2.423, 0.175]
-        - [-0.506, 0.085, 0.693, -1.695, 0.133, 2.271, -0.486]
-      # Training-data first-frame TCP (xyz mean over the 17 eps above).
+        - [-0.058, 0.075, -0.309, -1.623, -0.012, 2.387, 0.016]
+        - [-0.520, 0.160,  0.748, -1.526,  0.031, 1.978, -0.425]
+      # Training-data first-frame TCP (xyz mean over the 80 eps above).
       # Euler orientation is a coarse down-pointing approximation; the real
       # gripper orientation used by reset is recovered from FK on the joints
       # above, so these xyz values are the load-bearing ones.
       target_ee_pose:
-        - [0.652, -0.247, 0.481, -3.14, 0.0, 0.0]
-        - [0.663,  0.128, 0.414, -3.14, 0.0, 0.0]
+        - [0.653, -0.246, 0.572, -3.14, 0.0, 0.0]
+        - [0.647,  0.130, 0.524, -3.14, 0.0, 0.0]
       reset_ee_pose:
-        - [0.652, -0.247, 0.581, -3.14, 0.0, 0.0]
-        - [0.663,  0.128, 0.514, -3.14, 0.0, 0.0]
+        - [0.653, -0.246, 0.672, -3.14, 0.0, 0.0]
+        - [0.647,  0.130, 0.624, -3.14, 0.0, 0.0]
       success_hold_steps: 1
 
 rollout:
@@ -134,11 +134,14 @@ rollout:
   collect_prev_infos: False
   sync_weight_nccl_max_ctas: 32
   model:
-    # rot6d_v1 SFT ckpt (openpi pi05_dualfranka_rot6d). Layout:
+    # cylinder-handover rot6d_v1 SFT ckpt (openpi pi05_dualfranka_rot6d,
+    # trained on the merged 80-ep YinuoTHU/Dual-franka-cylinder-handover-20260424).
+    # Layout:
     #   <model_path>/actor/model_state_dict/full_weights.pt
-    #   <model_path>/YinuoTHU/Dual-franka-rot6d/norm_stats.json
-    # Source on gxzx-1: /mnt/public1/chenyinuo/RLinf/logs/20260422-23:39:19/dual_franka_rot6d_v1/checkpoints/global_step_10500
-    model_path: /home/i-yinuo/cynws/RLinf/checkpoints/dual_franka_rot6d_v1/global_step_10500/
+    #   <model_path>/YinuoTHU/Dual-franka-cylinder-handover-20260424/norm_stats.json
+    # Source on gxzx-1: ~/data/RLinf/logs/20260424-22:36:08/dual_franka_cylinder_handover_rot6d_v1/checkpoints/global_step_20000
+    # norm_stats from:  /mnt/public1/chenyinuo/RLinf/models/pi05/torch/YinuoTHU/Dual-franka-cylinder-handover-20260424/norm_stats.json
+    model_path: /home/i-yinuo/cynws/RLinf/checkpoints/dual_franka_cylinder_handover_rot6d_v1/global_step_20000/
     precision: ${actor.model.precision}
 
 critic:
@@ -162,3 +165,10 @@ actor:
       train_expert_only: False
       detach_critic_input: True
       action_chunk: ${actor.model.num_action_chunks}
+    # Override the dataconfig's default repo_id (YinuoTHU/Dual-franka-rot6d) so
+    # asset_id resolves to the SFT dataset and norm_stats are read from
+    # <model_path>/YinuoTHU/Dual-franka-cylinder-handover-20260424/norm_stats.json.
+    # Both actor.model_provider_func and the HF rollout init_worker copy
+    # `actor.model` and call `get_model`, so openpi_data must live here.
+    openpi_data:
+      repo_id: "YinuoTHU/Dual-franka-cylinder-handover-20260424"
