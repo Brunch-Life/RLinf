@@ -1,0 +1,178 @@
+defaults:
+  - env/realworld_franka_rot6d_dual@env.train
+  - env/realworld_franka_rot6d_dual@env.eval
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: franka
+      placement: 0
+    rollout:
+      node_group: franka
+      placement: 0
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      # actor/rollout/env (placement: 0 → node0) run under .venv-openpi;
+      # FrankyController falls under default "cluster" group → keeps node-local .venv.
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: /home/i-yinuo/cynws/RLinf/.venv-openpi/bin/python
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: "172.16.0.2"
+            right_robot_ip: "172.16.0.2"
+            base_camera_serials:
+              - "941322072906"
+            base_camera_type: realsense
+            left_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001242-video-index0"
+            left_camera_type: lumos
+            right_camera_serials:
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0"
+            right_gripper_connection: "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIR00N-if00-port0"
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: dual-franka-openpi
+    experiment_name: "realworld-eval-dual-franka-4_28-and-4_24-rot6d-v1"
+    wandb_entity: striding-algo
+    logger_backends: ["tensorboard"]
+  max_epochs: 100
+  max_steps: 100
+  only_eval: True
+  val_check_interval: -1
+
+algorithm:
+  update_epoch: 1
+  group_size: 1
+  eval_rollout_epoch: 100
+  adv_type: gae
+  loss_type: actor  # eval-only; any non-critic loss avoids the value-head assertion
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+  eval:
+    # Disable GELLO teleop intervention for autonomous policy rollout.
+    use_gello_joint: False
+    use_gello: False
+    use_spacemouse: False
+    # No keyboard-gated recording during eval — just let the policy act.
+    keyboard_reward_wrapper: eval_control
+    max_episode_steps: 10000
+    max_steps_per_rollout_epoch: 10000
+    override_cfg:
+      task_description: "pick up the cylinder with the left hand, hand it over to the right hand, and place it on the plate"
+      # SFT model outputs absolute TCP-pose target [xyz(3), rot6d(6), grip(1)]
+      # per arm (20-d total, matches Dual-franka-rot6d dataset). Per env.step
+      # the decoded pose is pushed into a franky CartesianImpedanceTracker
+      # (see DualFrankaRot6dEnv._dispatch_arm_motion).
+      #
+      # Autonomous reset starts from the training-data first-frame joint
+      # distribution so the policy's initial obs is in-distribution. Values
+      # are per-joint means over 154 episodes from the union of
+      #   logs/merged_dual_franka_cylinder_handover_20260424/  (80 ep) and
+      #   logs/merged_dual_franka_cylinder_handover_20260428/  (74 ep)
+      # — the two datasets this merged ckpt was trained on.
+      # IMPORTANT: re-compute whenever the SFT dataset changes.
+      joint_reset_qpos:
+        - [ 0.078, 0.059, -0.439, -1.681, -0.182, 2.483,  0.158]
+        - [-0.484, 0.143,  0.687, -1.545,  0.141, 1.983, -0.487]
+      # Training-data first-frame TCP (xyz mean over the 154 eps above).
+      # Euler orientation is a coarse down-pointing approximation; the real
+      # gripper orientation used by reset is recovered from FK on the joints
+      # above, so these xyz values are the load-bearing ones.
+      target_ee_pose:
+        - [0.653, -0.245, 0.568, -3.14, 0.0, 0.0]
+        - [0.644,  0.134, 0.523, -3.14, 0.0, 0.0]
+      reset_ee_pose:
+        - [0.653, -0.245, 0.668, -3.14, 0.0, 0.0]
+        - [0.644,  0.134, 0.623, -3.14, 0.0, 0.0]
+      success_hold_steps: 1
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+  sync_weight_nccl_max_ctas: 32
+  model:
+    # cylinder-handover 4.28+4.24 merged rot6d_v1 SFT ckpt (openpi pi05_dualfranka_rot6d,
+    # trained on YinuoTHU/Dual-franka-cylinder-handover-20260424-and-20260428,
+    # 154 ep / 30155 frames = 4.24 dual_panda + 4.28 dual_FR3).
+    # Layout:
+    #   <model_path>/actor/model_state_dict/full_weights.pt
+    #   <model_path>/YinuoTHU/Dual-franka-cylinder-handover-20260424-and-20260428/norm_stats.json
+    # Source on zx3 (merged SFT, step 14000):
+    #   /mnt/public/chenyinuo/RLinf/logs/20260429-04:14:07/dual_franka_cylinder_handover_4_28_and_4_24_rot6d_v1/checkpoints/global_step_14000
+    # norm_stats from /mnt/public/chenyinuo/RLinf/assets/pi05_dualfranka_rot6d/YinuoTHU/Dual-franka-cylinder-handover-20260424-and-20260428/norm_stats.json
+    model_path: /home/i-yinuo/cynws/RLinf/checkpoints/dual_franka_cylinder_handover_4_28_and_4_24_rot6d_v1/global_step_14000/
+    precision: ${actor.model.precision}
+
+critic:
+  use_critic_model: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 1234
+  enable_offload: False
+  model:
+    model_path: ${rollout.model.model_path}
+    precision: null
+    num_action_chunks: 20          # matches SFT action_horizon
+    action_dim: 20                 # dual-franka rot6d: [L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]
+    add_value_head: False
+    openpi:
+      config_name: "pi05_dualfranka_rot6d"
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${actor.model.num_action_chunks}
+    # Override the dataconfig's default repo_id (YinuoTHU/Dual-franka-rot6d) so
+    # asset_id resolves to the SFT dataset and norm_stats are read from
+    # <model_path>/YinuoTHU/Dual-franka-cylinder-handover-20260424-and-20260428/norm_stats.json.
+    # Both actor.model_provider_func and the HF rollout init_worker copy
+    # `actor.model` and call `get_model`, so openpi_data must live here.
+    openpi_data:
+      repo_id: "YinuoTHU/Dual-franka-cylinder-handover-20260424-and-20260428"
