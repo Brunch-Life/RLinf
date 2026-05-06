@@ -28,7 +28,7 @@ cluster:
             right_robot_ip: "172.16.0.2"
             # Full three-camera rig:
             #   - base_0_rgb:       Intel RealSense D435i  (third-person)
-            #   - left_wrist_0_rgb: XVisio vSLAM ...1218   (left Lumos)
+            #   - left_wrist_0_rgb: XVisio vSLAM ...1242   (left Lumos)
             #   - right_wrist_0_rgb: XVisio vSLAM ...1173  (right Lumos)
             # RealSense serial is the librealsense device serial reported
             # by `rs.context().devices`, NOT the /dev/v4l/by-id USB id.
@@ -36,7 +36,7 @@ cluster:
               - "941322072906"
             base_camera_type: realsense
             left_camera_serials:
-              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001242-video-index0"
             left_camera_type: lumos
             right_camera_serials:
               - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"
@@ -121,7 +121,7 @@ env:
       resume: false
       export_format: "lerobot"
       only_success: True
-      robot_type: "dual_panda"
+      robot_type: "dual_FR3"
       fps: 10
       # Optional multi-task collection. When present, episodes round-robin
       # across the listed tasks: ep0 → tasks[0], ep1 → tasks[1], ep2 →

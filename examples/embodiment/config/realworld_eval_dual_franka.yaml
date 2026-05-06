@@ -41,7 +41,7 @@ cluster:
               - "941322072906"
             base_camera_type: realsense
             left_camera_serials:
-              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001242-video-index0"
             left_camera_type: lumos
             right_camera_serials:
               - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"

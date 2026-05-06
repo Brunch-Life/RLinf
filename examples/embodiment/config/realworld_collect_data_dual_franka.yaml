@@ -65,5 +65,5 @@ env:
       save_dir: ${runner.logger.log_path}/collected_data
       export_format: "lerobot"
       only_success: True
-      robot_type: "dual_panda"
+      robot_type: "dual_FR3"
       fps: 10

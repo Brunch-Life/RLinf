@@ -300,7 +300,7 @@ def test_collect_episode_dual_arm_frame_format(tmp_path):
         _DualArmDummyEnv(),
         save_dir=str(tmp_path),
         export_format="lerobot",
-        robot_type="dual_panda",
+        robot_type="dual_FR3",
         fps=10,
     )
     env._write_lerobot_episode = lambda ep: captured.append(ep)
@@ -347,7 +347,7 @@ def test_collect_episode_dual_arm_image_content(tmp_path):
         _DualArmDummyEnv(),
         save_dir=str(tmp_path),
         export_format="lerobot",
-        robot_type="dual_panda",
+        robot_type="dual_FR3",
         fps=10,
     )
     env._write_lerobot_episode = lambda ep: captured.append(ep)
