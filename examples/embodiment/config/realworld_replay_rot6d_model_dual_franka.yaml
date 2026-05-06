@@ -1,5 +1,6 @@
 defaults:
   - env/realworld_franka_rot6d_dual@env.eval
+  - model/pi0_5@actor.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -9,38 +10,29 @@ hydra:
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
 
-# Dataset replay knobs. Override on the CLI:
-#   bash replay_data.sh realworld_replay_rot6d_dual_franka \
-#       replay.dataset_root=/path/to/lerobot_root \
-#       replay.episode_index=3
+# Dataset-obs-driven model replay. Per dataset frame ``t``, the SFT ckpt is
+# fed (image[t], state[t]) and the first action of its predicted 20-step
+# chunk is dispatched through FrankyController. Isolates "model output bad"
+# (model + ideal obs → bad action) from "live cameras / state distribution
+# shift" (real cameras differ from dataset cameras enough to push model OOD).
+#
+# Usage:
+#   bash replay_data.sh realworld_replay_rot6d_model_dual_franka \
+#       replay.episode_index=60
+#
 replay:
-  # GT-pose verification: replay dataset's absolute TCP-rot6d targets through
-  # FrankyController to bound how much of the eval failure is controller
-  # tracking error vs model error. ep60 has the widest handover gap (94.4mm
-  # min two-arm distance) so safest first try; switch to ep10 / ep20
-  # (~63-70mm) once ep60 looks clean. Avoid ep31 (52.7mm) until controller
-  # tracking is verified.
   dataset_root: /home/i-yinuo/cynws/RLinf/logs/merged_dual_franka_cylinder_handover_20260428
   episode_index: 60
   fps: 10
   start_frame: 0
   max_frames: null
   log_every: 20
-  # rot6d replay only has one valid source: state-derived next-frame TCP
-  # rot6d (via build_rot6d_actions). The "action" column on disk is 16-d
-  # joints, not TCP — there is no "GELLO TCP" in the dataset to chase.
-  target_source: state
+  target_source: model
   prealign_reset: true
-  # Side-by-side panel dump: top row = dataset frames at frame i,
-  # bottom row = live camera frames just after env.step. PNG bytes are
-  # read from the parquet's image columns so no mp4 decode is needed.
-  # Set ``dump_compare_dir`` to a directory (absolute or relative to CWD)
-  # to enable; leave null to skip. ``dump_every`` thins the rate.
   dump_compare_dir: null
   dump_every: 1
-  # Diagnostic: prealign-reset to dataset[start_frame] joints, dump one
-  # live-vs-dataset compare panel, exit. No motion past reset.
-  dump_compare_after_reset_only: false
+  model_inference_batch_size: 4
+  model_device: cuda:0
 
 cluster:
   num_nodes: 2
@@ -51,6 +43,9 @@ cluster:
   node_groups:
     - label: franka
       node_ranks: 0-1
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: /home/i-yinuo/cynws/RLinf/.venv-openpi/bin/python
       hardware:
         type: DualFranka
         configs:
@@ -78,15 +73,12 @@ runner:
   logger:
     log_path: null
     project_name: rlinf
-    experiment_name: "replay-rot6d-dual-franka"
+    experiment_name: "replay-rot6d-model-dual-franka"
     logger_backends: ["tensorboard"]
 
 env:
   group_name: "EnvGroup"
   eval:
-    # Pure dataset replay through the rot6d env: no GELLO, no model, no
-    # keyboard gating. env.step() routes each 20-d target to
-    # FrankyController.move_tcp_pose → CartesianImpedanceTracker.set_target.
     use_gello: False
     use_gello_joint: False
     use_spacemouse: False
@@ -95,13 +87,8 @@ env:
     ignore_terminations: True
     max_episode_steps: 100000
     override_cfg:
-      task_description: "dataset replay (rot6d TCP)"
+      task_description: "model-driven replay (rot6d TCP)"
       success_hold_steps: 1
-      # Bookkeeping pose; rot6d env reset() still goes through the parent
-      # joint-space reset_joint(joint_reset_qpos), so joint_reset_qpos
-      # below is the load-bearing one. ``replay.prealign_reset`` overrides
-      # joint_reset_qpos with dataset[0]'s measured joints before the env
-      # builds, so the impedance tracker sees ~zero err on first dispatch.
       target_ee_pose:
         - [0.5, -0.2, 0.4, -3.14, 0.0, 0.0]
         - [0.5,  0.2, 0.4, -3.14, 0.0, 0.0]
@@ -111,3 +98,20 @@ env:
       joint_reset_qpos:
         - [-0.058, 0.075, -0.309, -1.623, -0.012, 2.387, 0.016]
         - [-0.520, 0.160,  0.748, -1.526,  0.031, 1.978, -0.425]
+
+actor:
+  seed: 1234
+  model:
+    # cylinder-handover 4.28-only rot6d_v1 SFT, step 46000 (post md5 verify)
+    model_path: /home/i-yinuo/cynws/RLinf/checkpoints/dual_franka_cylinder_handover_4_28_rot6d_v1/global_step_46000/
+    precision: bfloat16
+    num_action_chunks: 20
+    action_dim: 20
+    add_value_head: False
+    openpi:
+      config_name: "pi05_dualfranka_rot6d"
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${actor.model.num_action_chunks}
+    openpi_data:
+      repo_id: "YinuoTHU/Dual-franka-cylinder-handover-20260428"

@@ -28,6 +28,13 @@ replay:
   # truncates. Default is "state" — flip to "action" only if you
   # intentionally want to chase the operator's hand.
   target_source: state
+  # Side-by-side panel dump: top row = dataset frames at frame i,
+  # bottom row = live camera frames just after env.step. PNG bytes are
+  # read from the parquet's image columns so no mp4 decode is needed.
+  # Set ``dump_compare_dir`` to a directory (absolute or relative to CWD)
+  # to enable; leave null to skip. ``dump_every`` thins the rate.
+  dump_compare_dir: null
+  dump_every: 1
 
 cluster:
   num_nodes: 2
@@ -47,7 +54,7 @@ cluster:
               - "941322072906"
             base_camera_type: realsense
             left_camera_serials:
-              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001218-video-index0"
+              - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001242-video-index0"
             left_camera_type: lumos
             right_camera_serials:
               - "usb-XVisio_Technology_XVisio_vSLAM_250801DR48FB26001173-video-index0"

@@ -51,24 +51,34 @@ def _episode_parquet(dataset_root: Path, episode_index: int) -> Path:
 
 
 def peek_first_frame_joints(
-    dataset_root: Path, episode_index: int
+    dataset_root: Path, episode_index: int, frame_idx: int = 0
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return ``(L_q (7,), R_q (7,))`` from frame 0 of the requested episode.
+    """Return ``(L_q (7,), R_q (7,))`` from ``frame_idx`` of the requested episode.
+
+    Default ``frame_idx=0`` keeps backwards compatibility with the standard
+    "reset to start" prealign use case; pass an arbitrary ``frame_idx`` to
+    align to any other frame (e.g., handover_center for camera-drift
+    diagnostics).
 
     Used to override ``env.eval.override_cfg.joint_reset_qpos`` *before* the env
     builds, so reset slews via blocking ``franky.JointMotion`` (Ruckig) to
-    dataset[0] — keeps the impedance tracker's first-tick ``K*err`` from
-    blowing past the libfranka torque reflex.
+    dataset[frame_idx] — keeps the impedance tracker's first-tick ``K*err``
+    from blowing past the libfranka torque reflex.
     """
     path = _episode_parquet(Path(dataset_root), episode_index)
     table = pq.read_table(path, columns=["state"])
-    state0 = np.asarray(table.column("state")[0].as_py(), dtype=np.float32)
+    if not (0 <= frame_idx < table.num_rows):
+        raise IndexError(
+            f"frame_idx={frame_idx} out of range for episode "
+            f"{episode_index} (T={table.num_rows})"
+        )
+    state = np.asarray(table.column("state")[frame_idx].as_py(), dtype=np.float32)
     # JointEnv state layout (alphabetical of STATE_LAYOUT, dim 68):
     #   gripper_position(2), joint_position(14), ...
     # → state[2:9] = L joints, state[9:16] = R joints. Same offsets in the
     # rot6d-backfilled dataset (backfill_rot6d only rewrites state[:20]).
-    l_q = state0[2:9].astype(np.float64)
-    r_q = state0[9:16].astype(np.float64)
+    l_q = state[2:9].astype(np.float64)
+    r_q = state[9:16].astype(np.float64)
     return l_q, r_q
 
 
