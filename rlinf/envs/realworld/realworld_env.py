@@ -41,6 +41,12 @@ class RealWorldEnv(gym.Env):
         self.override_cfg = OmegaConf.to_container(
             cfg.get("override_cfg", OmegaConf.create({})), resolve=True
         )
+        # Pop the dispatch-side chunk-truncation knob so downstream gym
+        # envs never see it. Model still produces ``num_action_chunks``
+        # steps; ``chunk_step`` dispatches only the first
+        # ``exec_chunk_steps`` and lets the next call replan with fresh
+        # obs. ``None`` keeps the legacy "execute the full chunk".
+        self.exec_chunk_steps = self.override_cfg.pop("exec_chunk_steps", None)
 
         self.video_cfg = cfg.video_cfg
 
@@ -519,6 +525,11 @@ class RealWorldEnv(gym.Env):
 
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
+        if (
+            self.exec_chunk_steps is not None
+            and self.exec_chunk_steps < chunk_actions.shape[1]
+        ):
+            chunk_actions = chunk_actions[:, : self.exec_chunk_steps]
         if self._replay_override_cfg is not None:
             chunk_actions = self._apply_replay_override(chunk_actions)
 
