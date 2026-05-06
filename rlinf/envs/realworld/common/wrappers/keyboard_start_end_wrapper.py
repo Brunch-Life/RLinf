@@ -104,7 +104,9 @@ class KeyboardStartEndWrapper(gym.Wrapper):
                 event = "end_success"
                 reward = 1.0
                 terminated = True
-                self._recording = False
+                # Keep _recording=True so this terminating frame keeps
+                # pre_record=False — else CollectEpisode skips the
+                # reward=1.0 step and only_success drops the episode.
                 break
 
         if not isinstance(info, dict):
