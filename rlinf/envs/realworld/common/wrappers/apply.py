@@ -40,6 +40,9 @@ from rlinf.envs.realworld.common.wrappers.gello_intervention import (
     GelloIntervention,
 )
 from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
+from rlinf.envs.realworld.common.wrappers.keyboard_eval_control_wrapper import (
+    KeyboardEvalControlWrapper,
+)
 from rlinf.envs.realworld.common.wrappers.keyboard_start_end_wrapper import (
     KeyboardStartEndWrapper,
 )
@@ -70,6 +73,8 @@ def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
         return KeyboardRewardDoneWrapper(env)
     if mode == "start_end":
         return KeyboardStartEndWrapper(env)
+    if mode == "eval_control":
+        return KeyboardEvalControlWrapper(env)
     return env
 
 

@@ -25,6 +25,7 @@ from .dual_spacemouse_intervention import DualSpacemouseIntervention
 from .euler_obs import Quat2EulerWrapper
 from .gello_intervention import GelloIntervention
 from .gripper_close import GripperCloseEnv
+from .keyboard_eval_control_wrapper import KeyboardEvalControlWrapper
 from .keyboard_start_end_wrapper import KeyboardStartEndWrapper
 from .leader_follower_keyboard_intervention import LeaderFollowerKeyboardIntervention
 from .relative_frame import RelativeFrame
@@ -45,6 +46,7 @@ __all__ = [
     "GripperCloseEnv",
     "KeyboardRewardDoneMultiStageWrapper",
     "KeyboardRewardDoneWrapper",
+    "KeyboardEvalControlWrapper",
     "KeyboardStartEndWrapper",
     "LeaderFollowerKeyboardIntervention",
     "Quat2EulerWrapper",
