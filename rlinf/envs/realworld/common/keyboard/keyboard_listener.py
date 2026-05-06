@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import errno
 import os
 import threading
+import time
 from collections import deque
 
 
@@ -52,6 +54,12 @@ class KeyboardListener:
         self.listener.start()
         self.last_intervene = 0
 
+    # Substrings that mark a device as the operator's pedal/clicker. When a
+    # match is on the bus we prefer it over a generic keyboard so that a
+    # workstation keyboard plugged in alongside the pedal doesn't silently
+    # win the listener race (sorted() is lexicographic — event3 < event8).
+    _PREFERRED_NAME_SUBSTRINGS = ("FootSwitch", "footswitch", "PCsensor", "pcsensor")
+
     def _open_keyboard_device(self):
         override_path = os.environ.get("RLINF_KEYBOARD_DEVICE")
         if override_path:
@@ -63,9 +71,15 @@ class KeyboardListener:
                     f"RLINF_KEYBOARD_DEVICE='{override_path}' does not look like a "
                     "keyboard device. Point it to the correct /dev/input/eventX path."
                 )
+            print(
+                f"[KeyboardListener] using override device {device.path} "
+                f"name={device.name!r}",
+                flush=True,
+            )
             return device
 
         permission_denied_paths: list[str] = []
+        keyboards: list = []  # (path, device) for every device that has KEY_A/B/C/Q
         for device_path in sorted(self._list_devices()):
             try:
                 device = self._open_device(device_path)
@@ -74,8 +88,36 @@ class KeyboardListener:
                 continue
 
             if self._is_keyboard_device(device):
-                return device
-            device.close()
+                keyboards.append((device_path, device))
+            else:
+                device.close()
+
+        # Prefer the foot pedal if it's on the bus. Anything else (Logitech /
+        # builtin keyboard) only wins when no pedal is present.
+        preferred = next(
+            (
+                pair
+                for pair in keyboards
+                if any(s in pair[1].name for s in self._PREFERRED_NAME_SUBSTRINGS)
+            ),
+            None,
+        )
+        chosen = preferred or (keyboards[0] if keyboards else None)
+        if chosen is not None:
+            for path, dev in keyboards:
+                if dev is not chosen[1]:
+                    dev.close()
+            others = [
+                f"{path}({dev.name!r})"
+                for path, dev in keyboards
+                if dev is not chosen[1]
+            ]
+            print(
+                f"[KeyboardListener] using {chosen[0]} name={chosen[1].name!r}"
+                + (f"  (other candidates: {', '.join(others)})" if others else ""),
+                flush=True,
+            )
+            return chosen[1]
 
         if permission_denied_paths:
             denied = ", ".join(permission_denied_paths)
@@ -129,33 +171,53 @@ class KeyboardListener:
         return required_codes.issubset(supported_key_codes)
 
     def _listen_loop(self) -> None:
-        try:
-            for event in self.device.read_loop():
-                if event.type != self._ecodes.EV_KEY:
-                    continue
+        # Cache path so we can reopen after a USB hiccup (errno=19 ENODEV).
+        # PCsensor foot pedal + lumos cable cohabit the same flaky USB
+        # subsystem; without reconnect a single bus reset kills eval until
+        # restart.
+        device_path = self.device.path
+        while True:
+            try:
+                for event in self.device.read_loop():
+                    if event.type != self._ecodes.EV_KEY:
+                        continue
 
-                key = self._event_to_key(event.code)
-                if key is None:
-                    continue
+                    key = self._event_to_key(event.code)
+                    if key is None:
+                        continue
 
-                if event.value == 1:
-                    # Initial press only — autorepeat (value==2) does not
-                    # re-enqueue, so holding a key for a second doesn't flood
-                    # the queue.
-                    with self.state_lock:
-                        self.latest_data["key"] = key
-                        self._press_events.append(key)
-                elif event.value == 2:
-                    with self.state_lock:
-                        self.latest_data["key"] = key
-                elif event.value == 0:
-                    with self.state_lock:
-                        if self.latest_data["key"] == key:
-                            self.latest_data["key"] = None
-        finally:
-            with self.state_lock:
-                self.latest_data["key"] = None
-            self.device.close()
+                    if event.value == 1:
+                        # Initial press only — autorepeat (value==2) does not
+                        # re-enqueue, so holding a key for a second doesn't
+                        # flood the queue.
+                        with self.state_lock:
+                            self.latest_data["key"] = key
+                            self._press_events.append(key)
+                    elif event.value == 2:
+                        with self.state_lock:
+                            self.latest_data["key"] = key
+                    elif event.value == 0:
+                        with self.state_lock:
+                            if self.latest_data["key"] == key:
+                                self.latest_data["key"] = None
+            except OSError as exc:
+                if exc.errno != errno.ENODEV:
+                    raise
+                with self.state_lock:
+                    self.latest_data["key"] = None
+                try:
+                    self.device.close()
+                except Exception:
+                    pass
+                # Reopen — back off a beat for the kernel to re-enumerate,
+                # then retry forever (daemon thread dies with the process).
+                while True:
+                    time.sleep(0.5)
+                    try:
+                        self.device = self._input_device_cls(device_path)
+                        break
+                    except (FileNotFoundError, OSError):
+                        continue
 
     def _event_to_key(self, key_code: int) -> str | None:
         key_name = self._ecodes.bytype[self._ecodes.EV_KEY].get(key_code)
