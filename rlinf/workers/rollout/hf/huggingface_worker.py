@@ -271,6 +271,20 @@ class MultiStepRolloutWorker(Worker):
             else:
                 kwargs = {"mode": mode}
 
+        # Flow-matching policies sample initial noise via global torch RNG, so
+        # eval is non-deterministic by default even with do_sample=False (LLM
+        # sampling params don't reach the action head). Reset RNG per call so
+        # same obs → same action chunk, which is required for A/B comparing
+        # two ckpts on real hardware.
+        if (
+            mode == "eval"
+            and SupportedModel(self.cfg.actor.model.model_type) is SupportedModel.OPENPI
+        ):
+            seed = int(self.cfg.actor.seed)
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
