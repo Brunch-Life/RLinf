@@ -185,8 +185,18 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
         :class:`DualGelloJointIntervention`) layer their own device-pose
         alignment on top in their :py:meth:`reset`, so collect mode gets
         ``joint_reset_qpos`` → device pose as two sequential motions.
+
+        Grippers are opened first so any object grasped at episode end is
+        released before the arms slew through home — avoids carrying the
+        workpiece up and dropping it at an unsafe spot.
         """
         del joint_reset
+        try:
+            self._left_ctrl.open_gripper()
+            self._right_ctrl.open_gripper()
+        except Exception as exc:
+            self._logger.warning("open_gripper during reset failed: %s", exc)
+
         left_f = self._left_ctrl.reset_joint(self.config.joint_reset_qpos[0])
         right_f = self._right_ctrl.reset_joint(self.config.joint_reset_qpos[1])
         left_f.wait()
