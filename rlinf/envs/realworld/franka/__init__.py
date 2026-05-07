@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,6 +13,21 @@
 # limitations under the License.
 
 
+from .dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
+from .dual_franka_franky_env import DualFrankaFrankyEnv
+from .dual_franka_joint_env import DualFrankaJointEnv, DualFrankaJointRobotConfig
+from .dual_franka_rot6d_env import DualFrankaRot6dEnv, DualFrankaRot6dRobotConfig
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 
-__all__ = ["FrankaEnv", "FrankaRobotState", "FrankaRobotConfig"]
+__all__ = [
+    "DualFrankaEnv",
+    "DualFrankaFrankyEnv",
+    "DualFrankaJointEnv",
+    "DualFrankaJointRobotConfig",
+    "DualFrankaRobotConfig",
+    "DualFrankaRot6dEnv",
+    "DualFrankaRot6dRobotConfig",
+    "FrankaEnv",
+    "FrankaRobotConfig",
+    "FrankaRobotState",
+]
