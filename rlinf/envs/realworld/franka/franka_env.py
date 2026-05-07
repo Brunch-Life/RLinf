@@ -608,17 +608,15 @@ class FrankaEnv(gym.Env):
                 position <= -self.config.binary_gripper_threshold
                 and self._franka_state.gripper_open
             ):
-                # Close gripper
-                self._controller.close_gripper().wait()
-                time.sleep(0.6)
+                self._controller.close_gripper()
+                self._franka_state.gripper_open = False
                 return True
             elif (
                 position >= self.config.binary_gripper_threshold
                 and not self._franka_state.gripper_open
             ):
-                # Open gripper
-                self._controller.open_gripper().wait()
-                time.sleep(0.6)
+                self._controller.open_gripper()
+                self._franka_state.gripper_open = True
                 return True
             else:  # No change
                 return False
