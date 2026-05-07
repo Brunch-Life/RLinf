@@ -13,10 +13,13 @@
 # limitations under the License.
 # openpi model configs
 
+import logging
 import os
 
 import torch
 from omegaconf import DictConfig
+
+_logger = logging.getLogger(__name__)
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -93,13 +96,26 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     data_config = actor_train_config.data.create(
         actor_train_config.assets_dirs, actor_model_config
     )
-    norm_stats = None
-    if norm_stats is None:
-        # We are loading the norm stats from the checkpoint instead of the config assets dir to make sure
-        # that the policy is using the same normalization stats as the original training process.
-        if data_config.asset_id is None:
-            raise ValueError("Asset id is required to load norm stats.")
+    # Prefer norm_stats pinned in the checkpoint; fall back to repo assets
+    # with a loud warning so silent drift can't corrupt inference.
+    if data_config.asset_id is None:
+        raise ValueError("Asset id is required to load norm stats.")
+    pinned_path = os.path.join(checkpoint_dir, data_config.asset_id, "norm_stats.json")
+    if os.path.exists(pinned_path):
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
+    elif data_config.norm_stats is not None:
+        _logger.warning(
+            "norm_stats fallback: no pinned %s; using repo assets for %r — "
+            "verify they match training or inference will be wrong.",
+            pinned_path,
+            data_config.asset_id,
+        )
+        norm_stats = data_config.norm_stats
+    else:
+        raise FileNotFoundError(
+            f"No norm stats at {pinned_path} and no repo-asset fallback "
+            f"for asset_id={data_config.asset_id!r}."
+        )
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None
