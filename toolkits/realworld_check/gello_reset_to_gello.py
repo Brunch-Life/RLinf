@@ -31,6 +31,7 @@ Tweakable knobs: env vars listed in the shell wrapper.
 
 from __future__ import annotations
 
+import glob
 import math
 import os
 import sys
@@ -38,6 +39,19 @@ import time
 
 import numpy as np
 import ray
+
+
+def _resolve_local_robotiq_port() -> str:
+    """Pick the single FTDI USB-RS485 adapter on this node (left or right)."""
+    matches = sorted(glob.glob("/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_*-if00-port0"))
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise RuntimeError("No FTDI USB-RS485 adapter found under /dev/serial/by-id/.")
+    raise RuntimeError(
+        "Multiple FTDI USB-RS485 adapters found, ambiguous: " + ", ".join(matches)
+    )
+
 
 if not ray.is_initialized():
     ray.init(log_to_driver=False, logging_level="ERROR")
@@ -60,10 +74,7 @@ def colour(text: str, code: str) -> str:
 
 def setup_hardware():
     robot_ip = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
-    gripper_port = os.environ.get(
-        "FRANKA_GRIPPER_PORT",
-        "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0",
-    )
+    gripper_port = _resolve_local_robotiq_port()
     gello_port = os.environ.get(
         "GELLO_PORT",
         "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0",

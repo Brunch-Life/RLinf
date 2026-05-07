@@ -46,6 +46,7 @@ Run::
 
 from __future__ import annotations
 
+import glob
 import math
 import os
 import sys
@@ -54,6 +55,27 @@ from typing import Sequence
 
 import numpy as np
 import ray
+
+
+def _resolve_local_robotiq_port() -> str:
+    """Pick the single FTDI USB-RS485 adapter on this node.
+
+    Each dual-Franka node has exactly one RS-485 adapter wired to its
+    local Robotiq, so the by-id glob resolves unambiguously without the
+    operator having to know whether they are on the left or right node.
+    """
+    matches = sorted(glob.glob("/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_*-if00-port0"))
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise RuntimeError(
+            "No FTDI USB-RS485 adapter found under /dev/serial/by-id/. "
+            "Check that the Robotiq is powered and the FTDI driver is loaded."
+        )
+    raise RuntimeError(
+        "Multiple FTDI USB-RS485 adapters found, ambiguous: " + ", ".join(matches)
+    )
+
 
 if not ray.is_initialized():
     ray.init(log_to_driver=False, logging_level="ERROR")
@@ -68,10 +90,7 @@ from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
 
 # ── tunables ────────────────────────────────────────────────────────────
 ROBOT_IP = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
-GRIPPER_PORT = os.environ.get(
-    "FRANKA_GRIPPER_PORT",
-    "/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAAIT8PU-if00-port0",
-)
+GRIPPER_PORT = _resolve_local_robotiq_port()
 GELLO_PORT = os.environ.get(
     "GELLO_PORT",
     "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0",
