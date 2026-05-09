@@ -11,3 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from .gello_expert import GelloExpert
+from .gello_joint_expert import GelloJointExpert
+
+__all__ = [
+    "GelloExpert",
+    "GelloJointExpert",
+]
