@@ -11,42 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Foot-pedal start / success / fail wrapper for autonomous policy eval.
+"""Foot-pedal-gated wrapper for autonomous policy eval.
 
-Workflow
---------
-After ``reset()`` the wrapper sits idle and the robot holds the reset
-pose. Pressing the foot pedal:
+Pedal: ``a`` starts a rollout from idle; ``c`` ends with reward=1
+("success"); ``b`` ends with reward=0 ("failure"). End-of-episode also
+calls the inner ``env.reset()`` so the robot drives home immediately
+(eval runs with ``auto_reset=False``).
 
-* ``a`` (idle):    start rollout — subsequent ``step()`` calls forward
-                   to the wrapped env so the policy drives the robot.
-* ``c`` (running): episode succeeded. ``terminated=True``, ``reward=1.0``,
-                   ``info["eval_result"]="success"``. The wrapper itself
-                   calls ``env.reset()`` to drive the robot home before
-                   returning, then sits idle waiting for ``a``.
-* ``b`` (running): episode failed. ``terminated=True``, ``reward=0.0``,
-                   ``info["eval_result"]="failure"``. Same internal reset.
+Two non-obvious invariants:
 
-The internal reset on b/c is what makes the pedal feel "live": the eval
-env_worker only resets at ``eval_rollout_epoch`` boundaries (auto_reset
-is False during eval), so without this the robot would freeze in place
-after ``b`` until the rest of the chunk steps in the current epoch ran
-out. Driving home immediately on the pedal lets the operator stage the
-next workpiece right away.
-
-Pre-running ("idle") ``step()`` deliberately does **not** invoke
-``self.env.step()`` — the franky impedance controller keeps holding the
-target dispatched by the env's last ``reset()``, so the robot stays
-physically still while the human positions the workpiece. The wrapper
-returns the most recent observation unchanged so the policy's prediction
-loop keeps cycling without committing fresh joint commands. This trades
-the "every step calls env.step" gym invariant for human-in-the-loop
-episode boundaries that match the operator's pedal.
-
-While running we also force ``terminated`` / ``truncated`` to ``False``
-unless the pedal fires — so the policy never gets cut off by the env's
-own ``max_episode_steps`` time-out. Set ``max_episode_steps`` large
-enough that the pedal is always the boundary owner.
+* In idle, ``step()`` does **not** forward to ``self.env.step()`` — the
+  franky impedance controller keeps holding the last reset target so
+  the arm stays still while the operator stages the next workpiece.
+* While running, ``terminated`` / ``truncated`` from the inner env are
+  squashed; only the pedal can end an episode. Set
+  ``max_episode_steps`` large enough that the pedal is the sole
+  boundary owner.
 """
 
 import time

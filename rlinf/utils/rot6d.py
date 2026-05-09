@@ -11,21 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Single source of truth for 6D-rotation (Zhou et al. 2019) + SE(3) helpers.
-
-All dual-Franka geometry — collection, preprocessing, training transforms,
-and deployment — routes through this module. No other file is allowed to
-call ``R.as_euler`` / ``R.from_euler``; the canonical 6D representation
-avoids wrap discontinuities that polluted the old euler-based pipeline.
-
-Convention
-----------
-- Quaternions: xyzw order (scipy ``R.as_quat()`` default).
-- Rot6D encoding: the first two *columns* of the rotation matrix, flattened
-  column-major (so decoding just unpacks two 3-vectors ``r1, r2``).
-- SE(3): 4x4 homogeneous transform ``T = [[R, p], [0, 0, 0, 1]]``.
-- Body-frame delta: ``T_delta = inv(T_state) @ T_abs``. Applying this delta
-  back is ``T_abs = T_state @ T_delta``.
+"""6D-rotation (Zhou et al. 2019) + SE(3) helpers, shared by all
+dual-Franka geometry. Quaternions are xyzw; rot6d is the first two
+columns of R flattened (decoding is Gram-Schmidt on r1, r2); SE(3)
+body-frame delta is ``T_delta = inv(T_state) @ T_abs``.
 """
 
 from __future__ import annotations

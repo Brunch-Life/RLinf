@@ -5,34 +5,23 @@
 # You may obtain a copy of the License at
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
-"""Live progress monitor for ``examples/embodiment/collect_real_data.py``.
+"""Out-of-process tqdm monitor for ``examples/embodiment/collect_real_data.py``.
 
-Runs in a **separate terminal**. Tails the collector's log file and surfaces
-success count plus latest keyboard / success / discard events as a live tqdm
-bar. Zero cooperation required from the collector — just parses log lines.
+Runs in its own terminal, tails the collector's tee'd log, and renders a
+live bar with the latest pedal / success / discard event. The collector
+itself can't host the bar because Ray batches worker stdout (~500 ms),
+which shreds tqdm's ``\\r`` refresh.
 
-Why this exists instead of a bar inside the collector:
+Usage (two terminals on the collector node)::
 
-- The collector runs as a Ray worker, so its stdout is batched (~500 ms) by
-  Ray's log monitor, which breaks tqdm's ``\\r`` refresh when the batched
-  chunks arrive.
-- The driver's stdout is typically piped through ``tee`` in the launch
-  script, so printing from the driver also won't refresh in place.
-- A monitor in its own TTY dodges both issues — tqdm writes to a real
-  terminal that no one else is rewriting.
-
-Typical two-terminal usage (on the same node that runs the collector):
-
-    # terminal 1 — launch (stdout gets tee'd to a log file)
+    # terminal 1 — launch (stdout tee'd to a log file)
     bash collect_data.sh 2>&1 | tee run_embodiment.log
 
     # terminal 2 — live bar
     python toolkits/realworld_check/collect_monitor.py run_embodiment.log
 
-The monitor waits for the log file to exist, so it can be started either
-before or after the collector. On startup it replays the existing file so
-episodes already saved before the monitor launched are reflected in the
-bar's initial position; pass ``--no-replay`` to tail from EOF instead.
+Pass ``--no-replay`` to tail from EOF instead of replaying the existing
+file at startup.
 """
 
 from __future__ import annotations

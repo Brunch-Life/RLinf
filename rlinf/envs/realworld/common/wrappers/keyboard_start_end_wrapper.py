@@ -23,31 +23,16 @@ from rlinf.envs.realworld.common.keyboard.keyboard_listener import KeyboardListe
 
 
 class KeyboardStartEndWrapper(gym.Wrapper):
-    """Foot-pedal-friendly keyboard wrapper for dual-Franka data collection.
+    """Foot-pedal data-collection wrapper. Pedal binding (``a`` / ``b`` / ``c``):
 
-    The pedal exposes only ``a`` / ``b`` / ``c`` so the wrapper is rebound
-    to the workflow we actually use, not the legacy "b=fail" semantics:
+    * ``a``        — start a rec episode (pre) or abort the current one (rec).
+                     Abort drops the buffer; the arm is **not** reset (GELLO
+                     keeps tracking the operator).
+    * ``b`` (rec)  — bump ``segment_id``, debounced at 1 s.
+    * ``c`` (rec)  — end with reward=1, terminated=True.
 
-    * ``a`` (pre):  start a fresh rec episode at the current pose.
-    * ``a`` (rec):  abort — drop buffer, return to pre. The arm is **not**
-                    reset (GELLO mode keeps tracking the operator's pose;
-                    other teleop devices that prefer a home-reset on abort
-                    should layer that in their own reset logic).
-    * ``b`` (rec):  bump ``segment_id`` by 1 for the upcoming frames. Used
-                    to mark sub-task boundaries inside one episode.
-                    Debounced at 1 s — back-to-back presses inside the
-                    window are silently ignored so an accidentally held or
-                    bouncing pedal can't shred the segment timeline.
-    * ``c`` (rec):  end with success (reward=+1, done=True). Episode is
-                    saved by the outer collector.
-
-    info fields added every step:
-      * ``keyboard_phase``   — ``"pre"`` | ``"rec"``
-      * ``keyboard_event``   — ``"start"`` | ``"abort"`` | ``"segment"`` |
-                               ``"end_success"`` | ``None``
-      * ``pre_record``       — bool, consumed by CollectEpisode to skip recording
-      * ``record_reset``     — bool, consumed by CollectEpisode to clear buffer
-      * ``segment_advance``  — bool, consumed by CollectEpisode to bump seg_id
+    Adds ``keyboard_phase`` / ``keyboard_event`` / ``pre_record`` /
+    ``record_reset`` / ``segment_advance`` to ``info`` for ``CollectEpisode``.
     """
 
     SEGMENT_DEBOUNCE_S = 1.0

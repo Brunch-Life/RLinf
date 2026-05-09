@@ -12,35 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive smoke test for :class:`FrankyController`.
+"""Interactive smoke test for :class:`FrankyController`. Type ``help`` at
+the prompt for the command list. Set ``FRANKA_ROBOT_IP`` (and optionally
+``FRANKA_GRIPPER_TYPE`` / ``FRANKA_GRIPPER_PORT``) before running.
 
-Run with::
-
-    FRANKA_ROBOT_IP=<ip> python toolkits/realworld_check/test_franky_controller.py
-
-Optional env vars::
-
-    FRANKA_GRIPPER_TYPE   "robotiq" (default)
-    FRANKA_GRIPPER_PORT   serial path for Robotiq
-
-Commands (typed at the prompt):
-
-    q                 quit
-    getpos            print current TCP pose (xyz + quat)
-    getpos_euler      print current TCP pose with xyz euler
-    getjoint          print current joint positions (rad)
-    home              reset to a safe home joint configuration
-    nudge <i> <d>     move joint <i> (1..7) by <d> radians via move_joints
-    stream <i> <d> <n>  send <n> incremental nudges on joint <i>, delta <d>/step
-                      at 1 kHz — stresses the streaming preemption path
-    hold <secs>       hold current pose for N seconds, listen for buzz
-    open              open the gripper
-    close             close the gripper
-    grip <0-255>      move gripper to discrete position
-    impedance <7 ints>  set joint impedance Kq in Nm/rad
-
-Only one client at a time can hold a libfranka session — running this
-while an env is already connected to the robot will fail.
+Only one client can hold a libfranka session — running this while an env
+is already connected to the same arm will fail.
 """
 
 import os

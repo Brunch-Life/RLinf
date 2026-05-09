@@ -12,33 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GELLO ↔ Franka teleop tools (single entry point).
+"""GELLO ↔ Franka teleop tools. Run with ``--help`` for subcommands.
 
-Subcommands::
-
-    align-check        Live full-arm alignment dashboard (read-only).
-    align-sequential   Walk the operator through J1..J7 alignment (read-only).
-    calibrate          Two-pose sign + offset calibration (moves robot).
-    reset-to-gello     Move Franka to the current GELLO pose (moves robot).
-
-Shared environment variables::
+Environment variables::
 
     FRANKA_ROBOT_IP   Franka FCI IP (default: 172.16.0.2)
     GELLO_PORT        GELLO Dynamixel by-id path (default: FTAJEDPC by-id)
-    GELLO_BAUDRATE    GELLO Dynamixel baudrate (default: 1000000) [calibrate only]
-    ALIGN_HOME        Comma-separated 7 floats overriding HOME_JOINTS [align-sequential only]
-
-Usage::
-
-    python toolkits/realworld_check/test_gello.py align-check
-    python toolkits/realworld_check/test_gello.py align-sequential
-    python toolkits/realworld_check/test_gello.py calibrate
-    python toolkits/realworld_check/test_gello.py reset-to-gello
+    GELLO_BAUDRATE    Dynamixel baudrate (default: 1000000) [calibrate only]
+    ALIGN_HOME        Comma-separated 7 floats overriding HOME_JOINTS
+                      [align-sequential only]
 
 The Robotiq gripper port is auto-resolved from the local FTDI USB-RS485
-adapter (each dual-Franka node has exactly one), so no override is
-needed; if zero or multiple adapters are present the script bails out
-with an actionable error.
+adapter (each dual-Franka node has exactly one).
 """
 
 from __future__ import annotations
