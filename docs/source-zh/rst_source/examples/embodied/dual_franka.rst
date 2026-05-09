@@ -284,18 +284,24 @@ PCsensor FootSwitch 通过厂家提供的 Windows 工具把 3 个踏板烧成
 
 .. code-block:: bash
 
-   # 健康检查：枚举、USB 协商、单帧读取，最后执行 60s 三窗口实时预览
-   python -m toolkits.dual_franka.check_cameras
+   # RealSense：枚举总线，确认协商到 USB-3。
+   rs-enumerate-devices | grep -E "Name|Serial|USB Type"
 
-   # SSH 没 X 转发时跳过预览
-   python -m toolkits.dual_franka.check_cameras --no-stream
+   # Lumos（XVisio vSLAM）：确认两个 /dev/v4l/by-id 节点都在。
+   ls /dev/v4l/by-id/
 
-脚本会标记 Lumos 退到 USB-2 的情况（XVisio vSLAM 在边缘线上偶尔会
-协商成 2.0，然后会在不显式报错的情况下在 ``select()`` 超时点产生空帧），
-并使用 ``LumosCamera`` 的标准回退路径
-（``/dev/v4l/by-id`` double-open + I420 buffer warmup）。脚本最后
-还会用 ``fuser`` 列出所有占用 ``/dev/video*`` 的进程，方便定位
-"上一次 Ray worker 未完全退出，下一次启动时无法获取摄像头"。
+   # USB 拓扑：Lumos 和 RealSense 应当协商到 5000M。
+   # 任何掉到 "480M" 都是 USB-2 fallback（线缆或 hub 不行）。
+   lsusb -t
+
+   # 上一轮 Ray worker 异常退出会泄漏 V4L2 句柄，下次 cap.read()
+   # 直接卡住。找出并杀掉占用进程：
+   fuser -v /dev/video*
+
+XVisio vSLAM 摄像头在边缘线上偶尔会协商成 USB 2.0，然后会在不显式
+报错的情况下在 ``select()`` 超时点产生空帧。``LumosCamera`` 内置了
+double-open + I420 buffer warmup 来处理冷启动 ``STREAMON`` 时的
+USB 带宽竞速。
 
 GELLO
 ~~~~~
@@ -616,12 +622,6 @@ reward。默认启动会 replay 已有日志，所以监视器开晚也能对齐
 ``auto``）会直接 tail Ray worker 的 stdout 文件
 （``/tmp/ray/session_latest/logs/worker-*-<pid>.out``），完全
 绕开 log monitor batching（快 1-2 分钟），找不到时回退到 tee 日志。
-
-**终端 3** —— 可选的相机预览（episode 间换道具时方便）：
-
-.. code-block:: bash
-
-   python toolkits/dual_franka/check_cameras.py --stream-secs 9999
 
 每个 episode 的工作流
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -1144,13 +1144,14 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
    ATTRS{name}=="PCsensor FootSwitch", MODE="0666"``）。
 
 **RealSense 退到 USB 2.x**
-   ``check_cameras.py`` 报 ``WARN``，USB descriptor 也会显示。
-   更换线缆，切换到 root USB-3 端口（蓝色端口），然后再次执行。
+   ``rs-enumerate-devices`` 会打印 USB descriptor，``lsusb -t`` 会
+   显示 ``480M`` 而不是 ``5000M``。更换线缆，切换到 root USB-3
+   端口（蓝色端口），再次确认。
 
 **Lumos 冷启动第一次失败**
-   ``LumosCamera`` 和 ``check_cameras._open_lumos`` 都内置 double-open
-   + I420 buffer warmup 来处理 ``STREAMON`` 冷启动 USB 带宽竞速。
-   重启后仍失败说明驱动状态阻塞 —— 请重新插拔 USB 线。
+   ``LumosCamera`` 内置 double-open + I420 buffer warmup 来处理
+   ``STREAMON`` 冷启动 USB 带宽竞速。重启后仍失败说明驱动状态
+   阻塞 —— 请重新插拔 USB 线。
 
 **部署时 idle 一直不响应**
    ``KeyboardEvalControlWrapper`` 在等待踩下 ``a``。确认
@@ -1220,8 +1221,6 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
 
 工具脚本
 
-* ``toolkits/dual_franka/check_cameras.py`` —— 3 相机健康检查 +
-  实时预览。
 * ``toolkits/dual_franka/backfill_rot6d.py`` —— joint 数据集 →
   rot6d_v1。
 * ``toolkits/realworld_check/collect_monitor.py`` —— 进程外

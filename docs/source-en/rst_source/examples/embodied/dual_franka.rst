@@ -304,20 +304,25 @@ Cameras
 
 .. code-block:: bash
 
-   # Health check: enumerate, USB negotiation, single-frame read,
-   # plus a 60-second 3-pane live preview.
-   python -m toolkits.dual_franka.check_cameras
+   # RealSense: enumerate the bus and confirm USB-3 negotiation.
+   rs-enumerate-devices | grep -E "Name|Serial|USB Type"
 
-   # Skip the preview when running over SSH without an X display.
-   python -m toolkits.dual_franka.check_cameras --no-stream
+   # Lumos (XVisio vSLAM): confirm both /dev/v4l/by-id nodes exist.
+   ls /dev/v4l/by-id/
 
-The script flags USB-2 fallback for Lumos (XVisio vSLAM cameras
-*sometimes* negotiate as 2.0 on a marginal cable — they will then
-silently produce empty frames at ``select()`` timeout) and walks the
-standard ``/dev/v4l/by-id`` recovery path (double-open + I420 buffer
-warmup) used in ``LumosCamera``. It also lists processes holding
-``/dev/video*`` via ``fuser`` so you can identify the leaked Ray
-worker that needs killing before the next launch.
+   # USB topology: check that Lumos and RealSense negotiate at 5000M.
+   # Anything dropping to "480M" is USB-2 fallback (bad cable / hub).
+   lsusb -t
+
+   # If a previous Ray worker leaked a V4L2 handle, the next env will
+   # block on cap.read(). Find and kill the holder:
+   fuser -v /dev/video*
+
+XVisio vSLAM cameras *sometimes* negotiate as USB 2.0 on a marginal
+cable — they will then silently produce empty frames at ``select()``
+timeout. ``LumosCamera`` itself does a double-open + I420 buffer
+warmup to handle the cold-start ``STREAMON`` bandwidth race that
+otherwise drops the very first capture.
 
 GELLO
 ~~~~~
@@ -666,13 +671,6 @@ came up are reflected in the bar's initial position; pass
 ``/tmp/ray/session_latest/logs/worker-*-<pid>.out`` to bypass log
 monitor batching entirely (~1–2 min faster), falling back to the
 tee log when the worker file is on a different node.
-
-**Terminal 3** — optional camera preview (useful when re-positioning
-props between episodes):
-
-.. code-block:: bash
-
-   python toolkits/dual_franka/check_cameras.py --stream-secs 9999
 
 Per-episode workflow
 ~~~~~~~~~~~~~~~~~~~~
@@ -1237,15 +1235,16 @@ Troubleshooting
    ATTRS{name}=="PCsensor FootSwitch", MODE="0666"``).
 
 **RealSense falls back to USB 2.x**
-   ``check_cameras.py`` reports ``WARN`` with the USB descriptor.
-   Replace the cable, plug into a root USB-3 port (the ones marked
-   blue), and re-run.
+   ``rs-enumerate-devices`` prints the USB descriptor and ``lsusb -t``
+   shows ``480M`` instead of ``5000M`` for the device. Replace the
+   cable, plug into a root USB-3 port (the ones marked blue), and
+   re-check.
 
 **Lumos cold-start fails on first invocation**
-   ``LumosCamera`` and ``check_cameras._open_lumos`` do a double-open
-   + I420 buffer warmup that handles the cold-start ``STREAMON``
-   bandwidth race. If failures persist after a reboot, the driver
-   state is wedged — re-plug the USB cable.
+   ``LumosCamera`` does a double-open + I420 buffer warmup to handle
+   the cold-start ``STREAMON`` bandwidth race. If failures persist
+   after a reboot, the driver state is wedged — re-plug the USB
+   cable.
 
 **Eval idle forever**
    ``KeyboardEvalControlWrapper`` waits for pedal ``a``. Confirm
@@ -1325,8 +1324,6 @@ Configs
 
 Toolkits
 
-* ``toolkits/dual_franka/check_cameras.py`` — 3-cam health check +
-  live preview.
 * ``toolkits/dual_franka/backfill_rot6d.py`` — joint-space → rot6d_v1
   rewrite.
 * ``toolkits/realworld_check/collect_monitor.py`` —
