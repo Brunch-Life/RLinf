@@ -172,3 +172,24 @@ def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
         env = DualRelativeFrame(env)
     env = DualQuat2EulerWrapper(env)
     return env
+
+
+def apply_dual_arm_franky_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
+    """Wrapper stack for dual-arm envs driven through ``FrankyController``.
+
+    Joint-space actions have no TCP frame to rebase, so RelativeFrame and
+    DualQuat2EulerWrapper don't apply. Teleop / pedal wrappers land in a
+    follow-up PR.
+    """
+    if cfg.get("no_gripper", True):
+        raise NotImplementedError(
+            "no_gripper=True not supported for dual-arm envs (no DualGripperCloseEnv)."
+        )
+
+    if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
+        raise ValueError(
+            "Dual-arm franky envs do not support spacemouse / TCP-GELLO teleop."
+        )
+
+    env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
+    return env
