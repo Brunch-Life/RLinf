@@ -1201,8 +1201,8 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
 **reset 时两台机械臂都动了，但之后只有一根跟踪 GELLO**
    ``DualGelloJointIntervention._start_stream_thread`` 因为某一
    侧的 expert 未 ready 而 early return。每台机械臂单独执行
-   ``gello_align_check.py`` 确认两台 GELLO 都在持续产出关节读数，
-   然后重启。
+   ``python toolkits/realworld_check/gello.py align-check`` 确认两台
+   GELLO 都在持续产出关节读数，然后重启。
 
 
 引用清单
@@ -1228,9 +1228,9 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
   tqdm 监视器。
 * ``toolkits/realworld_check/test_franky_controller.py`` —— 单臂
   REPL 验证。
-* ``toolkits/realworld_check/gello_calibrate.py`` /
-  ``gello_align_check.py`` / ``gello_align_sequential.py`` ——
-  GELLO 标定相关。
+* ``toolkits/realworld_check/gello.py`` —— GELLO 标定 / 对齐 / 复位
+  统一入口。子命令：``align-check``、``align-sequential``、
+  ``calibrate``、``reset-to-gello``。
 * ``toolkits/lerobot/calculate_norm_stats.py`` —— π₀ / π₀.₅
   norm stats 计算。
 

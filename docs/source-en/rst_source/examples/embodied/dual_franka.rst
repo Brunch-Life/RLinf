@@ -1304,8 +1304,9 @@ Troubleshooting
 **Both arms move at reset but only one tracks GELLO afterwards**
    ``DualGelloJointIntervention._start_stream_thread`` returned
    early because one expert was not ready by the time the daemon
-   was queried. Run ``gello_align_check.py`` per arm to confirm both
-   GELLOs produce continuous joint readings, then re-launch.
+   was queried. Run ``python toolkits/realworld_check/gello.py
+   align-check`` per arm to confirm both GELLOs produce continuous
+   joint readings, then re-launch.
 
 
 References
@@ -1332,9 +1333,9 @@ Toolkits
   out-of-process tqdm monitor.
 * ``toolkits/realworld_check/test_franky_controller.py`` — per-arm
   REPL smoke test.
-* ``toolkits/realworld_check/gello_calibrate.py`` /
-  ``gello_align_check.py`` / ``gello_align_sequential.py`` —
-  GELLO calibration helpers.
+* ``toolkits/realworld_check/gello.py`` — GELLO calibration / alignment
+  / reset entry point. Subcommands: ``align-check``,
+  ``align-sequential``, ``calibrate``, ``reset-to-gello``.
 * ``toolkits/lerobot/calculate_norm_stats.py`` — π₀ / π₀.₅ norm
   stats.
 
