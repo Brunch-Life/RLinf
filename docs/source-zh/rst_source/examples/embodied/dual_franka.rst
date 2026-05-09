@@ -207,12 +207,11 @@ PREEMPT_RT 内核本身的编译流程见 Franka 官方文档
    bash requirements/embodied/franky_install.sh
 
    # RLinf Python 依赖 + PyPI 上的 franky-control wheel
-   bash requirements/install.sh embodied --env franka \
-        --franka-backend franky --use-mirror
+   bash requirements/install.sh embodied --env dual-franka --use-mirror
 
    source .venv/bin/activate
 
-``--franka-backend franky`` 固定使用 franky 路径
+``--env dual-franka`` 固定使用 franky 路径
 （PyPI 的 ``franky-control >= 0.15.0``），**跳过**
 :doc:`franka` 使用的 ``serl_franka_controllers`` ROS / catkin 编译流。
 ``--use-mirror`` 面向国内用户（自动切换 PyPI / GitHub /

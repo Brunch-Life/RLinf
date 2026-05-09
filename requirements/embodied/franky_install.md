@@ -58,7 +58,7 @@ rm -rf .venv
 bash requirements/embodied/franky_install.sh
 
 # 装 franky-control 到 venv
-bash requirements/install.sh embodied --env franka --franka-backend franky --use-mirror
+bash requirements/install.sh embodied --env dual-franka --use-mirror
 ```
 
 `--use-mirror` 跟其它 env 一致。`--no-root` 可以跳过 `franky_install.sh`

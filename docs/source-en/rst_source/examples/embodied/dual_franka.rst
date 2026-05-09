@@ -222,12 +222,11 @@ then come back and run through ``franky_install.md``.
    bash requirements/embodied/franky_install.sh
 
    # RLinf Python deps + franky-control wheel from PyPI.
-   bash requirements/install.sh embodied --env franka \
-        --franka-backend franky --use-mirror
+   bash requirements/install.sh embodied --env dual-franka --use-mirror
 
    source .venv/bin/activate
 
-The ``--franka-backend franky`` flag pins the franky path
+The ``--env dual-franka`` target pins the franky path
 (``franky-control >= 0.15.0`` from PyPI) and **skips** the legacy
 ``serl_franka_controllers`` ROS / catkin build used by
 :doc:`franka`. The ``--use-mirror`` flag is for mainland China users

@@ -6,7 +6,6 @@ TARGET=""
 
 MODEL=""
 ENV_NAME=""
-FRANKA_BACKEND="${FRANKA_BACKEND:-ros}"
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 TEST_BUILD=${TEST_BUILD:-0}
@@ -19,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "dual-franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
 
 #=======================Utility Functions=======================
 
@@ -35,14 +34,16 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
-    --franka-backend <b>   Franka control backend: ros (default) or franky.
-                           Only applies when --env franka.
-                             - ros:     legacy ROS/catkin + serl controllers
-                             - franky:  franky-control pip package with a
-                                        C++ RT thread + Ruckig smoother —
-                                        recommended; requires PREEMPT_RT
-                                        and the system tuning in
-                                        requirements/embodied/franky_install.md
+                             - franka:        single-arm Franka with the legacy
+                                              ROS/catkin + serl controller stack.
+                             - franka-dexhand: single-arm Franka (ROS) plus the
+                                              Ruiyan dexterous hand pip deps.
+                             - dual-franka:   dual-arm Franka driven through the
+                                              franky-control pip package
+                                              (libfranka + Ruckig in a C++ RT
+                                              thread). Requires PREEMPT_RT and
+                                              the system tuning in
+                                              requirements/embodied/franky_install.md.
 
 Common options:
     -h, --help             Show this help message and exit.
@@ -87,21 +88,6 @@ parse_args() {
                     exit 1
                 fi
                 ENV_NAME="${2:-}"
-                shift 2
-                ;;
-            --franka-backend)
-                if [ -z "${2:-}" ]; then
-                    echo "--franka-backend requires an argument (ros|franky)." >&2
-                    exit 1
-                fi
-                FRANKA_BACKEND="${2:-}"
-                case "$FRANKA_BACKEND" in
-                    ros|franky) ;;
-                    *)
-                        echo "Invalid --franka-backend: $FRANKA_BACKEND (expected ros|franky)." >&2
-                        exit 1
-                        ;;
-                esac
                 shift 2
                 ;;
             --use-mirror)
@@ -707,31 +693,18 @@ install_env_only() {
             install_d4rl_env
             ;;
         franka)
-            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
-            case "$FRANKA_BACKEND" in
-                ros)
-                    if [ "$SKIP_ROS" -ne 1 ]; then
-                        if [ "$NO_ROOT" -eq 0 ]; then
-                            bash $SCRIPT_DIR/embodied/ros_install.sh
-                        fi
-                        install_franka_env
-                    fi
-                    ;;
-                franky)
-                    if [ "$NO_ROOT" -eq 0 ]; then
-                        bash $SCRIPT_DIR/embodied/franky_install.sh
-                    fi
-                    install_franka_franky_env
-                    ;;
-                *)
-                    echo "Invalid FRANKA_BACKEND=$FRANKA_BACKEND" >&2
-                    exit 1
-                    ;;
-            esac
+            install_franka_realworld_env
             ;;
         franka-dexhand)
             install_franka_realworld_env
             install_franka_dexhand_deps
+            ;;
+        dual-franka)
+            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
             ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
