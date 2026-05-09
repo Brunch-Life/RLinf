@@ -320,54 +320,6 @@ PCsensor FootSwitch 通过厂家提供的 Windows 工具把 3 个踏板烧成
 
 启动 Ray 之前，每个节点需先对各硬件执行单项测试。
 
-RT 健康检查
-~~~~~~~~~~~
-
-在接入机械臂之前，先确认前一节的开机调优都生效，且内核本身能稳定满足
-1 ms cycle deadline：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 50 28
-
-   * - 检查项
-     - 命令
-     - 期望
-   * - PREEMPT_RT 在用
-     - ``uname -a | grep PREEMPT_RT``
-     - 有输出
-   * - CPU governor
-     - ``cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor``
-     - ``performance``
-   * - RT bandwidth
-     - ``cat /proc/sys/kernel/sched_rt_runtime_us``
-     - ``-1``
-   * - rtprio 配额
-     - ``ulimit -r``
-     - ``99`` 或 ``unlimited``
-   * - memlock 配额
-     - ``ulimit -l``
-     - ``unlimited``
-   * - Cyclictest 抖动
-     - ``sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m``
-     - Max < 150 µs
-   * - 直连网络抖动
-     - ``sudo ping -c 1000 -i 0.001 172.16.0.2 | tail -3``
-     - avg < 0.5 ms, max < 2 ms
-
-任一指标不达标都会直接表现为可听嗡鸣、cycle 漏拍、或者控制器跑起来时
-``acceleration_discontinuity`` 错误。``FrankyController.__init__``
-正常启动时打印：
-
-.. code-block:: text
-
-   [INFO] mlockall: memory pages pinned
-   [INFO] SCHED_FIFO priority 80 applied (policy=1)
-   [INFO] Python thread affinity set to [0, 1, 4, ..., N]; CPUs 2-3 reserved for franky RT thread
-
-如果这几行没出现或被 warning 替代，说明 limits / capabilities 没生效，
-回去重检 §1。
-
 相机
 ~~~~
 
@@ -414,21 +366,9 @@ REPL 命令：
 * ``impedance 300 300 300 300 150 80 30`` —— 降低关节阻抗后再压测一次
 * ``open`` / ``close`` —— gripper sanity
 
-合格标准（每一项都要满足）：
-
-1. **静置 60 s 无可听嗡鸣**\ ，``state.arm_joint_velocity`` rms <
-   ``1e-3 rad/s``\ 。
-2. ``stream 4 0.001 1000`` 实际频率 ≥ 800 Hz，且无
-   ``acceleration_discontinuity`` 或 reflex abort。
-3. ``home`` 从任意合法起始位姿都能干净复位（无
-   ``start_pose_invalid``\ ）。
-4. **5 分钟 GELLO 遥操**\ （\ ``realworld_collect_data_gello_joint.yaml``\ ）期间
-   ``state.control_command_success_rate`` > ``0.99``\ 。
-5. ``cyclictest -p 80 -t 4 -i 1000 -l 300000`` Max latency <
-   ``150 µs``\ 。
-
-每节点对自己那台机械臂单独执行。**两台机械臂都通过验证之前不要启动
-Ray。**
+每节点对自己那台机械臂单独执行：静置无可听嗡鸣、``stream 4 0.001 1000``
+能跑 ≥ 800 Hz、``home`` 从任意合法位姿都能干净复位即可。**两台机械臂
+都通过验证之前不要启动 Ray。**
 
 
 GELLO 标定

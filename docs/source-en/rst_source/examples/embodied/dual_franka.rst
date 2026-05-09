@@ -343,55 +343,6 @@ Hardware verification
 
 Before bringing up Ray, smoke-test each hardware piece per node.
 
-RT health check
-~~~~~~~~~~~~~~~
-
-Confirm the per-boot tuning landed and the kernel itself meets the
-1 ms cycle deadline before plugging in any robot:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 50 30
-
-   * - Check
-     - Command
-     - Expected
-   * - PREEMPT_RT active
-     - ``uname -a | grep PREEMPT_RT``
-     - non-empty output
-   * - CPU governor
-     - ``cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor``
-     - ``performance``
-   * - RT bandwidth
-     - ``cat /proc/sys/kernel/sched_rt_runtime_us``
-     - ``-1``
-   * - rtprio limit
-     - ``ulimit -r``
-     - ``99`` or ``unlimited``
-   * - memlock limit
-     - ``ulimit -l``
-     - ``unlimited``
-   * - Cyclictest
-     - ``sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m``
-     - Max latency < 150 µs
-   * - Direct link
-     - ``sudo ping -c 1000 -i 0.001 172.16.0.2 | tail -3``
-     - avg < 0.5 ms, max < 2 ms
-
-Any line that does not meet the expected value will translate
-directly into audible buzz, missed cycles, or
-``acceleration_discontinuity`` errors once the controller is
-running. When ``FrankyController.__init__`` succeeds it logs:
-
-.. code-block:: text
-
-   [INFO] mlockall: memory pages pinned
-   [INFO] SCHED_FIFO priority 80 applied (policy=1)
-   [INFO] Python thread affinity set to [0, 1, 4, ..., N]; CPUs 2-3 reserved for franky RT thread
-
-If those messages are absent or replaced by warnings, your limits
-or capabilities are not in effect — re-check section 1.
-
 Cameras
 ~~~~~~~
 
@@ -439,22 +390,10 @@ Inside the REPL:
 * ``impedance 300 300 300 300 150 80 30`` — drop joint impedance, repeat
 * ``open`` / ``close`` — gripper sanity
 
-A passing run satisfies all of:
-
-1. **60-second hold** with no audible buzz; ``state.arm_joint_velocity``
-   RMS below ``1e-3 rad/s``.
-2. ``stream 4 0.001 1000`` runs at ≥ 800 Hz with no
-   ``acceleration_discontinuity`` and no reflex aborts.
-3. ``home`` recovers cleanly from any legal start pose
-   (no ``start_pose_invalid``).
-4. **5-minute GELLO teleop** under
-   ``realworld_collect_data_gello_joint.yaml`` keeps
-   ``state.control_command_success_rate`` above ``0.99``.
-5. ``cyclictest -p 80 -t 4 -i 1000 -l 300000`` Max latency below
-   ``150 µs``.
-
-Run this on each node against its own arm. **Both arms must pass
-before you bring up Ray.**
+Run this on each node against its own arm: a passing run is silent
+on hold, sustains ≥ 800 Hz on ``stream 4 0.001 1000``, and lets
+``home`` recover cleanly from any legal start pose. **Both arms
+must pass before you bring up Ray.**
 
 
 GELLO calibration
