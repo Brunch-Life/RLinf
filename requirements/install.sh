@@ -18,7 +18,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "dual-franka" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm")
 
 #=======================Utility Functions=======================
 
@@ -34,15 +34,17 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
-                             - franka:        single-arm Franka with the legacy
-                                              ROS/catkin + serl controller stack.
-                             - franka-dexhand: single-arm Franka (ROS) plus the
-                                              Ruiyan dexterous hand pip deps.
-                             - dual-franka:   dual-arm Franka driven through the
+                             - franka:        Franka with the legacy ROS/catkin
+                                              + serl controller stack.
+                             - franka-dexhand: Franka (ROS) plus the Ruiyan
+                                              dexterous hand pip deps.
+                             - franka-franky: Franka driven through the
                                               franky-control pip package
                                               (libfranka + Ruckig in a C++ RT
-                                              thread). Requires PREEMPT_RT and
-                                              the system tuning in
+                                              thread). Works for single- or
+                                              dual-arm setups. Requires
+                                              PREEMPT_RT and the system tuning
+                                              in
                                               requirements/embodied/franky_install.md.
 
 Common options:
@@ -699,7 +701,7 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
-        dual-franka)
+        franka-franky)
             uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash $SCRIPT_DIR/embodied/franky_install.sh
