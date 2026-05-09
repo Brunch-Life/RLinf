@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch:*)",
+      "Bash(gh auth:*)",
+      "Bash(git mv:*)",
+      "Bash(git:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh pr:*)",
+      "Bash(python3 -c ':*)",
+      "Read(//mnt/public/chenyinuo/realRL/**)",
+      "Bash(gh run:*)",
+      "Bash(GIT_INDEX_FILE=/tmp/git_index_tmp git checkout feature/dual-franka-env)"
+    ]
+  }
+}

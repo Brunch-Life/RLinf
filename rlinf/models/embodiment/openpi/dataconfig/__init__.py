@@ -32,6 +32,9 @@ from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.dual_franka_joint_dataconfig import (
+    DualFrankaJointDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.dual_franka_rot6d_dataconfig import (
     DualFrankaRot6dDataConfig,
 )
@@ -414,6 +417,30 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
             extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    # Dual-Franka joint-space SFT pipeline. 16-d state / action layout
+    # (``[L_jpos(7), L_grip(1), R_jpos(7), R_grip(1)]``). Trains directly
+    # on the GELLO-side joint command stream — absolute joint targets,
+    # no SE(3) or component-wise delta transform.
+    #
+    # ``asset_id`` is set to ``<repo_id>-joint`` so joint and rot6d
+    # configs that share the same dataset don't collide on
+    # ``<model_path>/<asset_id>/norm_stats.json`` (the on-disk
+    # statistics differ: 16-d joint vs 20-d rot6d).
+    TrainConfig(
+        name="pi05_dualfranka_joint",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=16, discrete_state_input=False
+        ),
+        data=DualFrankaJointDataConfig(
+            repo_id="YinuoTHU/Dual-franka-cylinder-handover-20260428",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_base/assets",
+                asset_id="YinuoTHU/Dual-franka-cylinder-handover-20260428-joint",
+            ),
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
