@@ -534,7 +534,7 @@ public IP).
    export RLINF_NODE_RANK=0
    export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX  # if pedal lives here
 
-   ray stop --force || true
+   ray stop --force
    ray start --head --port=6379 --node-ip-address=<HEAD_IP>
 
 .. code-block:: bash
@@ -544,7 +544,7 @@ public IP).
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=1
 
-   ray stop --force || true
+   ray stop --force
    ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
 
 Verify on node 0:
