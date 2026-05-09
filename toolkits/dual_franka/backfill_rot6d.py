@@ -11,35 +11,51 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Backfill a joint-space-collected dual-Franka LeRobot dataset into rot6d_v1.
+"""Backfill a joint-action dual-Franka LeRobot dataset into rot6d_v1.
+
+The source dataset was collected with joint-space teleop, so its
+``actions`` are ``[j1..j7, gripper]`` per arm — but the env already
+wrote the full TCP pose (xyz + xyzw quaternion) into every step's
+``state`` row. This script therefore does **not** run forward
+kinematics: it just rearranges the existing TCP fields and converts
+the quaternion to rot6d.
 
 Rewrites:
-  * ``state[0:20]`` from ``[L_grip, R_grip, L_jpos(7), R_jpos(7), ...]``
-    to ``[L_grip, R_grip, L_xyz(3), L_rot6d(6), R_xyz(3), R_rot6d(6)]``.
-    The remaining ``state[20:68]`` slots (joint_velocity tail, tcp_force,
-    tcp_pose, tcp_torque, tcp_vel) are preserved verbatim — pi05's
-    ``_rearrange_state`` slices to :20 and ignores them.
+  * ``state[0:20]`` from
+    ``[L_grip, R_grip, L_jpos(7), R_jpos(7), ...]`` to
+    ``[L_grip, R_grip, L_xyz(3), L_rot6d(6), R_xyz(3), R_rot6d(6)]``.
+    The xyz columns are copied from each row's existing
+    ``state[36:39]`` / ``state[43:46]`` (TCP xyz that the env logged
+    at collection time); the rot6d columns are
+    ``quat_xyzw_to_rot6d`` applied to ``state[39:43]`` /
+    ``state[46:50]``. The remaining ``state[20:68]`` slots
+    (joint_velocity tail, tcp_force, tcp_pose, tcp_torque, tcp_vel)
+    are preserved verbatim — pi05's ``_rearrange_state`` slices to
+    ``:20`` and ignores them.
   * ``actions`` shape ``16 -> 20``. Each frame's 20-d vector is
     ``[L_xyz(3), L_rot6d(6), L_grip(1), R_xyz(3), R_rot6d(6), R_grip(1)]``
-    where the xyz/rot6d halves come from the **next-frame** ``tcp_pose``
-    (best available proxy for "commanded TCP pose", the real target the
-    GELLO operator was steering toward at this step) and the gripper
-    slot is the original trigger signal (``action[7]`` / ``action[15]``,
-    already in ±1). The last frame repeats current state (no motion).
+    where the xyz/rot6d halves come from the **next frame's**
+    ``state`` TCP fields (best available proxy for "commanded TCP
+    pose at this step", i.e. where the GELLO operator was steering
+    toward) and the gripper slot is the original trigger signal
+    (``action[7]`` / ``action[15]``, already in ±1). The last frame
+    repeats current state (no motion).
 
 Non-trivial choices
 -------------------
-* **Why next-frame tcp_pose, not FK(action[t])?** Forward kinematics
-  requires a franky ``Model`` bound to a live robot or a local URDF
-  loader, neither of which is available offline. At 10 Hz with franky's
-  impedance controller, the difference between commanded and actual TCP
-  is sub-centimetre / few-degrees, well below what pi05 needs for SFT.
-* **Why keep state dim 68?** So the schema-dependent columns on disk
-  (``state`` FixedSizeList[68], HuggingFace ``Sequence.length=68``)
-  don't need surgery. Only ``actions`` widens.
-* **Why write a fresh dataset instead of in-place?** Safer — the source
-  joint-space dataset stays untouched so a re-backfill with a different
-  convention is idempotent.
+* **Why next-frame state TCP for the action, not FK(action[t])?**
+  Forward kinematics would require a franky ``Model`` bound to a
+  live robot or a local URDF loader, neither of which is available
+  offline. At 10 Hz with franky's impedance controller, the
+  difference between commanded and actually-reached TCP is
+  sub-centimetre / few-degrees, well below what pi05 needs for SFT.
+* **Why keep state dim 68?** So the schema-dependent columns on
+  disk (``state`` FixedSizeList[68], HuggingFace
+  ``Sequence.length=68``) don't need surgery. Only ``actions``
+  widens.
+* **Why write a fresh dataset instead of in-place?** Safer — the
+  source joint-action dataset stays untouched so a re-backfill with
+  a different convention is idempotent.
 
 Usage
 -----
