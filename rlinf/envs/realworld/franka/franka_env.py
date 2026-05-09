@@ -803,20 +803,26 @@ class FrankaEnv(gym.Env):
         self._controller.clear_errors().wait()
 
     def _binary_gripper_action(self, position: float) -> bool:
-        """Execute a scaled binary gripper command."""
+        """Fire-and-forget binary gripper command.
+
+        Modbus write returns immediately; ``gripper_open`` is flipped
+        locally to avoid blocking ``env.step`` (10 Hz) or stalling the
+        1 kHz teleop daemon on every gripper edge. See commit
+        fabad5a8 for context.
+        """
         if (
             position <= -self.config.binary_gripper_threshold
             and self._franka_state.gripper_open
         ):
-            self._controller.close_gripper().wait()
-            time.sleep(0.6)
+            self._controller.close_gripper()
+            self._franka_state.gripper_open = False
             return True
         if (
             position >= self.config.binary_gripper_threshold
             and not self._franka_state.gripper_open
         ):
-            self._controller.open_gripper().wait()
-            time.sleep(0.6)
+            self._controller.open_gripper()
+            self._franka_state.gripper_open = True
             return True
         return False
 
