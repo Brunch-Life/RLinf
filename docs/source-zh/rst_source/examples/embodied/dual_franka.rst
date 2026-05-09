@@ -68,21 +68,19 @@ SAC / PPO 训练相比，该 rig：
      - 节点上的硬件
    * - **node 0**\ （head）
      - Ray head；env worker；左 ``FrankyController``；
-       部署阶段的 actor / rollout；base 相机采集
+       部署阶段的 actor / rollout；所有相机和 GELLO 采集
      - 1× GPU（如 RTX 4090，仅 SFT 与部署阶段使用）；
        左 Franka FR3 直连一张 NIC，FCI IP ``172.16.0.2``；
-       左 GELLO Dynamixel 链（USB-FTDI）；
        左 Robotiq 2F-85（USB-RS485 Modbus）；
-       左腕 Lumos USB-3 相机；
-       base RealSense D435i（第三人称视角）；
+       **左右两台 GELLO** Dynamixel 链（USB-FTDI）；
+       **三台相机全部在此**\ —— base RealSense D435i（第三人称）+
+       左腕 Lumos USB-3 + 右腕 Lumos USB-3；
        PCsensor 3 键脚踏（可放在任一节点）
    * - **node 1**\ （worker）
-     - Ray worker；右 ``FrankyController``；右腕相机采集
+     - Ray worker；只跑右 ``FrankyController``
      - 可选 GPU（推理不需要）；
        右 Franka FR3 直连自己的 NIC，FCI IP ``172.16.0.2``；
-       右 GELLO Dynamixel 链（USB-FTDI）；
-       右 Robotiq 2F-85；
-       右腕 Lumos USB-3 相机
+       右 Robotiq 2F-85
 
 .. warning::
 
@@ -96,7 +94,10 @@ SAC / PPO 训练相比，该 rig：
 相机角色（wrapper 栈用 ``main_image_key: left_wrist_0_rgb``，
 所以 π₀.₅ 的 ``observation/image`` 槽位是**左腕**相机；
 ``base_0_rgb`` 与 ``right_wrist_0_rgb`` 进
-``observation/extra_view_image-{0,1}``）：
+``observation/extra_view_image-{0,1}``）。三台相机的 USB 全部接到
+**node 0**\ —— env worker 在 node 0，由它统一打开
+``/dev/v4l/by-id/...`` 与 ``rs.pipeline()``。所以右腕 Lumos 的 USB
+线虽然要拉回 node 0，机械臂本体仍然挂在 node 1：
 
 .. list-table::
    :header-rows: 1
@@ -107,7 +108,7 @@ SAC / PPO 训练相比，该 rig：
      - 用途
    * - ``base_0_rgb``
      - RealSense D435i
-     - 第三人称视角，左右臂共用（挂在 node 0）
+     - 第三人称视角，左右臂共用
    * - ``left_wrist_0_rgb``
      - Lumos USB 3（XVisio vSLAM）
      - 左臂腕相机，作为 π₀.₅ 主 ``image``

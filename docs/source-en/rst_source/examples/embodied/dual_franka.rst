@@ -77,23 +77,21 @@ Hardware topology
      - Hardware on this node
    * - **node 0** (head)
      - Ray head; env worker; left ``FrankyController``;
-       actor / rollout (during eval); base camera capture
+       actor / rollout (during eval); all camera + GELLO capture
      - 1× GPU (e.g. RTX 4090) — only used at SFT and deployment;
        left Franka FR3 on a directly-cabled NIC at FCI IP
        ``172.16.0.2``;
-       left GELLO Dynamixel chain (USB-FTDI);
        left Robotiq 2F-85 (USB-RS485 Modbus);
-       left wrist Lumos USB-3 camera;
-       base RealSense D435i (third-person view);
+       **both left and right GELLO** Dynamixel chains (USB-FTDI);
+       **all three cameras** — base RealSense D435i (third-person)
+       and left + right wrist Lumos USB-3;
        PCsensor 3-key FootSwitch (optional — can live on either node)
    * - **node 1** (worker)
-     - Ray worker; right ``FrankyController``; right wrist camera capture
+     - Ray worker; right ``FrankyController`` only
      - Optional GPU (not used for inference);
        right Franka FR3 on its own directly-cabled NIC at FCI IP
        ``172.16.0.2``;
-       right GELLO Dynamixel chain (USB-FTDI);
-       right Robotiq 2F-85;
-       right wrist Lumos USB-3 camera
+       right Robotiq 2F-85
 
 .. warning::
 
@@ -109,7 +107,11 @@ Hardware topology
 Camera roles (the wrapper stack uses
 ``main_image_key: left_wrist_0_rgb`` so π₀.₅'s ``observation/image``
 slot is the *left* wrist; ``base_0_rgb`` and ``right_wrist_0_rgb`` go
-into ``observation/extra_view_image-{0,1}``):
+into ``observation/extra_view_image-{0,1}``). All three cameras'
+USB cables terminate on **node 0** — the env worker there is the
+single process that opens ``/dev/v4l/by-id/...`` and
+``rs.pipeline()``, so the right-wrist Lumos cable still runs back
+to node 0 even though the right arm itself lives on node 1:
 
 .. list-table::
    :header-rows: 1
@@ -120,7 +122,7 @@ into ``observation/extra_view_image-{0,1}``):
      - Purpose
    * - ``base_0_rgb``
      - RealSense D435i
-     - Third-person view shared by both arms (lives on node 0)
+     - Third-person view shared by both arms
    * - ``left_wrist_0_rgb``
      - Lumos USB 3 (XVisio vSLAM)
      - Left arm wrist camera, used as π₀.₅'s primary ``image``
