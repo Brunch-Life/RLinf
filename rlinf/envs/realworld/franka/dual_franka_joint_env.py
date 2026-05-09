@@ -46,8 +46,7 @@ class DualFrankaJointRobotConfig(DualFrankaRobotConfig):
     joint_action_mode: str = "absolute"  # "absolute" | "delta"
     joint_action_scale: float = 0.1  # rad per unit action (delta mode)
 
-    # When True, env.step() doesn't dispatch arm motion — a 1 kHz daemon
-    # (DualGelloJointIntervention direct_stream) owns the controllers.
+    # When True, a 1 kHz daemon (DualGelloJointIntervention) owns the controllers.
     teleop_direct_stream: bool = False
 
     def __post_init__(self):
@@ -63,18 +62,6 @@ class DualFrankaJointEnv(DualFrankaFrankyEnv):
 
     PER_ARM_ACTION_DIM = ACTION_DIM_PER_ARM
     GRIPPER_IDX_IN_ARM = JOINT_DIM_PER_ARM  # slot 7
-
-    # Explicit flat-state concat order so future key additions can't
-    # silently reshuffle downstream byte offsets.
-    STATE_LAYOUT = (
-        "gripper_position",
-        "joint_position",
-        "joint_velocity",
-        "tcp_force",
-        "tcp_pose",
-        "tcp_torque",
-        "tcp_vel",
-    )
 
     def _init_action_obs_spaces(self):
         self._cartesian_safety_boxes()

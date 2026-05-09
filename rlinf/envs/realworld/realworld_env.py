@@ -114,14 +114,6 @@ class RealWorldEnv(gym.Env):
         self.task_descriptions = list(
             self.env.call("get_wrapper_attr", "task_description")
         )
-        # Explicit flat-state key order; falls back to alphabetical when absent.
-        try:
-            layouts = self.env.call("get_wrapper_attr", "STATE_LAYOUT")
-        except AttributeError:
-            self._state_layout = None
-        else:
-            first = layouts[0] if layouts else None
-            self._state_layout = tuple(first) if first else None
 
     def set_task_descriptions(self, descriptions: list[str]) -> None:
         """Override per-env task prompts (multi-task collection sets this per episode)."""
@@ -228,21 +220,8 @@ class RealWorldEnv(gym.Env):
         """
         obs = {}
 
-        # STATE_LAYOUT-declared envs concat in that order (loud on missing
-        # keys); others fall back to alphabetical.
         state = raw_obs["state"]
-        if self._state_layout is not None:
-            missing = [k for k in self._state_layout if k not in state]
-            if missing:
-                raise KeyError(
-                    f"STATE_LAYOUT references missing keys: {missing}. "
-                    f"Inner env emits {sorted(state)}."
-                )
-            full_states = [state[k] for k in self._state_layout]
-        else:
-            raw_states = OrderedDict(sorted(state.items()))
-            full_states = list(raw_states.values())
-        full_states = np.concatenate(full_states, axis=-1)
+        full_states = np.concatenate([state[k] for k in sorted(state)], axis=-1)
         obs["states"] = full_states
 
         frames = raw_obs["frames"]

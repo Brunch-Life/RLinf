@@ -50,10 +50,6 @@ class DualFrankaRot6dEnv(DualFrankaFrankyEnv):
     PER_ARM_ACTION_DIM = ACTION_DIM_PER_ARM
     GRIPPER_IDX_IN_ARM = 9  # xyz(3) + rot6d(6) then gripper
 
-    # 20-byte flat prefix [L_grip, R_grip, L_xyz, L_rot6d, R_xyz, R_rot6d]
-    # is what the SFT policy slicer expects.
-    STATE_LAYOUT = ("gripper_position", "tcp_pose_rot6d")
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Per-arm previous quat for hemisphere alignment across steps.
