@@ -521,22 +521,31 @@ Order:
    pedal. Verify ``franky``, ``gello``, ``gello_teleop`` import.
 2. **Then** ``ray start`` — head on node 0, worker on node 1.
 
-Templates are provided:
+On each node, activate the venv, export the rank-specific env vars,
+then run ``ray start``. ``HEAD_IP`` / ``WORKER_IP`` are the LAN IPs the
+two machines use to reach each other (not ``127.0.0.1`` and not the
+public IP).
 
 .. code-block:: bash
 
    # node 0 (Ray head)
    source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=0
    export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX  # if pedal lives here
-   bash ray_utils/realworld/start_ray_node0.sh   # edit HEAD_IP first
+
+   ray stop --force || true
+   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
 
 .. code-block:: bash
 
    # node 1 (Ray worker)
    source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=1
-   bash ray_utils/realworld/start_ray_node1.sh   # edit HEAD_IP / WORKER_IP first
+
+   ray stop --force || true
+   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
 
 Verify on node 0:
 

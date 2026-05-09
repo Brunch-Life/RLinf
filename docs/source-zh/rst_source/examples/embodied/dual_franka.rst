@@ -484,22 +484,30 @@ worker 永远拿不到。顺序：
    ``gello``、``gello_teleop`` 都能 import。
 2. **然后** ``ray start`` —— node 0 head，node 1 worker。
 
-仓库内有模板：
+在每个节点上激活 venv，export rank 相关环境变量，再 ``ray start``。
+``HEAD_IP`` / ``WORKER_IP`` 是两台机器相互通信用的局域网 IP（不是
+``127.0.0.1``，也不是公网 IP）。
 
 .. code-block:: bash
 
    # node 0（Ray head）
    source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=0
    export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX  # 若脚踏在这台
-   bash ray_utils/realworld/start_ray_node0.sh   # 先填好 HEAD_IP
+
+   ray stop --force || true
+   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
 
 .. code-block:: bash
 
    # node 1（Ray worker）
    source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=1
-   bash ray_utils/realworld/start_ray_node1.sh   # 先填好 HEAD_IP / WORKER_IP
+
+   ray stop --force || true
+   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
 
 在 node 0 验证：
 
