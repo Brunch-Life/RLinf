@@ -229,10 +229,8 @@ then come back and run through ``franky_install.md``.
 The ``--env franka-franky`` target pins the franky path
 (``franky-control >= 0.15.0`` from PyPI) and **skips** the legacy
 ``serl_franka_controllers`` ROS / catkin build used by
-:doc:`franka`. The wheel works for both single- and dual-arm setups —
-this guide just happens to drive a dual-arm rig. The ``--use-mirror``
-flag is for mainland China users (switches PyPI / GitHub /
-HuggingFace mirrors).
+:doc:`franka`. The ``--use-mirror`` flag is for mainland China users
+(switches PyPI / GitHub / HuggingFace mirrors).
 
 If the franky-control wheel does not match your Python + libfranka
 combo, ``pip`` falls back to a source build that needs libfranka

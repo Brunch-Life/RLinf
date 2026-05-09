@@ -214,7 +214,6 @@ PREEMPT_RT 内核本身的编译流程见 Franka 官方文档
 ``--env franka-franky`` 固定使用 franky 路径
 （PyPI 的 ``franky-control >= 0.15.0``），**跳过**
 :doc:`franka` 使用的 ``serl_franka_controllers`` ROS / catkin 编译流。
-该 wheel 单臂、双臂都能用——本指南只是恰好跑双臂场景。
 ``--use-mirror`` 面向国内用户（自动切换 PyPI / GitHub /
 HuggingFace 镜像）。
 
