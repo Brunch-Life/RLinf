@@ -867,7 +867,9 @@ def run_reset_to_gello(_args: argparse.Namespace) -> None:
     for i in range(7):
         d = delta[i]
         status = (
-            colour("OK", "32") if abs(d) < RESET_ALIGN_TOL else colour(f"Δ={d:+.3f}", "33")
+            colour("OK", "32")
+            if abs(d) < RESET_ALIGN_TOL
+            else colour(f"Δ={d:+.3f}", "33")
         )
         print(f"  J{i + 1}: {current[i]:+.3f} → {target[i]:+.3f}  ({status})")
     print()
@@ -920,7 +922,9 @@ def run_reset_to_gello(_args: argparse.Namespace) -> None:
     for i in range(7):
         d = final_delta[i]
         status = (
-            colour("✓", "32") if abs(d) < RESET_ALIGN_TOL else colour(f"err={d:+.3f}", "31")
+            colour("✓", "32")
+            if abs(d) < RESET_ALIGN_TOL
+            else colour(f"err={d:+.3f}", "31")
         )
         print(f"  J{i + 1}: target={target[i]:+.3f}  actual={final[i]:+.3f}  {status}")
     print()
