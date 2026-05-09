@@ -34,6 +34,7 @@ from .dual_franka_env import (
     TCP_VEL_DIM,
     DualFrankaEnv,
 )
+from .franky_controller import FrankyController
 
 JOINT_DIM_PER_ARM = 7
 
@@ -48,8 +49,6 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
     # ---------------------------------------------------------------- hardware
 
     def _setup_hardware(self):
-        from .franky_controller import FrankyController
-
         assert self.env_idx >= 0, f"env_idx must be set for {type(self).__name__}."
 
         if self.hardware_info is not None:

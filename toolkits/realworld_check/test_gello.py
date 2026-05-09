@@ -30,10 +30,10 @@ Shared environment variables::
 
 Usage::
 
-    python toolkits/realworld_check/gello.py align-check
-    python toolkits/realworld_check/gello.py align-sequential
-    python toolkits/realworld_check/gello.py calibrate
-    python toolkits/realworld_check/gello.py reset-to-gello
+    python toolkits/realworld_check/test_gello.py align-check
+    python toolkits/realworld_check/test_gello.py align-sequential
+    python toolkits/realworld_check/test_gello.py calibrate
+    python toolkits/realworld_check/test_gello.py reset-to-gello
 
 The Robotiq gripper port is auto-resolved from the local FTDI USB-RS485
 adapter (each dual-Franka node has exactly one), so no override is
@@ -56,6 +56,8 @@ import ray
 
 if not ray.is_initialized():
     ray.init(log_to_driver=False, logging_level="ERROR")
+
+from gello.dynamixel.driver import DynamixelDriver  # noqa: E402
 
 from rlinf.envs.realworld.common.gello.gello_joint_expert import (  # noqa: E402
     GelloJointExpert,
@@ -198,7 +200,7 @@ def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> No
         if max_d > 1.5:
             print(
                 colour(
-                    f"\n  ❌ J{worst + 1} would need to move {max_d:.3f} rad — "
+                    f"\n  J{worst + 1} would need to move {max_d:.3f} rad — "
                     "exceeds reset_joint safety guard (1.5 rad).",
                     "31;1",
                 )
@@ -220,7 +222,7 @@ def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> No
         controller.reset_joint(list(q_target)).wait()
     except Exception as e:
         msg = str(e)
-        print(colour(f"\n  ❌ reset_joint failed: {msg}", "31;1"), file=sys.stderr)
+        print(colour(f"\n  reset_joint failed: {msg}", "31;1"), file=sys.stderr)
         if "FCI" in msg or "Connection" in msg:
             print(
                 "\n  The Franka FCI session is not active.  Open\n"
@@ -261,30 +263,22 @@ def _fmt_align_check_row(i: int, q_robot: float, q_gello: float) -> str:
     abs_w = abs(wrapped)
 
     if abs_w < 0.05:
-        c = "32"  # green
-        status = "✅"
-        hint = ""
+        c, label, hint = "32", "ok", ""
     elif abs_w <= ALIGN_CHECK_THRESHOLD:
-        c = "33"  # yellow
-        status = "~ "
-        hint = ""
+        c, label, hint = "33", "~~", ""
     else:
-        c = "31"  # red
-        status = "❌"
-        # Operator should turn GELLO BY -wrapped to make q_gello match q_robot
+        c, label = "31", "xx"
         direction = -wrapped
-        direction_deg = math.degrees(direction)
         hint = (
-            f"  → turn GELLO J{i + 1} by {direction:+.3f} rad ({direction_deg:+.1f}°)"
+            f"  → turn GELLO J{i + 1} by {direction:+.3f} rad "
+            f"({math.degrees(direction):+.1f}°)"
         )
 
     delta_str = colour(f"Δ={wrapped:+.3f}", c)
-    raw_note = ""
-    if abs(raw_delta - wrapped) > 1e-6:
-        raw_note = f"  raw={raw_delta:+.3f}"
+    raw_note = f"  raw={raw_delta:+.3f}" if abs(raw_delta - wrapped) > 1e-6 else ""
 
     return (
-        f"  {status} J{i + 1}  "
+        f"  {colour(f'[{label}]', c)} J{i + 1}  "
         f"robot={q_robot:+.3f}  gello={q_gello:+.3f}  "
         f"{delta_str}{raw_note}{hint}"
     )
@@ -429,7 +423,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
     q_at_home = controller.get_state().wait()[0].arm_joint_position
     print(
         colour(
-            f"  ✅ at home: {[round(float(x), 3) for x in q_at_home]}",
+            f"  at home: {[round(float(x), 3) for x in q_at_home]}",
             "32;1",
         )
     )
@@ -481,7 +475,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
                     sys.stdout.write(
                         "\r"
                         + colour(
-                            f"  J{j + 1} ✅ aligned (Δ={delta:+.3f} rad, "
+                            f"  J{j + 1} aligned (Δ={delta:+.3f} rad, "
                             f"took {elapsed:.1f}s)",
                             "32;1",
                         )
@@ -503,7 +497,7 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
     max_d = max(abs(d) for d in deltas)
     worst = int(np.argmax(np.abs(np.asarray(deltas))))
     print()
-    print(colour("✅ ALL JOINTS ALIGNED", "32;1"))
+    print(colour("ALL JOINTS ALIGNED", "32;1"))
     print(f"  per-joint Δ (rad): {[f'{d:+.3f}' for d in deltas]}")
     print(
         f"  max |Δ| = {max_d:.3f} rad on J{worst + 1} "
@@ -574,9 +568,6 @@ def _calib_describe_pose(name: str, q: np.ndarray) -> None:
 
 def _calib_setup_gello_raw():
     """Open the GELLO Dynamixel chain in RAW mode (signs and offsets bypassed)."""
-    # Use the upstream Dynamixel driver directly so we read RAW motor positions.
-    from gello.dynamixel.driver import DynamixelDriver
-
     gello_port = os.environ.get(
         "GELLO_PORT",
         "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTAJEDPC-if00-port0",
@@ -780,14 +771,14 @@ def run_calibrate(_args: argparse.Namespace) -> None:
     if max_res > 0.15:
         print(
             colour(
-                f"  ⚠ max residual {max_res:.3f} rad — calibration is loose.\n"
+                f"  max residual {max_res:.3f} rad — calibration is loose.\n"
                 "    Most likely you didn't physically match the robot pose closely;\n"
                 "    re-pose the GELLO and re-run the offending step.",
                 "33;1",
             )
         )
     else:
-        print(colour(f"  ✅ max residual {max_res:.3f} rad — looks clean", "32;1"))
+        print(colour(f"  max residual {max_res:.3f} rad — looks clean", "32;1"))
 
     grip_open_deg = math.degrees(grip_B) - 0.2
     grip_close_deg = math.degrees(grip_B) - 42.0
@@ -922,7 +913,7 @@ def run_reset_to_gello(_args: argparse.Namespace) -> None:
     for i in range(7):
         d = final_delta[i]
         status = (
-            colour("✓", "32")
+            colour("ok", "32")
             if abs(d) < RESET_ALIGN_TOL
             else colour(f"err={d:+.3f}", "31")
         )

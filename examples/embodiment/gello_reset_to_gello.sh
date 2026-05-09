@@ -21,7 +21,7 @@ set -euo pipefail
 
 EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 REPO_PATH="$(dirname "$(dirname "$EMBODIED_PATH")")"
-SRC_FILE="${REPO_PATH}/toolkits/realworld_check/gello.py"
+SRC_FILE="${REPO_PATH}/toolkits/realworld_check/test_gello.py"
 
 export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
 export FRANKA_ROBOT_IP="${FRANKA_ROBOT_IP:-172.16.0.2}"

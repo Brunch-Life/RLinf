@@ -22,7 +22,9 @@ positions map 1:1 to the robot's joint positions.
 
 from __future__ import annotations
 
+import argparse
 import threading
+import time
 
 import numpy as np
 
@@ -120,9 +122,6 @@ class GelloJointExpert:
 
 
 if __name__ == "__main__":
-    import argparse
-    import time
-
     parser = argparse.ArgumentParser(description="Test the GELLO joint expert.")
     parser.add_argument(
         "--port",
