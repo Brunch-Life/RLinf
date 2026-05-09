@@ -294,15 +294,6 @@ PCsensor FootSwitch 通过厂家提供的 Windows 工具把 3 个踏板烧成
    # 任何掉到 "480M" 都是 USB-2 fallback（线缆或 hub 不行）。
    lsusb -t
 
-   # 上一轮 Ray worker 异常退出会泄漏 V4L2 句柄，下次 cap.read()
-   # 直接卡住。找出并杀掉占用进程：
-   fuser -v /dev/video*
-
-XVisio vSLAM 摄像头在边缘线上偶尔会协商成 USB 2.0，然后会在不显式
-报错的情况下在 ``select()`` 超时点产生空帧。``LumosCamera`` 内置了
-double-open + I420 buffer warmup 来处理冷启动 ``STREAMON`` 时的
-USB 带宽竞速。
-
 GELLO
 ~~~~~
 

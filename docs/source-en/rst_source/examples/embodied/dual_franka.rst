@@ -314,16 +314,6 @@ Cameras
    # Anything dropping to "480M" is USB-2 fallback (bad cable / hub).
    lsusb -t
 
-   # If a previous Ray worker leaked a V4L2 handle, the next env will
-   # block on cap.read(). Find and kill the holder:
-   fuser -v /dev/video*
-
-XVisio vSLAM cameras *sometimes* negotiate as USB 2.0 on a marginal
-cable — they will then silently produce empty frames at ``select()``
-timeout. ``LumosCamera`` itself does a double-open + I420 buffer
-warmup to handle the cold-start ``STREAMON`` bandwidth race that
-otherwise drops the very first capture.
-
 GELLO
 ~~~~~
 
