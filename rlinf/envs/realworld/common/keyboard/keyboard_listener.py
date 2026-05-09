@@ -39,10 +39,7 @@ class KeyboardListener:
 
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
-        # Edge-press queue: the evdev thread enqueues every *initial* press
-        # (value==1, not autorepeat==2) so consumers polling at a low rate can
-        # still catch sub-period taps that would be missed by ``get_key()``
-        # (which only reports the currently-held key).
+        # Edge-press queue so a sub-period tap isn't missed (get_key() only reports the held key).
         self._press_events: deque[str] = deque()
         self.device = self._open_keyboard_device()
 
@@ -148,10 +145,7 @@ class KeyboardListener:
         return required_codes.issubset(supported_key_codes)
 
     def _listen_loop(self) -> None:
-        # Cache path so we can reopen after a USB hiccup (errno=19 ENODEV).
-        # PCsensor foot pedal + lumos cable cohabit the same flaky USB
-        # subsystem; without reconnect a single bus reset kills eval until
-        # restart.
+        # Cache path so we can reopen after a USB hiccup (errno=19 ENODEV); pedal shares a flaky bus with Lumos.
         device_path = self.device.path
         while True:
             try:
@@ -164,9 +158,7 @@ class KeyboardListener:
                         continue
 
                     if event.value == 1:
-                        # Initial press only — autorepeat (value==2) does not
-                        # re-enqueue, so holding a key for a second doesn't
-                        # flood the queue.
+                        # Initial press only; autorepeat (value==2) does not re-enqueue.
                         with self.state_lock:
                             self.latest_data["key"] = key
                             self._press_events.append(key)
@@ -186,8 +178,7 @@ class KeyboardListener:
                     self.device.close()
                 except Exception:
                     pass
-                # Reopen — back off a beat for the kernel to re-enumerate,
-                # then retry forever (daemon thread dies with the process).
+                # Reopen forever; daemon thread dies with the process.
                 while True:
                     time.sleep(0.5)
                     try:

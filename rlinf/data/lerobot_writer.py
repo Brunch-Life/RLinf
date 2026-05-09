@@ -19,9 +19,7 @@ from typing import Any
 
 from rlinf.utils.logging import get_logger
 
-# HuggingFace ``datasets`` prints ``Map:`` and ``Creating parquet from Arrow
-# format:`` tqdm bars for every ``save_episode()`` call.  At 10 Hz collection
-# the terminal is unreadable — silence them once at module import.
+# Silence HuggingFace ``datasets``' Map / parquet tqdm bars (10 Hz collection makes the terminal unreadable).
 try:
     import datasets as _hf_datasets
 

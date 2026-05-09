@@ -43,13 +43,9 @@ JOINT_LIMITS_UPPER = np.array([2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 
 # Hard limits − 0.1 rad/s margin (same as polymetis).
 JOINT_VEL_LIMITS = np.array([2.075, 2.075, 2.075, 2.075, 2.51, 2.51, 2.51])
 
-# Raised above defaults so GELLO tracking error doesn't trip the reflex;
-# stays under libfranka's physical max [87,87,87,87,12,12,12] Nm.
 _TORQUE_THRESHOLD = [80.0, 80.0, 80.0, 80.0, 11.0, 11.0, 11.0]
 _FORCE_THRESHOLD = [100.0, 100.0, 100.0, 25.0, 25.0, 25.0]
 
-# Hand-tuned for dual-Franka GELLO joint teleop;
-# tune live via toolkits/realworld_check/tune_impedance.py.
 _JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
@@ -133,9 +129,6 @@ class FrankyController(Worker):
         # Cartesian counterpart — lazy on first move_tcp_pose. Mutually
         # exclusive with the joint tracker; _ensure_* stops the other.
         self._cart_tracker = None
-        # Previous *commanded* (post-rate-limit) target. Used to clamp
-        # frame-over-frame target deltas; cleared on tracker stop so the
-        # next start re-seeds against live TCP, not a stale target.
         self._prev_cart_target_xyz: Optional[np.ndarray] = None
         self._prev_cart_target_quat: Optional[np.ndarray] = None
 

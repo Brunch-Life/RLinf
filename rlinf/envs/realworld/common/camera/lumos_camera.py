@@ -51,10 +51,7 @@ class LumosCamera(BaseCamera):
             raise ValueError("LumosCamera does not support depth capture via V4L2.")
 
         self._out_w, self._out_h = camera_info.resolution
-        # XVisio vSLAM only streams YU12 at 640x480, 1280x720, 1280x1280.  Off-
-        # spec resolutions (e.g. 640x640) negotiate successfully but then hang
-        # the driver at select().  Pick the smallest native mode that covers
-        # the request and resize in software.
+        # XVisio vSLAM only streams YU12 at 640x480 / 1280x720 / 1280x1280; off-spec hangs at select(). Resize in software.
         self._native_w, self._native_h = self._pick_native_resolution(
             self._out_w, self._out_h
         )
@@ -83,10 +80,6 @@ class LumosCamera(BaseCamera):
             self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
             self._cap.set(cv2.CAP_PROP_EXPOSURE, exposure)
 
-    # XVisio vSLAM enumerates YU12 at 640x480 / 1280x720 / 1280x1280, but in
-    # practice only 1280x1280 streams reliably — the smaller modes negotiate
-    # without error and then starve the V4L2 pipeline (select() timeout).
-    # Always capture at the largest native mode and resize in software.
     _NATIVE_W = 1280
     _NATIVE_H = 1280
 

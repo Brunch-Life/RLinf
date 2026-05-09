@@ -40,11 +40,7 @@ from tqdm import tqdm
 _TOTAL_RE = re.compile(r"Total(?:\s+success)?:\s*(\d+)\s*/\s*(\d+)")
 _KB_RE = re.compile(r"\[keyboard\]\s+(\S+)")
 _SUCCESS_RE = re.compile(r"Success\s*\(reward=([-\d.]+)")
-# Matches the collector's own tqdm line, e.g. "Collecting Data Episodes:: 0%|...| 0/20 [00:00<?, ?it/s]".
-# Lets us initialize our bar from the very first render, before any episode
-# has ended — the target count is known the moment the collector starts.
-# Anchors on the ``|`` that closes the tqdm gauge so percentages like "18%"
-# aren't mistaken for the numerator.
+# Anchors on the closing ``|`` of the tqdm gauge so percentages aren't read as the numerator.
 _TQDM_RE = re.compile(r"Collecting Data Episodes:.*?\|\s*(\d+)\s*/\s*(\d+)")
 
 
@@ -195,10 +191,7 @@ def main() -> None:
         if args.debug:
             print(f"[monitor {tag}] {line}", file=sys.stderr, flush=True)
 
-    # Try to pre-create the bar so it shows up before the first episode ends.
-    # tqdm runs on stderr inside the Ray worker, so we also probe the sibling
-    # .err file (if the source is a worker .out) before falling back to the
-    # tee log.
+    # Pre-create the bar from the worker's stderr (.err sibling) before any episode ends.
     probe_candidates: list[Path] = []
     if source_path.suffix == ".out":
         probe_candidates.append(source_path.with_suffix(".err"))

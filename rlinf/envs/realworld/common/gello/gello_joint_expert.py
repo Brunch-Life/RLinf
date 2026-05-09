@@ -28,10 +28,7 @@ import time
 
 import numpy as np
 
-# Mid-point of each Franka Panda joint range — used as the seed for angle
-# unwrapping so that the first Dynamixel reading lands inside the valid range
-# even when it is offset by 2kπ after calibration.
-# Note: J4 centre ≈ −1.57, J6 centre ≈ 1.87 (J6 upper limit 3.75 > π).
+# Per-joint mid-points; seed for 2kπ unwrap so the first Dynamixel read lands in range.
 _FRANKA_RANGE_CENTER = np.array([0.0, 0.0, 0.0, -1.5708, 0.0, 1.8675, 0.0])
 
 

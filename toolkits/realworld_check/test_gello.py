@@ -309,8 +309,6 @@ def run_align_check(_args: argparse.Namespace) -> None:
             frame_lines = [summary, *rows]
             new_n = len(frame_lines)
 
-            # Move cursor up to overwrite the previous frame, then clear each
-            # remaining line.
             if n_lines_drawn:
                 sys.stdout.write(f"\033[{n_lines_drawn}F")
             for line in frame_lines:
@@ -330,9 +328,6 @@ ALIGN_SEQ_TOL = 0.10  # rad — joint considered aligned when |Δ| < this
 ALIGN_SEQ_STABLE_TICKS = 8  # consecutive frames inside tol → advance
 ALIGN_SEQ_REFRESH_HZ = 10.0
 
-# The pose the robot is moved to before alignment starts.  Joint values
-# are multiples of π/4 so the operator can eyeball the target.  Override
-# via the ALIGN_HOME env var (comma-separated list of 7 floats in radians).
 ALIGN_SEQ_HOME_JOINTS_DEFAULT = [
     math.pi / 4,  # J1: base rotated 45°
     0.0,  # J2: upper arm vertical
@@ -517,11 +512,6 @@ def run_align_sequential(_args: argparse.Namespace) -> None:
 
 
 PI = np.pi
-# Two reachable robot poses for sign + offset calibration.
-# POSE_A is the canonical Franka home (gripper down, elbow up).
-# POSE_B uses pure π/4 multiples on every joint so each per-joint delta
-# is exactly π/4 (≈ 0.785 rad), comfortably under reset_joint's 1.5 rad
-# max_joint_delta guard.
 CALIB_POSE_A = np.array([0.0, -PI / 4, 0.0, -3 * PI / 4, 0.0, PI / 2, PI / 4])
 CALIB_POSE_B = np.array([-PI / 4, 0.0, -PI / 4, -PI / 2, PI / 4, 3 * PI / 4, 0.0])
 CALIB_JOINT_IDS = (1, 2, 3, 4, 5, 6, 7)

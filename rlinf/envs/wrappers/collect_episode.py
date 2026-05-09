@@ -381,8 +381,6 @@ class CollectEpisode(gym.Wrapper):
                     env_info.pop("final_observation")
                     env_info.pop("final_info")
 
-            # Record-gate flags from KeyboardStartEndWrapper; absent flags
-            # preserve the original "always-on" recording behavior.
             record_reset = self._bool_from_env_info(env_info, "record_reset")
             pre_record = self._bool_from_env_info(env_info, "pre_record")
 
@@ -400,8 +398,6 @@ class CollectEpisode(gym.Wrapper):
             if pre_record:
                 continue
 
-            # Edge-triggered segment bump from KeyboardStartEndWrapper.
-            # Debounce lives in the wrapper; here we just consume the flag.
             if self._bool_from_env_info(env_info, "segment_advance"):
                 self._segment_ids[env_idx] += 1
 

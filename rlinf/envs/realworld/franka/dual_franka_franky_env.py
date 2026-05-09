@@ -57,8 +57,6 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
                 f"got {type(self.hardware_info)}."
             )
             hw = self.hardware_info.config
-            # YAML wins over hardware-info; getattr keeps forward-compat
-            # with older hw dataclasses missing newer per-slot fields.
             if self.config.left_robot_ip is None:
                 self.config.left_robot_ip = hw.left_robot_ip
             if self.config.right_robot_ip is None:
@@ -123,16 +121,11 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
         )
 
     def _interpolate_move_both(self, target_poses: np.ndarray, timeout: float = 1.5):
-        # Override parent's move_arm-based reset: FrankyController is joint-
-        # space only, so we reach home via _go_to_rest and just refresh
-        # cached state here.
         del target_poses, timeout
         self._left_state = self._left_ctrl.get_state().wait()[0]
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
     def _go_to_rest(self, joint_reset: bool = False):
-        # Open grippers before the home slew so any grasped object is
-        # released before the arms travel through home.
         del joint_reset
         try:
             self._left_ctrl.open_gripper()
@@ -275,8 +268,6 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
         del actions, states, ctrls, dt
 
     def _pace_between_action_and_state_read(self) -> bool:
-        # Joint+direct_stream overrides to False since the 1 kHz daemon
-        # owns the rate.
         return True
 
     # ------------------------------------------------------------------ step

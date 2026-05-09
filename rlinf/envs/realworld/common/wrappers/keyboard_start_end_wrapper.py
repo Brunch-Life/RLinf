@@ -46,8 +46,7 @@ class KeyboardStartEndWrapper(gym.Wrapper):
     def reset(self, *, seed=None, options=None):
         self._recording = False
         self._last_segment_ts = -math.inf
-        # Drain any presses queued during the reset gap so they can't leak
-        # into the next episode.
+        # Drain queued presses so they don't leak into the next episode.
         self.listener.pop_pressed_keys()
         return self.env.reset(seed=seed, options=options)
 

@@ -41,8 +41,6 @@ from rlinf.envs.realworld.common.keyboard.keyboard_listener import KeyboardListe
 class KeyboardEvalControlWrapper(gym.Wrapper):
     """Foot-pedal-gated start/stop for autonomous policy eval rollouts."""
 
-    # Sleep between idle polls — keeps the wrapper from pinning a CPU core
-    # while waiting for the operator to press ``a``.
     IDLE_POLL_S = 0.05
 
     def __init__(self, env: gym.Env):
@@ -53,8 +51,6 @@ class KeyboardEvalControlWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         self._running = False
-        # Drain queued presses from any human bouncing the pedal during the
-        # reset gap so they can't leak into the next episode.
         self.listener.pop_pressed_keys()
         ret = self.env.reset(seed=seed, options=options)
         self._last_obs = ret[0] if isinstance(ret, tuple) else ret
@@ -76,8 +72,6 @@ class KeyboardEvalControlWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         self._last_obs = obs
 
-        # Pedal owns episode boundaries — ignore env-side time-out and only
-        # honor the human's success / fail signal.
         terminated = False
         truncated = False
 
@@ -117,8 +111,6 @@ class KeyboardEvalControlWrapper(gym.Wrapper):
         so without this the robot would hang at its last commanded TCP target
         until the remaining chunk steps in the current epoch are spent.
         """
-        # Drain pedal noise from the bounce/release to keep the next idle
-        # poll clean.
         self.listener.pop_pressed_keys()
         ret = self.env.reset()
         new_obs = ret[0] if isinstance(ret, tuple) else ret
