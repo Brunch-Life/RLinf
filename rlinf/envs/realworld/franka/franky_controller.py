@@ -14,8 +14,10 @@
 
 """Franka controller backed by libfranka via the ``franky`` bindings.
 
-See ``requirements/embodied/franky_install.md`` for the PREEMPT_RT
-kernel and rtprio limits this expects.
+See the dual-Franka guide (``docs/source-en/rst_source/examples/
+embodied/dual_franka.rst``, sections "PREEMPT_RT kernel and rtprio
+limits" + "Per-boot RT tuning") for the PREEMPT_RT kernel and rtprio
+limits this expects.
 """
 
 import ctypes
@@ -155,8 +157,10 @@ class FrankyController(Worker):
             os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(_RT_PRIORITY))
         except PermissionError:
             self._logger.warning(
-                f"SCHED_FIFO denied; see requirements/embodied/franky_install.md "
-                f"to allow rtprio>={_RT_PRIORITY}"
+                f"SCHED_FIFO denied; see the dual-Franka guide "
+                f"(rst_source/examples/embodied/dual_franka.rst, "
+                f"§'PREEMPT_RT kernel and rtprio limits') to allow "
+                f"rtprio>={_RT_PRIORITY}"
             )
         except Exception as e:
             self._logger.warning(f"SCHED_FIFO failed: {e}")

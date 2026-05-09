@@ -179,23 +179,64 @@ SAC / PPO 训练相比，该 rig：
 以下步骤需在 ``node 0`` 和 ``node 1`` 上**分别执行一次**。两个节点是
 独立 checkout、独立 venv，只共享 LAN 网络。
 
-1. 实时内核与系统调优
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1. PREEMPT_RT 内核与 rtprio 限额
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-franky 后端要求预先完成 PREEMPT_RT 内核部署、放开 RT 限额，并在每次
-开机后执行相应调优。所有这些 —— 内核版本（``5.15.133-rt69`` ）、
-``/etc/security/limits.d`` 里的 rtprio/memlock 配置、
-``performance`` governor / ``sched_rt_runtime_us=-1`` /
-``ethtool -C`` 等 per-boot 调优、``cyclictest`` 验收标准、以及
-"为什么用 franky 而不是手写 Python 1 kHz 循环"的完整讨论 ——
-都在 ``requirements/embodied/franky_install.md`` 里。
-
-PREEMPT_RT 内核本身的编译流程见 Franka 官方文档
+franky 后端假设主机已经在 PREEMPT_RT 内核上运行。请按 Franka 官方文档
 `Setting up the real-time kernel
-<https://frankarobotics.github.io/docs/libfranka/docs/real_time_kernel.html>`_，
-完成后再继续执行 ``franky_install.md`` 中的步骤。
+<https://frankarobotics.github.io/docs/libfranka/docs/real_time_kernel.html>`_
+编译并启动；本项目验证过的版本为 ``5.15.133-rt69``\ 。验证：
 
-2. RLinf + franky
+.. code-block:: bash
+
+   uname -a | grep -o PREEMPT_RT   # 必须输出 PREEMPT_RT
+
+直连的千兆网卡指向 Franka 的 FCI 口（通常 ``172.16.0.2``\ ），中间
+不要有交换机；同时检查 ``/proc/cmdline`` 没有奇怪的 ``iommu`` /
+``apic`` 选项干扰 RT 线程。
+
+放置 ``/etc/security/limits.d/99-realtime.conf``\ ，让 PAM 给当前用户
+开放 ``rtprio 99`` 和 ``memlock unlimited``：
+
+.. code-block:: text
+
+   *  -  rtprio    99
+   *  -  memlock   unlimited
+
+退出登录再重新登录让 PAM 重新读取限额；然后 ``ulimit -r`` 应当返回
+``99`` 或 ``unlimited``\ ，``ulimit -l`` 应当返回 ``unlimited``\ 。
+否则 ``FrankyController.__init__`` 会打印 ``SCHED_FIFO denied`` /
+``mlockall failed`` 并 fallback 到默认调度——控制器仍能运行，但
+RT 抖动会回来。
+
+2. 每次开机的 RT 调优
+~~~~~~~~~~~~~~~~~~~~~~
+
+下面这些参数每次重启都会被重置。每次启动会话跑一次，或者写到
+systemd one-shot / ``rc.local`` 里持久化：
+
+.. code-block:: bash
+
+   # 1. CPU governor → performance（防止 P-state 切换引入 µs 级抖动）
+   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+       echo performance > "$g"
+   done'
+   cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor   # 期望: performance
+
+   # 2. 放开 SCHED_FIFO 95% throttle（默认 950000/1000000）
+   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+   cat /proc/sys/kernel/sched_rt_runtime_us                    # 期望: -1
+
+   # 3. 关掉 Franka 链路的 NIC interrupt coalescing
+   sudo ethtool -C eno1 rx-usecs 0 tx-usecs 0                  # 把 eno1 换成你的网卡
+
+用 ``ip -br a`` 确认实际网卡名。如果想让 ``rt_runtime`` 持久化：
+
+.. code-block:: bash
+
+   echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
+
+3. RLinf + franky
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
@@ -236,7 +277,7 @@ pinocchio，因此源码编译路径通常无需额外操作；不过 PyPI wheel
    以及 0.17.x、0.15.x 均已有实际使用记录）。安装后可
    检查 ``franky.__libfranka_version__``。
 
-3. GELLO（env worker 所在节点）
+4. GELLO（env worker 所在节点）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 两台 GELLO 的 USB-FTDI 都接到 env worker 所在节点（仓库默认 placement
@@ -251,7 +292,7 @@ pinocchio，因此源码编译路径通常无需额外操作；不过 PyPI wheel
 RLinf 同一个 venv —— ``DualGelloJointIntervention`` 在 env wrapper
 栈构建时会 in-process 直接 import 这两个包。
 
-4. 脚踏
+5. 脚踏
 ~~~~~~~
 
 PCsensor FootSwitch 通过厂家提供的 Windows 工具把 3 个踏板烧成
@@ -278,6 +319,54 @@ PCsensor FootSwitch 通过厂家提供的 Windows 工具把 3 个踏板烧成
 --------
 
 启动 Ray 之前，每个节点需先对各硬件执行单项测试。
+
+RT 健康检查
+~~~~~~~~~~~
+
+在接入机械臂之前，先确认前一节的开机调优都生效，且内核本身能稳定满足
+1 ms cycle deadline：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 50 28
+
+   * - 检查项
+     - 命令
+     - 期望
+   * - PREEMPT_RT 在用
+     - ``uname -a | grep PREEMPT_RT``
+     - 有输出
+   * - CPU governor
+     - ``cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor``
+     - ``performance``
+   * - RT bandwidth
+     - ``cat /proc/sys/kernel/sched_rt_runtime_us``
+     - ``-1``
+   * - rtprio 配额
+     - ``ulimit -r``
+     - ``99`` 或 ``unlimited``
+   * - memlock 配额
+     - ``ulimit -l``
+     - ``unlimited``
+   * - Cyclictest 抖动
+     - ``sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m``
+     - Max < 150 µs
+   * - 直连网络抖动
+     - ``sudo ping -c 1000 -i 0.001 172.16.0.2 | tail -3``
+     - avg < 0.5 ms, max < 2 ms
+
+任一指标不达标都会直接表现为可听嗡鸣、cycle 漏拍、或者控制器跑起来时
+``acceleration_discontinuity`` 错误。``FrankyController.__init__``
+正常启动时打印：
+
+.. code-block:: text
+
+   [INFO] mlockall: memory pages pinned
+   [INFO] SCHED_FIFO priority 80 applied (policy=1)
+   [INFO] Python thread affinity set to [0, 1, 4, ..., N]; CPUs 2-3 reserved for franky RT thread
+
+如果这几行没出现或被 warning 替代，说明 limits / capabilities 没生效，
+回去重检 §1。
 
 相机
 ~~~~
@@ -322,11 +411,24 @@ REPL 命令：
 * ``hold 30`` —— 静置 30 s，听有没有嗡鸣
 * ``stream 4 0.001 500`` —— 1 kHz 推 500 条 J4 += 0.001 rad
   （streaming preemption 压测）
+* ``impedance 300 300 300 300 150 80 30`` —— 降低关节阻抗后再压测一次
 * ``open`` / ``close`` —— gripper sanity
 
-合格标准（静置无嗡鸣、stream > 800 Hz、任意合法位姿均可稳定 home）
-列在 ``requirements/embodied/franky_install.md``。每节点对自己那
-台机械臂单独执行。**两台机械臂都通过验证之前不要启动 Ray。**
+合格标准（每一项都要满足）：
+
+1. **静置 60 s 无可听嗡鸣**\ ，``state.arm_joint_velocity`` rms <
+   ``1e-3 rad/s``\ 。
+2. ``stream 4 0.001 1000`` 实际频率 ≥ 800 Hz，且无
+   ``acceleration_discontinuity`` 或 reflex abort。
+3. ``home`` 从任意合法起始位姿都能干净复位（无
+   ``start_pose_invalid``\ ）。
+4. **5 分钟 GELLO 遥操**\ （\ ``realworld_collect_data_gello_joint.yaml``\ ）期间
+   ``state.control_command_success_rate`` > ``0.99``\ 。
+5. ``cyclictest -p 80 -t 4 -i 1000 -l 300000`` Max latency <
+   ``150 µs``\ 。
+
+每节点对自己那台机械臂单独执行。**两台机械臂都通过验证之前不要启动
+Ray。**
 
 
 GELLO 标定
@@ -1127,6 +1229,21 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
    链路第一次 ``FrankyController.__init__`` 时丢包，
    ``recover_from_errors`` 会无操作，后续 ``move_*`` 调用会失败。
    重启该机械臂后再次执行。
+
+**开机后 ``move_joints`` 一直报错**
+   机械臂处于 user-stop 状态——白色急停按钮没释放，所以
+   ``FrankyController.__init__`` 里的 ``robot.recover_from_errors()``
+   只是空操作，但后续每个 motion 调用都会被拒绝。请释放急停按钮，
+   在 Desk 网页（\ ``http://172.16.0.2/desk/``\ ）里点击
+   *Activate FCI*\ ，等关节解锁（白色 LED → 蓝色），再启动。
+
+**GELLO 守护线程和 env reset 互相 race**
+   ``teleop_direct_stream: true`` 模式下，1 kHz GELLO 守护线程会和
+   env 的 Cartesian ``_interpolate_move`` reset 并行跑。如果 reset
+   还没完成而操作员就在动 GELLO leader，franky 会先后收到两条
+   ``move_*`` 然后 preempt 到后到的那一条，机械臂会跟着已经过期的
+   参考点跑。reset 期间把 GELLO leader 放稳（最好搁在支架上），等
+   ``KeyboardStartEndWrapper`` 报告 reset 结束再继续。
 
 **脚踏报 "Permission denied"**
    ``RLINF_KEYBOARD_DEVICE`` 指向 ``/dev/input/eventXX``，但

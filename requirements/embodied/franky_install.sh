@@ -103,6 +103,7 @@ cat <<'EOF'
    sudo ping -c 1000 -i 0.001 172.16.0.2 | tail -3
        # Franka direct link: avg < 0.5 ms, max < 2 ms
 
- See requirements/embodied/franky_install.md for the full setup + troubleshooting guide.
+ See the dual-Franka guide for the full setup + troubleshooting:
+ docs/source-en/rst_source/examples/embodied/dual_franka.rst
 ================================================================
 EOF
