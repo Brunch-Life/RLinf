@@ -361,16 +361,24 @@ class CollectEpisode(gym.Wrapper):
             "segment_ids": [],
         }
 
+    def _seed_reset_frame(self, env_idx: int, env_obs: Any) -> None:
+        """Seed a fresh buffer with the post-reset state-aligned entry.
+
+        State-aligned fields (observations / rewards / terminated / truncated /
+        infos) get a leading reset entry; action-aligned fields (actions,
+        segment_ids) stay empty and fill on the first regular step.
+        """
+        buf = self._buffers[env_idx]
+        buf["observations"].append(env_obs)
+        buf["rewards"].append(0.0)
+        buf["terminated"].append(False)
+        buf["truncated"].append(False)
+        buf["infos"].append({})
+
     def _record_reset_obs(self, obs) -> None:
         """Record the initial observation from reset into every env's buffer."""
         for env_idx in range(self.num_envs):
-            self._buffers[env_idx]["observations"].append(
-                self._slice_copy(obs, env_idx)
-            )
-            self._buffers[env_idx]["rewards"].append(0.0)
-            self._buffers[env_idx]["terminated"].append(False)
-            self._buffers[env_idx]["truncated"].append(False)
-            self._buffers[env_idx]["infos"].append({})
+            self._seed_reset_frame(env_idx, self._slice_copy(obs, env_idx))
 
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
@@ -413,11 +421,7 @@ class CollectEpisode(gym.Wrapper):
                 self._buffers[env_idx] = self._new_buffer()
                 self._episode_success[env_idx] = False
                 self._segment_ids[env_idx] = 0
-                self._buffers[env_idx]["observations"].append(env_obs)
-                self._buffers[env_idx]["rewards"].append(0.0)
-                self._buffers[env_idx]["terminated"].append(False)
-                self._buffers[env_idx]["truncated"].append(False)
-                self._buffers[env_idx]["infos"].append({})
+                self._seed_reset_frame(env_idx, env_obs)
                 continue
 
             if pre_record:
