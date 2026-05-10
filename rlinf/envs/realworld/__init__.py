@@ -18,7 +18,7 @@ from .franka import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 from .franka import tasks as franka_tasks
 from .franka.dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
 from .franka.dual_franka_franky_env import DualFrankaFrankyEnv
-from .franka.dual_franka_joint_env import (
+from .franka.dual_franka_franky_joint_env import (
     DualFrankaJointEnv,
     DualFrankaJointRobotConfig,
 )

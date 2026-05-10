@@ -15,7 +15,10 @@
 
 from .dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
 from .dual_franka_franky_env import DualFrankaFrankyEnv
-from .dual_franka_joint_env import DualFrankaJointEnv, DualFrankaJointRobotConfig
+from .dual_franka_franky_joint_env import (
+    DualFrankaJointEnv,
+    DualFrankaJointRobotConfig,
+)
 from .end_effectors.base import EndEffectorType
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 

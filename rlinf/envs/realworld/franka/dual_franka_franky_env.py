@@ -247,10 +247,10 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
         actions = action.reshape(NUM_ARMS, self.PER_ARM_ACTION_DIM)
 
         is_gripper_effective = [True, True]
-        states = [self._left_state, self._right_state]
-        ctrls = [self._left_ctrl, self._right_ctrl]
 
         if not self.config.is_dummy:
+            states = [self._left_state, self._right_state]
+            ctrls = [self._left_ctrl, self._right_ctrl]
             dt = 1.0 / self.config.step_frequency
 
             # Grippers first so they don't contend with a fresh motion command.

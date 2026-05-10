@@ -25,7 +25,7 @@ from rlinf.envs.realworld.common.wrappers import (
     apply_single_arm_wrappers,
 )
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv as DualFrankaEnv
-from rlinf.envs.realworld.franka.dual_franka_joint_env import (
+from rlinf.envs.realworld.franka.dual_franka_franky_joint_env import (
     DualFrankaJointEnv as DualFrankaJointEnv,
 )
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv as FrankaEnv
