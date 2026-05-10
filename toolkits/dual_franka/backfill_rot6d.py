@@ -63,10 +63,32 @@ R_GRIP_ACT_IDX = 15
 # ---------------------------------------------------------------------------
 
 
+def _assert_unit_quats(state_68: np.ndarray, slc: slice, name: str) -> None:
+    """Fail loud if a slice that's *meant* to be xyzw quats isn't unit-norm.
+    Cheap guard against pointing --src at a dataset whose state layout
+    differs from the joint-env _wrap_obs alphabetical concat — without
+    this, R.from_quat happily normalizes garbage into a plausible-looking
+    but wrong rot6d.
+    """
+    norms = np.linalg.norm(state_68[:, slc], axis=-1)
+    if not np.allclose(norms, 1.0, atol=1e-3):
+        bad = int(np.argmax(np.abs(norms - 1.0)))
+        raise ValueError(
+            f"{name} slice {slc} does not look like xyzw quaternions: "
+            f"norm range [{norms.min():.4f}, {norms.max():.4f}], "
+            f"worst row {bad} norm={norms[bad]:.4f}. The source dataset's "
+            f"state layout probably differs from the joint-env _wrap_obs "
+            f"alphabetical concat that this script assumes."
+        )
+
+
 def build_rot6d_state(state_68: np.ndarray) -> np.ndarray:
     """Overwrite ``state[:, 0:20]`` with the rot6d layout. Keeps dim 68."""
     if state_68.ndim != 2 or state_68.shape[1] != STATE_DIM:
         raise ValueError(f"expected state shape (T, {STATE_DIM}), got {state_68.shape}")
+
+    _assert_unit_quats(state_68, L_QUAT_SLICE, "left")
+    _assert_unit_quats(state_68, R_QUAT_SLICE, "right")
 
     grip = state_68[:, GRIP_SLICE]
     l_xyz = state_68[:, L_XYZ_SLICE]
@@ -88,6 +110,9 @@ def build_rot6d_actions(state_68: np.ndarray, actions_16: np.ndarray) -> np.ndar
         raise ValueError(
             f"expected actions shape (T, {ACTION_DIM_IN}), got {actions_16.shape}"
         )
+
+    _assert_unit_quats(state_68, L_QUAT_SLICE, "left")
+    _assert_unit_quats(state_68, R_QUAT_SLICE, "right")
 
     # Shift state forward by one frame; the final frame repeats itself so the
     # last action means "hold current pose" (task already terminated via `c`).
