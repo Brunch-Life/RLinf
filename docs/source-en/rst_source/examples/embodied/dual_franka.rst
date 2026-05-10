@@ -79,8 +79,7 @@ Hardware topology
      - Ray head; env worker; left ``FrankyController``;
        actor / rollout (during eval); all camera + GELLO capture
      - 1× GPU (e.g. RTX 4090) — only used at SFT and deployment;
-       left Franka FR3 on a directly-cabled NIC at FCI IP
-       ``172.16.0.2``;
+       left Franka FR3 on a directly-cabled NIC reaching its FCI port;
        left Robotiq 2F-85 (USB-RS485 Modbus);
        **both left and right GELLO** Dynamixel chains (USB-FTDI);
        **all three cameras** — base RealSense D435i (third-person)
@@ -89,20 +88,20 @@ Hardware topology
    * - **node 1** (worker)
      - Ray worker; right ``FrankyController`` only
      - Optional GPU (not used for inference);
-       right Franka FR3 on its own directly-cabled NIC at FCI IP
-       ``172.16.0.2``;
+       right Franka FR3 on its own directly-cabled NIC reaching its
+       FCI port;
        right Robotiq 2F-85
 
 .. warning::
 
-   Both Franka arms answer at ``172.16.0.2``. This is **not** an IP
-   collision — each arm sits in its own physically separate
-   ``172.16.0.0/24`` subnet attached to a dedicated NIC on its node.
-   ``ping 172.16.0.2`` from node 0 only reaches the left arm; the
-   same command on node 1 only reaches the right arm. Do **not** try
-   to "fix" this by renumbering the FCI — Franka Desk only exposes
-   the FCI on the standard subnet, and the per-node NIC isolation is
-   what keeps the two control loops independent.
+   Both Franka arms answer at the standard FCI IP. This is **not** an
+   IP collision — each arm sits in its own physically separate
+   FCI subnet attached to a dedicated NIC on its node. ``ping``-ing
+   the FCI from node 0 only reaches the left arm; the same command
+   on node 1 only reaches the right arm. Do **not** try to "fix"
+   this by renumbering the FCI — Franka Desk only exposes the FCI
+   on the standard subnet, and the per-node NIC isolation is what
+   keeps the two control loops independent.
 
 Camera roles (the wrapper stack uses
 ``main_image_key: left_wrist_0_rgb`` so π₀.₅'s ``observation/image``

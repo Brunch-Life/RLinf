@@ -70,7 +70,7 @@ SAC / PPO 训练相比，该 rig：
      - Ray head；env worker；左 ``FrankyController``；
        部署阶段的 actor / rollout；所有相机和 GELLO 采集
      - 1× GPU（如 RTX 4090，仅 SFT 与部署阶段使用）；
-       左 Franka FR3 直连一张 NIC，FCI IP ``172.16.0.2``；
+       左 Franka FR3 直连一张 NIC，对接 FCI 端口；
        左 Robotiq 2F-85（USB-RS485 Modbus）；
        **左右两台 GELLO** Dynamixel 链（USB-FTDI）；
        **三台相机全部在此**\ —— base RealSense D435i（第三人称）+
@@ -79,17 +79,17 @@ SAC / PPO 训练相比，该 rig：
    * - **node 1**\ （worker）
      - Ray worker；只跑右 ``FrankyController``
      - 可选 GPU（推理不需要）；
-       右 Franka FR3 直连自己的 NIC，FCI IP ``172.16.0.2``；
+       右 Franka FR3 直连自己的 NIC，对接 FCI 端口；
        右 Robotiq 2F-85
 
 .. warning::
 
-   两台 Franka 的 FCI IP 都是 ``172.16.0.2``，**这不是 IP 冲突**
-   —— 两个 ``172.16.0.0/24`` 子网在物理上完全独立，每台机械臂接一
-   根专线、各自一张 NIC。从 node 0 ``ping 172.16.0.2`` 只到左臂；
-   从 node 1 ``ping 172.16.0.2`` 只到右臂。**不要**\ 为了避免“表面上
-   冲突”而修改 FCI IP —— Franka Desk 只在标准子网上暴露 FCI；让
-   两条 NIC 物理隔离才是保证两条控制环互不干扰的关键。
+   两台 Franka 的 FCI 走的是同一个标准 FCI IP，**这不是 IP 冲突**
+   —— 两个 FCI 子网在物理上完全独立，每台机械臂接一根专线、各自
+   一张 NIC。从 node 0 ``ping`` FCI 只到左臂；从 node 1 ``ping``
+   FCI 只到右臂。**不要**\ 为了避免“表面上冲突”而修改 FCI IP ——
+   Franka Desk 只在标准子网上暴露 FCI；让两条 NIC 物理隔离才是
+   保证两条控制环互不干扰的关键。
 
 相机角色（wrapper 栈用 ``main_image_key: left_wrist_0_rgb``，
 所以 π₀.₅ 的 ``observation/image`` 槽位是**左腕**相机；
