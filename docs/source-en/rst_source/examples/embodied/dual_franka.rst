@@ -433,7 +433,7 @@ unit needs its own config. Two scripts cover the workflow:
 
    .. code-block:: bash
 
-      bash examples/embodiment/gello_calibrate.sh
+      python toolkits/realworld_check/test_gello.py calibrate
 
    The script moves the robot to two known poses (``POSE_A`` =
    Franka home, ``POSE_B`` = π/4 multiples), prompts you to physically
@@ -462,7 +462,7 @@ unit needs its own config. Two scripts cover the workflow:
 
    .. code-block:: bash
 
-      bash examples/embodiment/gello_align.sh
+      python toolkits/realworld_check/test_gello.py align-sequential
 
    Drives the robot to a fixed alignment HOME pose (J4 = −π/2,
    J6 = +π/2 etc.), then walks you through aligning J1 → J7 one at
@@ -735,8 +735,8 @@ tee log when the worker file is on a different node.
 Per-episode workflow
 ~~~~~~~~~~~~~~~~~~~~
 
-Once both arms are tracking GELLO (``gello_align.sh`` reports
-"ALL JOINTS ALIGNED"):
+Once both arms are tracking GELLO (``test_gello.py
+align-sequential`` reports "ALL JOINTS ALIGNED"):
 
 1. **(pre)** The arms align to the GELLO operator pose at every
    ``reset`` (``KeyboardStartEndWrapper`` +

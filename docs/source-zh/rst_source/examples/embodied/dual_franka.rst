@@ -405,7 +405,7 @@ GELLO 把 Dynamixel 电机位置映射到 Franka 关节角靠
 
    .. code-block:: bash
 
-      bash examples/embodiment/gello_calibrate.sh
+      python toolkits/realworld_check/test_gello.py calibrate
 
    脚本会将机器人安全地依次移动到两个已知姿态（``POSE_A`` =
    Franka 原点，``POSE_B`` = π/4 倍数），让操作员将 GELLO 各
@@ -432,7 +432,7 @@ GELLO 把 Dynamixel 电机位置映射到 Franka 关节角靠
 
    .. code-block:: bash
 
-      bash examples/embodiment/gello_align.sh
+      python toolkits/realworld_check/test_gello.py align-sequential
 
    脚本会将机器人移动到一个固定的对齐 HOME 位姿（J4 = −π/2、
    J6 = +π/2 等），然后逐关节 J1 → J7 引导操作员对齐，每个关节带
@@ -682,7 +682,7 @@ reward。默认启动会 replay 已有日志，所以监视器开晚也能对齐
 每个 episode 的工作流
 ~~~~~~~~~~~~~~~~~~~~~~
 
-确认 ``gello_align.sh`` 报告 ``ALL JOINTS ALIGNED`` 之后：
+确认 ``test_gello.py align-sequential`` 报告 ``ALL JOINTS ALIGNED`` 之后：
 
 1. **(pre)** 每次 reset 时，机械臂会跟着 GELLO 当前位姿对齐
    （``KeyboardStartEndWrapper`` + ``DualGelloJointIntervention``
