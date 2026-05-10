@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""6D-rotation (Zhou et al. 2019) + SE(3) helpers, shared by all
-dual-Franka geometry. Quaternions are xyzw; rot6d is the first two
-columns of R flattened (decoding is Gram-Schmidt on r1, r2); SE(3)
-body-frame delta is ``T_delta = inv(T_state) @ T_abs``.
+"""6D-rotation + SE(3) helpers, shared by all dual-Franka geometry.
+Quaternions are xyzw; rot6d is the first two columns of R flattened
+(decoding is Gram-Schmidt on r1, r2); SE(3) body-frame delta is
+``T_delta = inv(T_state) @ T_abs``.
 """
 
 from __future__ import annotations

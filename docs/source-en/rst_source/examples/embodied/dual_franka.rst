@@ -49,7 +49,7 @@ single-arm SAC / PPO loops in :doc:`franka`, this rig:
   All low-level control runs in C++ at 1 kHz inside ``franky``;
   Python only updates references. This avoids the GIL-induced jitter
   that pure-Python control loops on top of ROS suffer from.
-* **Encodes orientation as Zhou et al. 2019 6D rotation, not Euler.**
+* **Encodes orientation as 6D rotation, not Euler.**
   Euler-based state/action pollutes π₀ / π₀.₅ with ±π wrap
   discontinuities (one frame's roll = +3.14 rad → next frame's roll
   = −3.14 rad ⇒ a "−2π" pseudo-delta the policy memorises). Switching

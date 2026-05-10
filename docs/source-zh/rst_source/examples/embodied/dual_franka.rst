@@ -41,7 +41,7 @@ SAC / PPO 训练相比，该 rig：
   所有底层控制均在 ``franky`` 内部的 C++ 1 kHz 循环中运行，Python
   仅更新参考点。该设计规避了"纯 Python 控制循环 + ROS"路径下的
   GIL 抖动问题。
-* **方向用 Zhou 2019 的 6D 表示，不再用 Euler。** Euler 状态/动作
+* **方向用 6D 表示，不再用 Euler。** Euler 状态/动作
   会向 π₀.₅ 引入 ±π wrap 不连续点（上一帧 roll = +3.14 rad，
   下一帧 roll = −3.14 rad ⇒ 一个 "−2π" 的伪 delta，被策略当作
   规律学习）。改用 rot6d + SE(3) body-frame delta 后可消除此类
