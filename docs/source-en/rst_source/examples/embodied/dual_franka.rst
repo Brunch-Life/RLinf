@@ -685,7 +685,7 @@ Key fields you will edit before each session:
 Running
 ~~~~~~~
 
-Three terminals once Ray is up.
+Two terminals once Ray is up.
 
 **Terminal 1** — launcher (on node 0):
 

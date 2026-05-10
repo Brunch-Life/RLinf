@@ -637,7 +637,7 @@ actor（再转发给 franky 的 ``JointImpedanceTracker``）。
 启动
 ~~~~
 
-Ray 启动后打开 3 个终端。
+Ray 启动后打开 2 个终端。
 
 **终端 1** —— launcher（在 node 0）：
 
