@@ -222,47 +222,50 @@ class DualFrankaEnv(gym.Env):
     def _all_camera_serials(self) -> list[str]:
         return [serial for _, serial, _ in self._all_camera_specs()]
 
-    def _setup_hardware(self):
-        from .franka_controller import FrankaController
+    # hw config fields → (default if hw lacks the attr). Subclasses may
+    # override _DEFAULT_GRIPPER_TYPE; everything else is shared.
+    _HW_FALLBACK_FIELDS: tuple[tuple[str, object], ...] = (
+        ("left_robot_ip", None),
+        ("right_robot_ip", None),
+        ("left_camera_serials", None),
+        ("right_camera_serials", None),
+        ("base_camera_serials", None),
+        ("camera_type", "realsense"),
+        ("base_camera_type", None),
+        ("left_camera_type", None),
+        ("right_camera_type", None),
+        ("left_gripper_connection", None),
+        ("right_gripper_connection", None),
+    )
+    _DEFAULT_GRIPPER_TYPE: str = "franka"
 
-        assert self.env_idx >= 0, "env_idx must be set for DualFrankaEnv."
+    def _resolve_hw_overrides(self) -> None:
+        """Pull defaults from ``self.hardware_info`` into ``self.config``.
 
-        if self.hardware_info is not None:
-            assert isinstance(self.hardware_info, DualFrankaHWInfo), (
-                f"hardware_info must be DualFrankaHWInfo, got {type(self.hardware_info)}."
-            )
-            hw = self.hardware_info.config
-            if self.config.left_robot_ip is None:
-                self.config.left_robot_ip = hw.left_robot_ip
-            if self.config.right_robot_ip is None:
-                self.config.right_robot_ip = hw.right_robot_ip
-            if self.config.left_camera_serials is None:
-                self.config.left_camera_serials = hw.left_camera_serials
-            if self.config.right_camera_serials is None:
-                self.config.right_camera_serials = hw.right_camera_serials
-            if self.config.base_camera_serials is None:
-                self.config.base_camera_serials = getattr(
-                    hw, "base_camera_serials", None
-                )
-            if self.config.camera_type is None:
-                self.config.camera_type = getattr(hw, "camera_type", "realsense")
-            if self.config.left_gripper_type is None:
-                self.config.left_gripper_type = getattr(
-                    hw, "left_gripper_type", "franka"
-                )
-            if self.config.right_gripper_type is None:
-                self.config.right_gripper_type = getattr(
-                    hw, "right_gripper_type", "franka"
-                )
-            if self.config.left_gripper_connection is None:
-                self.config.left_gripper_connection = getattr(
-                    hw, "left_gripper_connection", None
-                )
-            if self.config.right_gripper_connection is None:
-                self.config.right_gripper_connection = getattr(
-                    hw, "right_gripper_connection", None
+        Only fills config fields that the YAML left as ``None`` — explicit
+        overrides win.  Shared by every dual-Franka subclass so that
+        adding a new hw field requires only one edit.
+        """
+        if self.hardware_info is None:
+            return
+        assert isinstance(self.hardware_info, DualFrankaHWInfo), (
+            f"hardware_info must be DualFrankaHWInfo, "
+            f"got {type(self.hardware_info)}."
+        )
+        hw = self.hardware_info.config
+        for field, default in self._HW_FALLBACK_FIELDS:
+            if getattr(self.config, field, None) is None:
+                setattr(self.config, field, getattr(hw, field, default))
+        for side in ("left_gripper_type", "right_gripper_type"):
+            if getattr(self.config, side, None) is None:
+                setattr(
+                    self.config,
+                    side,
+                    getattr(hw, side, self._DEFAULT_GRIPPER_TYPE),
                 )
 
+    def _resolve_controller_node_ranks(self) -> tuple[int, int]:
+        """Return per-arm node ranks, honoring the hw config overrides."""
         left_node = self.node_rank
         right_node = self.node_rank
         if self.hardware_info is not None:
@@ -271,13 +274,22 @@ class DualFrankaEnv(gym.Env):
                 left_node = hw.left_controller_node_rank
             if hw.right_controller_node_rank is not None:
                 right_node = hw.right_controller_node_rank
+        return left_node, right_node
+
+    def _setup_hardware(self):
+        from .franka_controller import FrankaController
+
+        assert self.env_idx >= 0, "env_idx must be set for DualFrankaEnv."
+
+        self._resolve_hw_overrides()
+        left_node, right_node = self._resolve_controller_node_ranks()
 
         self._left_ctrl = FrankaController.launch_controller(
             robot_ip=self.config.left_robot_ip,
             env_idx=self.env_idx,
             node_rank=left_node,
             worker_rank=self.env_worker_rank,
-            gripper_type=self.config.left_gripper_type or "franka",
+            gripper_type=self.config.left_gripper_type or self._DEFAULT_GRIPPER_TYPE,
             gripper_connection=self.config.left_gripper_connection,
         )
         self._right_ctrl = FrankaController.launch_controller(
@@ -285,7 +297,7 @@ class DualFrankaEnv(gym.Env):
             env_idx=self.env_idx + _RIGHT_ARM_ENV_IDX_OFFSET,
             node_rank=right_node,
             worker_rank=self.env_worker_rank,
-            gripper_type=self.config.right_gripper_type or "franka",
+            gripper_type=self.config.right_gripper_type or self._DEFAULT_GRIPPER_TYPE,
             gripper_connection=self.config.right_gripper_connection,
         )
 
@@ -551,15 +563,14 @@ class DualFrankaEnv(gym.Env):
         return position
 
     def _gripper_action(self, ctrl, state: FrankaRobotState, position: float) -> bool:
-        # Fire-and-forget to match collection cadence: collection streams
-        # gripper RPCs at 10 Hz without .wait(); a .wait()+sleep here
-        # stretches eval's step to ~700 ms and rings out j7.
         threshold = self.config.binary_gripper_threshold
         if position <= -threshold and state.gripper_open:
-            ctrl.close_gripper()
+            ctrl.close_gripper().wait()
+            time.sleep(0.6)
             return True
         elif position >= threshold and not state.gripper_open:
-            ctrl.open_gripper()
+            ctrl.open_gripper().wait()
+            time.sleep(0.6)
             return True
         return False
 

@@ -56,7 +56,6 @@ def _envf(name: str, default: float) -> float:
     return float(raw)
 
 
-# Cartesian impedance — all overridable via env vars for live sweep.
 _CART_TRANS_STIFFNESS = _envf("RLINF_CART_K_T", 1000.0)  # N/m
 _CART_ROT_STIFFNESS = _envf("RLINF_CART_K_R", 50.0)  # Nm/rad
 _CART_MAX_DELTA_TAU = _envf("RLINF_CART_MAX_DTAU", 0.3)  # Nm / 1 kHz cycle
@@ -64,12 +63,11 @@ _CART_TRANS_ERROR_CLIP_M = _envf("RLINF_CART_ERR_CLIP_M", 0.05)  # m
 _CART_ROT_ERROR_CLIP_RAD = _envf("RLINF_CART_ERR_CLIP_RAD", 0.3)  # rad
 _CART_GAINS_TC = _envf("RLINF_CART_GAINS_TC", 0.1)  # s
 
-# Per-call target rate limit: clamps ||target[t]-target[t-1]|| so a
-# single-frame dataset jump becomes a slew, not a step input.
+# Per-call slew limit so a single-frame dataset jump becomes a ramp.
 _CART_MAX_STEP_M = _envf("RLINF_CART_MAX_STEP_M", 0.03)  # m / call
 _CART_MAX_STEP_RAD = _envf("RLINF_CART_MAX_STEP_RAD", 0.15)  # rad / call
 
-_DYNAMICS_FACTOR = 0.2  # planned-motion scaling; not applied in torque mode.
+_DYNAMICS_FACTOR = 0.2
 
 _DQ_MIN_DT_S = 1e-3
 _RT_PRIORITY = 80
@@ -116,24 +114,54 @@ class FrankyController(Worker):
         self._robot.relative_dynamics_factor = _DYNAMICS_FACTOR
         self._robot.set_collision_behavior(_TORQUE_THRESHOLD, _FORCE_THRESHOLD)
 
-        self._gripper = create_gripper(
-            gripper_type=gripper_type, port=gripper_connection
+        self._gripper = self._build_gripper(
+            gripper_type=gripper_type,
+            gripper_connection=gripper_connection,
+            robot_ip=robot_ip,
         )
 
-        # Lazy-started on first move_joints; nulled by _stop_tracking_motion.
+        # Joint and Cartesian trackers are mutually exclusive; each
+        # _ensure_* stops the other before starting.
         self._tracker = None
         self._prev_target_q: Optional[np.ndarray] = None
         self._prev_target_ts: Optional[float] = None
 
-        # Cartesian counterpart — lazy on first move_tcp_pose. Mutually
-        # exclusive with the joint tracker; _ensure_* stops the other.
         self._cart_tracker = None
         self._prev_cart_target_xyz: Optional[np.ndarray] = None
         self._prev_cart_target_quat: Optional[np.ndarray] = None
 
         self._logger.info(f"FrankyController connected to robot at {robot_ip}")
 
-    # ------------------------------------------------------------------ setup
+    def _build_gripper(
+        self,
+        gripper_type: str,
+        gripper_connection: Optional[str],
+        robot_ip: str,
+    ):
+        """Pick the right gripper backend for the franky/libfranka stack.
+
+        FrankyController never speaks ROS, so the bare ``"franka"`` literal
+        from existing hw configs is treated as the libfranka Franka Hand
+        rather than failing on a missing ROSController.
+        """
+        gt = (gripper_type or "robotiq").lower()
+        franky_hand_aliases = ("franka", "franka_hand", "franky_hand", "franky")
+        if gt in franky_hand_aliases:
+            if gt == "franka":
+                self._logger.info(
+                    "gripper_type='franka' on the franky path resolves to the "
+                    "libfranka Franka Hand (no ROS). Set gripper_type='franka_hand' "
+                    "to silence this notice."
+                )
+            return create_gripper(gripper_type="franka_hand", robot_ip=robot_ip)
+        if gt == "robotiq":
+            return create_gripper(
+                gripper_type="robotiq", port=gripper_connection
+            )
+        raise ValueError(
+            f"FrankyController: unsupported gripper_type={gripper_type!r}. "
+            f"Use 'franka_hand' (libfranka) or 'robotiq'."
+        )
 
     def _apply_rt_hardening(self) -> None:
         """Lock memory, raise priority, pin affinity. All best-effort."""
@@ -169,8 +197,6 @@ class FrankyController(Worker):
         except Exception:
             pass
 
-    # ------------------------------------------------------------------ state
-
     def is_robot_up(self) -> bool:
         try:
             _ = self._robot.state
@@ -179,7 +205,6 @@ class FrankyController(Worker):
             return False
 
     def get_state(self) -> FrankaRobotState:
-        """Snapshot full robot + gripper state. Off the RT hot path."""
         raw = self._robot.state
         affine = raw.O_T_EE
         # franky.Affine.quaternion is xyzw (Eigen coeffs) — same as scipy.
@@ -212,12 +237,9 @@ class FrankyController(Worker):
     def clear_errors(self) -> None:
         self._robot.recover_from_errors()
 
-    # -------------------------------------------------------- joint impedance
-
     def _ensure_tracking_motion(self) -> None:
         if self._tracker is not None:
             return
-        # Mutually exclusive with the Cartesian tracker.
         self._stop_cart_tracking_motion()
         self._safe_join()
         self._robot.recover_from_errors()
@@ -232,8 +254,7 @@ class FrankyController(Worker):
     def _stop_tracking_motion(self) -> None:
         if self._tracker is None:
             return
-        # tracker.stop re-raises async reflex (e.g. power_limit_violation);
-        # swallow + recover so one-off trips don't abort the run.
+        # tracker.stop re-raises latched async reflexes (e.g. power_limit_violation).
         try:
             self._tracker.stop()
         except Exception as e:
@@ -245,8 +266,7 @@ class FrankyController(Worker):
         self._robot.recover_from_errors()
 
     def move_joints(self, joint_positions: np.ndarray) -> None:
-        """Update tracker reference. dq feedforward is essential at 10 Hz —
-        without it PD lags / overshoots."""
+        # dq feedforward is essential at 10 Hz — without it PD lags / overshoots.
         assert len(joint_positions) == 7
         q = np.clip(
             np.asarray(joint_positions, dtype=np.float64),
@@ -265,8 +285,6 @@ class FrankyController(Worker):
         self._tracker.set_target(q, dq=dq_ff)
         self._prev_target_q = q
         self._prev_target_ts = now
-
-    # ---------------------------------------------------- cartesian impedance
 
     def _ensure_cart_tracking_motion(self) -> None:
         if self._cart_tracker is not None:
@@ -305,11 +323,8 @@ class FrankyController(Worker):
         self._robot.recover_from_errors()
 
     def move_tcp_pose(self, pose: np.ndarray) -> None:
-        """Update Cartesian tracker reference. ``pose`` is (7,) [xyz, quat_xyzw].
-
-        No twist feedforward: finite-diff'ing 10 Hz targets produced noise
-        that fed j7 oscillation. Pure PD + per-call rate limit is stable.
-        """
+        # No twist feedforward: finite-diff'ing 10 Hz targets fed j7 oscillation.
+        # Pose is (7,) [xyz, quat_xyzw].
         pose = np.asarray(pose, dtype=np.float64)
         assert pose.shape == (7,), (
             f"pose must be (7,) [xyz, quat_xyzw]; got {pose.shape}"
@@ -319,8 +334,6 @@ class FrankyController(Worker):
 
         self._ensure_cart_tracking_motion()
 
-        # Seed prev from live TCP so the first delta is measured against
-        # the arm's actual pose, not nothing.
         if self._prev_cart_target_xyz is None:
             live = self._robot.state.O_T_EE
             self._prev_cart_target_xyz = np.asarray(live.translation, dtype=np.float64)
@@ -364,10 +377,7 @@ class FrankyController(Worker):
 
         self._cart_tracker.set_target(self._franky.Affine(T))
 
-    # --------------------------------------------------------- planned motion
-
     def reset_joint(self, reset_pos: list[float]) -> None:
-        """Blocking ``JointMotion`` to absolute target."""
         assert len(reset_pos) == 7
         self._stop_tracking_motion()
         self._stop_cart_tracking_motion()
@@ -378,15 +388,11 @@ class FrankyController(Worker):
         )
         self._robot.move(motion)
 
-    # ------------------------------------------------------------- gripper
-
     def open_gripper(self) -> None:
         self._gripper.open(speed=1.0)
 
     def close_gripper(self) -> None:
         self._gripper.close(speed=1.0)
-
-    # ------------------------------------------------------------- shutdown
 
     def cleanup(self) -> None:
         self._stop_tracking_motion()

@@ -51,10 +51,8 @@ class LumosCamera(BaseCamera):
             raise ValueError("LumosCamera does not support depth capture via V4L2.")
 
         self._out_w, self._out_h = camera_info.resolution
-        # XVisio vSLAM only streams YU12 at 640x480 / 1280x720 / 1280x1280; off-spec hangs at select(). Resize in software.
-        self._native_w, self._native_h = self._pick_native_resolution(
-            self._out_w, self._out_h
-        )
+        # XVisio vSLAM only streams YU12 at 1280x1280; off-spec hangs at select(). Resize in software.
+        self._native_w, self._native_h = self._NATIVE_W, self._NATIVE_H
         dev_path: Union[str, int] = self._resolve_device_path(camera_info.serial_number)
 
         self._cap = cv2.VideoCapture(dev_path, cv2.CAP_V4L2)
@@ -82,11 +80,6 @@ class LumosCamera(BaseCamera):
 
     _NATIVE_W = 1280
     _NATIVE_H = 1280
-
-    @classmethod
-    def _pick_native_resolution(cls, w: int, h: int) -> tuple[int, int]:
-        del w, h
-        return cls._NATIVE_W, cls._NATIVE_H
 
     @staticmethod
     def _resolve_device_path(serial_number: Union[str, int]) -> Union[str, int]:

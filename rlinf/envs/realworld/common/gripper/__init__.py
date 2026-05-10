@@ -22,19 +22,30 @@ __all__ = [
 ]
 
 
+_FRANKY_HAND_ALIASES = ("franka_hand", "franky_hand", "franky")
+
+
 def create_gripper(
     gripper_type: str = "franka",
     ros=None,
     port: Optional[str] = None,
+    robot_ip: Optional[str] = None,
     **kwargs,
 ) -> BaseGripper:
     """Factory that instantiates the right gripper backend.
 
     Args:
-        gripper_type: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU).
+        gripper_type: One of:
+
+            * ``"franka"``      — original Franka Hand via ROS (legacy stack).
+            * ``"franka_hand"`` / ``"franky_hand"`` / ``"franky"`` — original
+              Franka Hand via libfranka (``franky.Gripper``); shares the FCI
+              IP with :class:`FrankyController`.
+            * ``"robotiq"``     — Robotiq 2F-* over Modbus RTU.
         ros: :class:`ROSController` instance — required for ``"franka"``.
         port: Serial device path (e.g. ``"/dev/ttyUSB0"``) — required for
             ``"robotiq"``.
+        robot_ip: FCI IP — required for ``"franka_hand"`` / ``"franky_hand"``.
         **kwargs: Forwarded to the gripper constructor (e.g. ``max_width``,
             ``baudrate``, ``slave_id``).
     """
@@ -48,15 +59,26 @@ def create_gripper(
         from .robotiq_gripper import RobotiqGripper
 
         return RobotiqGripper(port=port, **kwargs)
+    if gt in _FRANKY_HAND_ALIASES:
+        if robot_ip is None:
+            raise ValueError(
+                f"robot_ip must be specified for gripper_type={gripper_type!r} "
+                "(libfranka Franka Hand shares the FCI IP with the arm)."
+            )
+        from .franky_hand_gripper import FrankyHandGripper
+
+        return FrankyHandGripper(robot_ip=robot_ip, **kwargs)
     if gt == "franka":
         if ros is None:
             raise ValueError(
-                "ROSController instance must be provided for Franka gripper."
+                "ROSController instance must be provided for the ROS-based "
+                "Franka gripper. To drive the original Franka Hand without "
+                "ROS, use gripper_type='franka_hand' (FrankyController path)."
             )
         from .franka_gripper import FrankaGripper
 
         return FrankaGripper(ros=ros, **kwargs)
     raise ValueError(
         f"Unsupported gripper_type={gripper_type!r}. "
-        f"Supported types: 'franka', 'robotiq'."
+        f"Supported types: 'franka', 'franka_hand', 'robotiq'."
     )

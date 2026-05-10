@@ -25,8 +25,6 @@ import time
 import gymnasium as gym
 import numpy as np
 
-from rlinf.scheduler import DualFrankaHWInfo
-
 from .dual_franka_env import (
     _RIGHT_ARM_ENV_IDX_OFFSET,
     NUM_ARMS,
@@ -48,67 +46,24 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
 
     # ---------------------------------------------------------------- hardware
 
+    # FrankyController has no ROS, so the legacy "franka" gripper type is
+    # not meaningful here; default to "robotiq".  FrankyController itself
+    # also remaps a stray "franka" → libfranka Hand if a hw config didn't
+    # get the memo (see FrankyController._build_gripper).
+    _DEFAULT_GRIPPER_TYPE: str = "robotiq"
+
     def _setup_hardware(self):
         assert self.env_idx >= 0, f"env_idx must be set for {type(self).__name__}."
 
-        if self.hardware_info is not None:
-            assert isinstance(self.hardware_info, DualFrankaHWInfo), (
-                f"hardware_info must be DualFrankaHWInfo, "
-                f"got {type(self.hardware_info)}."
-            )
-            hw = self.hardware_info.config
-            if self.config.left_robot_ip is None:
-                self.config.left_robot_ip = hw.left_robot_ip
-            if self.config.right_robot_ip is None:
-                self.config.right_robot_ip = hw.right_robot_ip
-            if self.config.left_camera_serials is None:
-                self.config.left_camera_serials = hw.left_camera_serials
-            if self.config.right_camera_serials is None:
-                self.config.right_camera_serials = hw.right_camera_serials
-            if self.config.base_camera_serials is None:
-                self.config.base_camera_serials = getattr(
-                    hw, "base_camera_serials", None
-                )
-            if self.config.camera_type is None:
-                self.config.camera_type = getattr(hw, "camera_type", "realsense")
-            if self.config.base_camera_type is None:
-                self.config.base_camera_type = getattr(hw, "base_camera_type", None)
-            if self.config.left_camera_type is None:
-                self.config.left_camera_type = getattr(hw, "left_camera_type", None)
-            if self.config.right_camera_type is None:
-                self.config.right_camera_type = getattr(hw, "right_camera_type", None)
-            if self.config.left_gripper_type is None:
-                self.config.left_gripper_type = getattr(
-                    hw, "left_gripper_type", "robotiq"
-                )
-            if self.config.right_gripper_type is None:
-                self.config.right_gripper_type = getattr(
-                    hw, "right_gripper_type", "robotiq"
-                )
-            if self.config.left_gripper_connection is None:
-                self.config.left_gripper_connection = getattr(
-                    hw, "left_gripper_connection", None
-                )
-            if self.config.right_gripper_connection is None:
-                self.config.right_gripper_connection = getattr(
-                    hw, "right_gripper_connection", None
-                )
-
-        left_node = self.node_rank
-        right_node = self.node_rank
-        if self.hardware_info is not None:
-            hw = self.hardware_info.config
-            if hw.left_controller_node_rank is not None:
-                left_node = hw.left_controller_node_rank
-            if hw.right_controller_node_rank is not None:
-                right_node = hw.right_controller_node_rank
+        self._resolve_hw_overrides()
+        left_node, right_node = self._resolve_controller_node_ranks()
 
         self._left_ctrl = FrankyController.launch_controller(
             robot_ip=self.config.left_robot_ip,
             env_idx=self.env_idx,
             node_rank=left_node,
             worker_rank=self.env_worker_rank,
-            gripper_type=self.config.left_gripper_type or "robotiq",
+            gripper_type=self.config.left_gripper_type or self._DEFAULT_GRIPPER_TYPE,
             gripper_connection=self.config.left_gripper_connection,
         )
         self._right_ctrl = FrankyController.launch_controller(
@@ -116,7 +71,7 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
             env_idx=self.env_idx + _RIGHT_ARM_ENV_IDX_OFFSET,
             node_rank=right_node,
             worker_rank=self.env_worker_rank,
-            gripper_type=self.config.right_gripper_type or "robotiq",
+            gripper_type=self.config.right_gripper_type or self._DEFAULT_GRIPPER_TYPE,
             gripper_connection=self.config.right_gripper_connection,
         )
 
@@ -269,6 +224,20 @@ class DualFrankaFrankyEnv(DualFrankaEnv):
 
     def _pace_between_action_and_state_read(self) -> bool:
         return True
+
+    def _gripper_action(self, ctrl, state, position: float) -> bool:
+        # Fire-and-forget: collection streams gripper RPCs at 10 Hz and a
+        # blocking .wait() + 0.6 s sleep stretches eval steps to ~700 ms
+        # and rings out j7. The ROS-driven parent keeps the synchronous
+        # version because its gripper handle is non-async.
+        threshold = self.config.binary_gripper_threshold
+        if position <= -threshold and state.gripper_open:
+            ctrl.close_gripper()
+            return True
+        elif position >= threshold and not state.gripper_open:
+            ctrl.open_gripper()
+            return True
+        return False
 
     # ------------------------------------------------------------------ step
 
