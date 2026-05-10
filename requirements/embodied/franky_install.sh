@@ -102,8 +102,5 @@ cat <<'EOF'
        # max latency < 150 µs is healthy; > 500 µs is broken
    sudo ping -c 1000 -i 0.001 172.16.0.2 | tail -3
        # Franka direct link: avg < 0.5 ms, max < 2 ms
-
- See the dual-Franka guide for the full setup + troubleshooting:
- docs/source-en/rst_source/examples/embodied/dual_franka.rst
 ================================================================
 EOF

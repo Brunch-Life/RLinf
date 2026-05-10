@@ -947,18 +947,10 @@ install_franka_env() {
 }
 
 install_franka_franky_env() {
-    # Franky backend: a C++ RT thread runs robot.control() with Ruckig
-    # inside franky's std::thread, and all pybind11 bindings release the
-    # GIL — no Python RT loop, no GIL contention with Ray actors.  See
-    # rlinf/envs/realworld/franka/franky_controller.py and the dual-Franka
-    # guide (docs/source-en/rst_source/examples/embodied/dual_franka.rst)
-    # for the full RT setup.
-    #
-    # franky-control ships pre-built wheels on PyPI for common Python +
-    # libfranka combinations.  If the wheel matches the host this is a
-    # one-liner; on a mismatched host pip falls back to a source build
-    # that needs libfranka headers + pinocchio (installed by
-    # requirements/embodied/franky_install.sh).
+    # franky-control ships manylinux wheels for common Python / libfranka
+    # combinations; on a mismatched host pip falls back to a source build
+    # that needs the libfranka headers + pinocchio installed by
+    # requirements/embodied/franky_install.sh.
     uv pip install "franky-control>=0.15.0"
 
     # If a libfranka build already exists on disk (e.g. under
@@ -976,12 +968,9 @@ install_franka_franky_env() {
  franky-control installed.
 
  IMPORTANT: before running the controller, apply the per-boot
- system tuning described in the dual-Franka guide
- (docs/source-en/rst_source/examples/embodied/dual_franka.rst,
- §"Per-boot RT tuning"):
-
-   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > "$g"; done'
-   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+ RT tuning printed by requirements/embodied/franky_install.sh
+ (CPU governor → performance, kernel.sched_rt_runtime_us=-1,
+ NIC rx-/tx-usecs=0).
 
  And verify the one-time rtprio/memlock limits:
 

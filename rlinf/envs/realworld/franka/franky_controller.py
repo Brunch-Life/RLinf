@@ -14,10 +14,9 @@
 
 """Franka controller backed by libfranka via the ``franky`` bindings.
 
-See the dual-Franka guide (``docs/source-en/rst_source/examples/
-embodied/dual_franka.rst``, sections "PREEMPT_RT kernel and rtprio
-limits" + "Per-boot RT tuning") for the PREEMPT_RT kernel and rtprio
-limits this expects.
+Expects a PREEMPT_RT kernel and ``rtprio>=80`` / unlimited memlock for the
+calling user; otherwise ``_apply_rt_hardening`` falls back to best-effort
+and logs a warning.
 """
 
 import ctypes
@@ -150,10 +149,8 @@ class FrankyController(Worker):
             os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(_RT_PRIORITY))
         except PermissionError:
             self._logger.warning(
-                f"SCHED_FIFO denied; see the dual-Franka guide "
-                f"(rst_source/examples/embodied/dual_franka.rst, "
-                f"§'PREEMPT_RT kernel and rtprio limits') to allow "
-                f"rtprio>={_RT_PRIORITY}"
+                f"SCHED_FIFO denied; user lacks rtprio>={_RT_PRIORITY} "
+                f"(check /etc/security/limits.d for `<user> - rtprio 99`)"
             )
         except Exception as e:
             self._logger.warning(f"SCHED_FIFO failed: {e}")
