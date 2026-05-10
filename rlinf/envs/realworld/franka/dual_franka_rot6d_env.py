@@ -22,7 +22,6 @@ via move_tcp_pose; tracking error is soft, not a Ruckig reflex.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 
 import gymnasium as gym
 import numpy as np
@@ -37,15 +36,10 @@ ACTION_DIM_PER_ARM = 10  # xyz(3) + rot6d(6) + gripper(1)
 PROPRIO_DIM_PER_ARM = 9  # xyz(3) + rot6d(6); gripper has its own slot
 
 
-@dataclass
-class DualFrankaRot6dRobotConfig(DualFrankaRobotConfig):
-    """Config for :class:`DualFrankaRot6dEnv` — Cartesian-only knobs."""
-
-
 class DualFrankaRot6dEnv(DualFrankaFrankyEnv):
     """Dual-arm Franka env with 20-D TCP-rot6d waypoint actions."""
 
-    CONFIG_CLS: type[DualFrankaRot6dRobotConfig] = DualFrankaRot6dRobotConfig
+    CONFIG_CLS: type[DualFrankaRobotConfig] = DualFrankaRobotConfig
 
     PER_ARM_ACTION_DIM = ACTION_DIM_PER_ARM
     GRIPPER_IDX_IN_ARM = 9  # xyz(3) + rot6d(6) then gripper

@@ -41,7 +41,8 @@ def matrix_to_rot6d(R_mat: np.ndarray) -> np.ndarray:
     Supports batched input: trailing ``(3, 3)`` axes → trailing ``(6,)`` axis.
     """
     R_mat = np.asarray(R_mat)
-    assert R_mat.shape[-2:] == (3, 3), f"expected (..., 3, 3); got {R_mat.shape}"
+    if R_mat.shape[-2:] != (3, 3):
+        raise ValueError(f"expected (..., 3, 3); got {R_mat.shape}")
     col0 = R_mat[..., :, 0]  # (..., 3)
     col1 = R_mat[..., :, 1]  # (..., 3)
     return np.concatenate([col0, col1], axis=-1).astype(np.float32)
@@ -59,7 +60,8 @@ def rot6d_to_matrix(r6: np.ndarray) -> np.ndarray:
     (would produce a degenerate frame).
     """
     r6 = np.asarray(r6, dtype=np.float64)
-    assert r6.shape[-1] == 6, f"expected trailing dim 6; got {r6.shape}"
+    if r6.shape[-1] != 6:
+        raise ValueError(f"expected trailing dim 6; got {r6.shape}")
 
     r1 = r6[..., :3]
     r2 = r6[..., 3:]
@@ -91,7 +93,8 @@ def rot6d_to_matrix(r6: np.ndarray) -> np.ndarray:
 def quat_xyzw_to_rot6d(quat: np.ndarray) -> np.ndarray:
     """Convert xyzw quaternion(s) to 6D rotation via scipy rotation matrix."""
     quat = np.asarray(quat)
-    assert quat.shape[-1] == 4, f"expected trailing dim 4; got {quat.shape}"
+    if quat.shape[-1] != 4:
+        raise ValueError(f"expected trailing dim 4; got {quat.shape}")
     flat = quat.reshape(-1, 4)
     mats = R.from_quat(flat).as_matrix()  # (N, 3, 3)
     r6 = matrix_to_rot6d(mats)  # (N, 6)
@@ -130,7 +133,8 @@ def rot6d_to_quat_xyzw_safe(
     """
     r6 = np.asarray(r6, dtype=np.float64).reshape(-1)
     fallback = np.asarray(fallback_quat_xyzw, dtype=np.float32).reshape(-1)
-    assert fallback.shape == (4,), f"fallback must be (4,); got {fallback.shape}"
+    if fallback.shape != (4,):
+        raise ValueError(f"fallback must be (4,); got {fallback.shape}")
     if r6.shape != (6,) or not np.all(np.isfinite(r6)):
         return fallback.copy()
     try:
@@ -146,13 +150,15 @@ def pose_to_SE3(xyz: np.ndarray, r6: np.ndarray) -> np.ndarray:
     ``T (..., 4, 4)``.
     """
     xyz = np.asarray(xyz, dtype=np.float64)
-    assert xyz.shape[-1] == 3, f"xyz expected trailing 3; got {xyz.shape}"
+    if xyz.shape[-1] != 3:
+        raise ValueError(f"xyz expected trailing 3; got {xyz.shape}")
 
     R_mat = rot6d_to_matrix(r6).astype(np.float64)
     batch_shape = R_mat.shape[:-2]
-    assert xyz.shape[:-1] == batch_shape, (
-        f"batch shape mismatch: xyz {xyz.shape[:-1]} vs r6 {batch_shape}"
-    )
+    if xyz.shape[:-1] != batch_shape:
+        raise ValueError(
+            f"batch shape mismatch: xyz {xyz.shape[:-1]} vs r6 {batch_shape}"
+        )
 
     T = np.zeros(batch_shape + (4, 4), dtype=np.float64)
     T[..., :3, :3] = R_mat
@@ -164,7 +170,8 @@ def pose_to_SE3(xyz: np.ndarray, r6: np.ndarray) -> np.ndarray:
 def SE3_to_pose(T: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Unpack a 4x4 homogeneous transform into ``(xyz, rot6d)``."""
     T = np.asarray(T)
-    assert T.shape[-2:] == (4, 4), f"expected trailing (4, 4); got {T.shape}"
+    if T.shape[-2:] != (4, 4):
+        raise ValueError(f"expected trailing (4, 4); got {T.shape}")
     xyz = T[..., :3, 3].astype(np.float32)
     r6 = matrix_to_rot6d(T[..., :3, :3])
     return xyz, r6

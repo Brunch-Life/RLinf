@@ -16,7 +16,7 @@
 from .dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
 from .dual_franka_franky_env import DualFrankaFrankyEnv
 from .dual_franka_joint_env import DualFrankaJointEnv, DualFrankaJointRobotConfig
-from .dual_franka_rot6d_env import DualFrankaRot6dEnv, DualFrankaRot6dRobotConfig
+from .dual_franka_rot6d_env import DualFrankaRot6dEnv
 from .end_effectors.base import EndEffectorType
 from .franka_env import FrankaEnv, FrankaRobotConfig, FrankaRobotState
 
@@ -27,7 +27,6 @@ __all__ = [
     "DualFrankaJointRobotConfig",
     "DualFrankaRobotConfig",
     "DualFrankaRot6dEnv",
-    "DualFrankaRot6dRobotConfig",
     "EndEffectorType",
     "FrankaEnv",
     "FrankaRobotConfig",

@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0@actor.model
+  - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 

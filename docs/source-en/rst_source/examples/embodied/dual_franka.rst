@@ -228,6 +228,15 @@ return ``unlimited``. Without these,
 ``mlockall failed`` and falls back to default scheduling — the
 controller still runs, but RT jitter returns.
 
+.. note::
+
+   These limits are checked at startup by
+   ``_apply_rt_hardening()`` in
+   ``rlinf/envs/realworld/franka/franky_controller.py``. If
+   ``SCHED_FIFO`` is denied or ``mlockall`` fails, the controller
+   continues in best-effort mode and emits a warning rather than
+   aborting; see the warning text for the exact remediation.
+
 2. Per-boot RT tuning
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -256,6 +265,12 @@ Use ``ip -br a`` to confirm the actual NIC name. To persist the
 
    echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
 
+.. note::
+
+   ``requirements/embodied/franky_install.sh`` prints these three
+   commands at the end of the install. This section is the
+   authoritative copy.
+
 3. RLinf + franky
 ~~~~~~~~~~~~~~~~~
 
@@ -277,6 +292,15 @@ The ``--env franka-franky`` target pins the franky path
 ``serl_franka_controllers`` ROS / catkin build used by
 :doc:`franka`. The ``--use-mirror`` flag is for mainland China users
 (switches PyPI / GitHub / HuggingFace mirrors).
+
+.. note::
+
+   ``requirements/install.sh embodied --env franka-franky`` installs
+   the RLinf venv and the ``franky-control`` wheel. The system-level
+   dependencies (``rt-tests``, ``ethtool``, ``libfranka`` build
+   prerequisites) come from
+   ``requirements/embodied/franky_install.sh``. Run the franky
+   install script first; the install command second.
 
 If the franky-control wheel does not match your Python + libfranka
 combo, ``pip`` falls back to a source build that needs libfranka
