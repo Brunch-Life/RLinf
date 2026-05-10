@@ -23,6 +23,9 @@ import pytest
 from rlinf.envs.realworld.common.wrappers.dual_euler_obs import DualQuat2EulerWrapper
 from rlinf.envs.realworld.common.wrappers.dual_relative_frame import DualRelativeFrame
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv
+from rlinf.envs.realworld.franka.dual_franka_franky_joint_env import (
+    DualFrankaJointEnv,
+)
 
 
 @pytest.fixture()
@@ -88,3 +91,59 @@ def test_relative_frame_action_transform_round_trip(dummy_env):
     action = np.random.randn(14).astype(np.float32)
     recovered = wrapped.transform_action_inv(wrapped.transform_action(action.copy()))
     np.testing.assert_allclose(recovered, action, atol=1e-6)
+
+
+# ── DualFrankaJointEnv (libfranka / FrankyController path) ───────────────
+
+
+def _make_dummy_joint_env(joint_action_mode: str = "absolute") -> DualFrankaJointEnv:
+    """Minimal dummy DualFrankaJointEnv; no controller, no camera."""
+    cfg = {
+        "is_dummy": True,
+        "left_robot_ip": "0.0.0.0",
+        "right_robot_ip": "0.0.0.0",
+        "left_camera_serials": ["DUMMY_L"],
+        "right_camera_serials": ["DUMMY_R"],
+        "camera_type": "realsense",
+        "joint_action_mode": joint_action_mode,
+        "max_num_steps": 5,
+    }
+    return DualFrankaJointEnv(
+        override_cfg=cfg, worker_info=None, hardware_info=None, env_idx=0
+    )
+
+
+def test_joint_env_action_space_modes():
+    """absolute → per-joint physical limits + gripper ±1; delta → unit cube."""
+    abs_env = _make_dummy_joint_env("absolute")
+    delta_env = _make_dummy_joint_env("delta")
+
+    # 16 = 2 arms × (7 joints + 1 gripper).
+    assert abs_env.action_space.shape == (16,)
+    assert delta_env.action_space.shape == (16,)
+
+    np.testing.assert_array_equal(
+        delta_env.action_space.low, -np.ones(16, dtype=np.float32)
+    )
+    np.testing.assert_array_equal(
+        delta_env.action_space.high, np.ones(16, dtype=np.float32)
+    )
+
+    # Absolute: gripper slots (7, 15) are exactly ±1; joint slots are not.
+    assert abs_env.action_space.low[7] == -1.0
+    assert abs_env.action_space.high[7] == 1.0
+    assert abs_env.action_space.low[15] == -1.0
+    assert abs_env.action_space.high[15] == 1.0
+    assert not np.allclose(abs_env.action_space.low[:7], -1.0)
+
+
+def test_joint_env_dummy_step_does_not_crash():
+    """Dummy step path must not touch _left_ctrl / _right_ctrl (regression
+    for the reviewer-flagged AttributeError)."""
+    env = _make_dummy_joint_env("absolute")
+    env.reset()
+    obs, reward, terminated, truncated, _info = env.step(env.action_space.sample())
+    assert obs is not None
+    assert isinstance(float(reward), float)
+    assert not terminated
+    assert not truncated
