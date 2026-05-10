@@ -317,8 +317,7 @@ PyPI wheel matches Python 3.11 + libfranka 0.15.x out of the box.
    Pick whichever ``libfranka`` version matches your Franka firmware
    per the official `compatibility matrix
    <https://frankarobotics.github.io/docs/compatibility.html>`_,
-   just **not 0.18.0** (0.18.x patches once released, 0.17.x, and
-   0.15.x have all been used in practice). Check
+   just **not 0.18.0** (verified on 0.19.0). Check
    ``franky.__libfranka_version__`` after install if you are unsure.
 
 4. GELLO (env-worker node)

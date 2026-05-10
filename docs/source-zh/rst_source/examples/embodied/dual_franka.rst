@@ -296,9 +296,8 @@ pinocchio，因此源码编译路径通常无需额外操作；不过 PyPI wheel
    GELLO 动作。版本请按 Franka firmware 在官方
    `compatibility matrix
    <https://frankarobotics.github.io/docs/compatibility.html>`_
-   中查找匹配版本，**不要选择 0.18.0**\ （0.18.x 后续 patch 如已发布，
-   以及 0.17.x、0.15.x 均已有实际使用记录）。安装后可
-   检查 ``franky.__libfranka_version__``。
+   中查找匹配版本，**不要选择 0.18.0**\ （已在 0.19.0 上验证通过）。
+   安装后可检查 ``franky.__libfranka_version__``。
 
 4. GELLO（env worker 所在节点）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
