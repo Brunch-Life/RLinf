@@ -28,8 +28,16 @@ import time
 
 import numpy as np
 
-# Per-joint mid-points; seed for 2kπ unwrap so the first Dynamixel read lands in range.
-_FRANKA_RANGE_CENTER = np.array([0.0, 0.0, 0.0, -1.5708, 0.0, 1.8675, 0.0])
+from rlinf.envs.realworld.franka.franky_controller import (
+    JOINT_LIMITS_LOWER,
+    JOINT_LIMITS_UPPER,
+)
+
+# Mid-point of each joint's limit window; the first Dynamixel read is wrapped
+# into the ±π band around this point and then clamped into the limit window.
+_GELLO_UNWRAP_REFERENCE = 0.5 * (
+    np.asarray(JOINT_LIMITS_LOWER) + np.asarray(JOINT_LIMITS_UPPER)
+)
 
 
 class GelloJointExpert:
@@ -40,10 +48,9 @@ class GelloJointExpert:
     forward kinematics.
 
     Dynamixel readings may be offset by 2kπ from the robot's valid range.
-    To avoid dangerous discontinuities, joint angles are *unwrapped*:
-    the first reading is mapped to the nearest equivalent within each
-    joint's valid range, and every subsequent reading is kept continuous
-    with the previous one (no single-step jump > π).
+    Angles are *unwrapped*: the first reading is mapped into each joint's
+    limit window; every subsequent reading is kept continuous with the
+    previous one (no single-step jump > π).
 
     Args:
         port: Serial port of the GELLO device.
@@ -56,6 +63,7 @@ class GelloJointExpert:
 
         self.state_lock = threading.Lock()
         self._ready = False
+        self._stop = False
         self._prev_joints: np.ndarray | None = None
         self.latest_data = {
             "joint_positions": np.zeros(7),
@@ -68,18 +76,23 @@ class GelloJointExpert:
         consecutive_errors = 0
         max_consecutive_errors = 50
 
-        while True:
+        while not self._stop:
             try:
                 gello_joints, gello_gripper = self.agent.get_action()
                 gello_gripper = np.array([gello_gripper])
 
                 joints = np.array(gello_joints)
-                ref = (
-                    self._prev_joints
-                    if self._prev_joints is not None
-                    else _FRANKA_RANGE_CENTER
-                )
-                joints = ref + (joints - ref + np.pi) % (2.0 * np.pi) - np.pi
+                if self._prev_joints is None:
+                    joints = (
+                        _GELLO_UNWRAP_REFERENCE
+                        + (joints - _GELLO_UNWRAP_REFERENCE + np.pi)
+                        % (2.0 * np.pi)
+                        - np.pi
+                    )
+                    joints = np.clip(joints, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER)
+                else:
+                    ref = self._prev_joints
+                    joints = ref + (joints - ref + np.pi) % (2.0 * np.pi) - np.pi
                 self._prev_joints = joints
 
                 with self.state_lock:
@@ -97,6 +110,13 @@ class GelloJointExpert:
                 continue
 
             time.sleep(0.001)
+
+    def close(self) -> None:
+        """Stop the background read loop."""
+        self._stop = True
+        t = getattr(self, "thread", None)
+        if t is not None and t.is_alive():
+            t.join(timeout=1.0)
 
     @property
     def ready(self) -> bool:

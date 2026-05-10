@@ -96,7 +96,6 @@ class EnvOutput:
         extra_view_image_tensor = (
             obs["extra_view_images"] if "extra_view_images" in obs else None
         )
-        extra_view_image_names = obs.get("extra_view_image_names")
         states = obs["states"] if "states" in obs else None
         task_descriptions = (
             list(obs["task_descriptions"])
@@ -108,7 +107,6 @@ class EnvOutput:
             "main_images": image_tensor,  # [N_ENV, H, W, C]
             "wrist_images": wrist_image_tensor,  # [N_ENV, H, W, C] or [N_ENV, N_IMG, H, W, C]
             "extra_view_images": extra_view_image_tensor,  # [N_ENV, N_IMG, H, W, C]
-            "extra_view_image_names": extra_view_image_names,  # tuple[str, ...] | None
             "states": states,
             "task_descriptions": task_descriptions,
         }

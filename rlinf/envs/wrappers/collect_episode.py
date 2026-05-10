@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import atexit
 import copy
-import glob
 import json
 import os
 import pickle
+import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -33,12 +33,34 @@ from rlinf.utils.logging import get_logger
 _VALID_FORMATS = ("pickle", "lerobot")
 
 
-def _count_existing_lerobot_episodes(save_dir: str, rank: int) -> int:
-    """Sum ``total_episodes`` across existing ``id_*`` shards for resume.
-    Skip malformed shards — under-count is safer than colliding ids."""
-    pattern = os.path.join(save_dir, f"rank_{rank}", "id_*", "meta", "info.json")
+_ID_DIR_RE = re.compile(r"^id_(\d+)$")
+
+
+def _scan_existing_lerobot_shards(
+    save_dir: str, rank: int
+) -> tuple[int, int]:
+    """Return ``(total_episodes, next_shard_id)`` for resume.
+
+    ``next_shard_id`` is ``max(existing_id_numbers) + 1`` over every
+    ``id_<int>/`` directory (regardless of whether ``meta/info.json`` is
+    finalized) so a crashed session's partial shard is never overwritten.
+    Shards with unparseable ``info.json`` contribute 0 to ``total_episodes``.
+    """
+    rank_dir = os.path.join(save_dir, f"rank_{rank}")
+    if not os.path.isdir(rank_dir):
+        return 0, 0
+
     total = 0
-    for info_path in sorted(glob.glob(pattern)):
+    max_id = -1
+    for entry in os.listdir(rank_dir):
+        m = _ID_DIR_RE.match(entry)
+        if m is None:
+            continue
+        if not os.path.isdir(os.path.join(rank_dir, entry)):
+            continue
+        max_id = max(max_id, int(m.group(1)))
+
+        info_path = os.path.join(rank_dir, entry, "meta", "info.json")
         try:
             with open(info_path) as f:
                 meta = json.load(f)
@@ -47,7 +69,8 @@ def _count_existing_lerobot_episodes(save_dir: str, rank: int) -> int:
         count = meta.get("total_episodes")
         if isinstance(count, int) and count > 0:
             total += count
-    return total
+    next_shard_id = max_id + 1 if max_id >= 0 else 0
+    return total, next_shard_id
 
 
 class CollectEpisode(gym.Wrapper):
@@ -149,13 +172,15 @@ class CollectEpisode(gym.Wrapper):
             self._active_task = tasks[0]["name"]
 
         self._preexisting_episode_count = 0
+        self._next_shard_id = 0
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
             if resume and self._tasks_by_name is None:
-                self._preexisting_episode_count = _count_existing_lerobot_episodes(
-                    save_dir, rank
-                )
+                (
+                    self._preexisting_episode_count,
+                    self._next_shard_id,
+                ) = _scan_existing_lerobot_shards(save_dir, rank)
             self._episodes_written = (
                 self._preexisting_episode_count
             )  # guarded by _lerobot_lock
@@ -593,13 +618,13 @@ class CollectEpisode(gym.Wrapper):
                 writer = LeRobotDatasetWriter()
                 self._task_writers[task_name] = writer
             target_save_dir = self._tasks_by_name[task_name]["save_dir"]
-            episodes_written = self._task_episodes_written[task_name]
+            shard_id = self._task_episodes_written[task_name]
         else:
             if self._lerobot_writer is None:
                 self._lerobot_writer = LeRobotDatasetWriter()
             writer = self._lerobot_writer
             target_save_dir = self.save_dir
-            episodes_written = self._episodes_written
+            shard_id = self._next_shard_id
 
         if writer.dataset is None:
             first = ep_data[0]
@@ -607,7 +632,7 @@ class CollectEpisode(gym.Wrapper):
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             writer.create(
                 repo_id=os.path.join(
-                    target_save_dir, f"rank_{self.rank}", f"id_{episodes_written}"
+                    target_save_dir, f"rank_{self.rank}", f"id_{shard_id}"
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
@@ -620,6 +645,8 @@ class CollectEpisode(gym.Wrapper):
                 has_intervene_flag="intervene_flag" in first,
                 has_segment_id="segment_id" in first,
             )
+            if self._tasks_by_name is None:
+                self._next_shard_id = shard_id + 1
         return writer
 
     @staticmethod

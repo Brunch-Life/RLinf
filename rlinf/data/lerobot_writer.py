@@ -19,13 +19,16 @@ from typing import Any
 
 from rlinf.utils.logging import get_logger
 
-# Silence HuggingFace ``datasets``' Map / parquet tqdm bars (10 Hz collection makes the terminal unreadable).
-try:
-    import datasets as _hf_datasets
 
-    _hf_datasets.disable_progress_bar()
-except ImportError:
-    pass
+def _silence_hf_datasets_progress_bars() -> None:
+    # Disable HF ``datasets`` Map / parquet tqdm bars; called from
+    # ``create()`` so importing this module doesn't affect other consumers.
+    try:
+        import datasets as _hf_datasets
+
+        _hf_datasets.disable_progress_bar()
+    except ImportError:
+        pass
 
 
 class LeRobotDatasetWriter:
@@ -82,6 +85,8 @@ class LeRobotDatasetWriter:
 
         """
         from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+        _silence_hf_datasets_progress_bars()
 
         if features is None:
             features = {

@@ -45,9 +45,16 @@ from typing import Any
 
 import gymnasium as gym
 import numpy as np
+import psutil
 import pytest
 
-from rlinf.envs.wrappers import CollectEpisode
+# rlinf.envs.realworld.__init__ runs RealWorldEnv.realworld_setup() at import,
+# which iterates host processes and kills any roscore/rosmaster/rosout. Stub
+# psutil.process_iter before that import so the unit test never modifies host
+# state.
+psutil.process_iter = lambda *a, **kw: iter([])
+
+from rlinf.envs.wrappers import CollectEpisode  # noqa: E402
 
 # --------------------------------------------------------------------- #
 #  _expand_multi_view_images unit tests                                    #

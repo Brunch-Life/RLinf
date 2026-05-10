@@ -35,6 +35,8 @@ class DualGelloJointIntervention(gym.ActionWrapper):
     ``direct_stream=True`` requires
     ``DualFrankaJointRobotConfig.teleop_direct_stream=True``.
     ``action_scale`` must match the env's ``joint_action_scale``.
+    ``stream_period`` is a floor — actual rate is bounded by libfranka RPC
+    latency.
     """
 
     def __init__(
@@ -64,6 +66,7 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         self._stream_last_gripper_open: list[bool | None] = [None, None]
         self._stream_paused = threading.Event()
         self._stream_paused.set()  # starts unpaused
+        self._aligned = False
 
     def _start_stream_thread(self) -> None:
         if self._resolve_controllers() == (None, None):
@@ -180,6 +183,7 @@ class DualGelloJointIntervention(gym.ActionWrapper):
     def _align_to_gello(self) -> bool:
         # Without this, direct-stream's first loop would push a far target
         # straight into the impedance tracker, causing a reference jump.
+        self._aligned = False
         if not (self.left_expert.ready and self.right_expert.ready):
             return False
         left_ctrl, right_ctrl = self._resolve_controllers()
@@ -191,8 +195,9 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         rf = right_ctrl.reset_joint(np.asarray(right_q, dtype=np.float64).tolist())
         lf.wait()
         rf.wait()
-        self.unwrapped._left_state = left_ctrl.get_state().wait()[0]
-        self.unwrapped._right_state = right_ctrl.get_state().wait()[0]
+        setattr(self.unwrapped, "_left_state", left_ctrl.get_state().wait()[0])
+        setattr(self.unwrapped, "_right_state", right_ctrl.get_state().wait()[0])
+        self._aligned = True
         return True
 
     def reset(self, **kwargs):
@@ -203,24 +208,28 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         kwargs["options"] = options
 
         self._stream_paused.clear()
-        aligned = False
         try:
             result = self.env.reset(**kwargs)
             if self._direct_stream:
-                aligned = self._align_to_gello()
+                self._align_to_gello()
         finally:
             self._stream_paused.set()
-            if self._direct_stream and aligned and self._stream_thread is None:
+            if self._direct_stream and self._aligned and self._stream_thread is None:
                 self._start_stream_thread()
         return result
 
     def step(self, action):
         new_action, replaced = self.action(action)
-        if self._direct_stream and self._stream_thread is None:
+        if (
+            self._direct_stream
+            and self._aligned
+            and self._stream_thread is None
+        ):
             self._start_stream_thread()
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
             info["intervene_action"] = new_action
+            info["intervene_flag"] = np.ones(1)
         return obs, rew, done, truncated, info
 
     def close(self):

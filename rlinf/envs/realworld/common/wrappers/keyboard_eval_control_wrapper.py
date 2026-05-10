@@ -48,10 +48,16 @@ class KeyboardEvalControlWrapper(gym.Wrapper):
         self.listener = KeyboardListener()
         self._running = False
         self._last_obs: Any = None
+        self._reset_owed_to_outer = False
 
     def reset(self, *, seed=None, options=None):
         self._running = False
         self.listener.pop_pressed_keys()
+        if self._reset_owed_to_outer:
+            # Inner env was already reset by _reset_after_pedal; skip the
+            # outer caller's reset to avoid a double home-slew.
+            self._reset_owed_to_outer = False
+            return self._last_obs, {}
         ret = self.env.reset(seed=seed, options=options)
         self._last_obs = ret[0] if isinstance(ret, tuple) else ret
         return ret
@@ -106,13 +112,14 @@ class KeyboardEvalControlWrapper(gym.Wrapper):
     def _reset_after_pedal(self):
         """Drive the robot back to its reset pose and refresh ``_last_obs``.
 
-        Called when the operator's pedal ends an episode. The eval env_worker
-        runs with ``auto_reset=False`` and only resets between rollout epochs,
-        so without this the robot would hang at its last commanded TCP target
-        until the remaining chunk steps in the current epoch are spent.
+        Eval runs with ``auto_reset=False`` so without this the robot would
+        hang at its last commanded TCP target until the next epoch boundary.
+        Sets ``_reset_owed_to_outer`` so the outer caller's next ``reset()``
+        call is a no-op and we don't slew home twice.
         """
         self.listener.pop_pressed_keys()
         ret = self.env.reset()
         new_obs = ret[0] if isinstance(ret, tuple) else ret
         self._last_obs = new_obs
+        self._reset_owed_to_outer = True
         return new_obs
