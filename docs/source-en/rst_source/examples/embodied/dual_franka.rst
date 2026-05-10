@@ -56,10 +56,9 @@ single-arm SAC / PPO loops in :doc:`franka`, this rig:
   to rot6d + SE(3) body-frame deltas removes that class of bug
   entirely.
 * **Splits two arms across two compute nodes.** Each node has a
-  direct Ethernet link to one Franka (FCI ``172.16.0.2``); both nodes
-  reuse the same FCI IP because the two ``172.16.0.0/24`` subnets are
-  physically separate (one cable per arm, one NIC per node). The two
-  nodes share a LAN used only by Ray and tensor sync.
+  direct Ethernet link to one Franka's FCI port (one cable per arm,
+  one NIC per node). The two nodes share a LAN used only by Ray and
+  tensor sync.
 
 If you want online RL on a single Franka with SAC/PPO, you want
 :doc:`franka`, not this page.
@@ -92,16 +91,10 @@ Hardware topology
        FCI port;
        right Robotiq 2F-85
 
-.. warning::
+.. note::
 
-   Both Franka arms answer at the standard FCI IP. This is **not** an
-   IP collision — each arm sits in its own physically separate
-   FCI subnet attached to a dedicated NIC on its node. ``ping``-ing
-   the FCI from node 0 only reaches the left arm; the same command
-   on node 1 only reaches the right arm. Do **not** try to "fix"
-   this by renumbering the FCI — Franka Desk only exposes the FCI
-   on the standard subnet, and the per-node NIC isolation is what
-   keeps the two control loops independent.
+   FCI IPs and NIC names depend on your actual network setup — fill in
+   whatever matches your rig in the Hardware YAML below.
 
 Camera roles (the wrapper stack uses
 ``main_image_key: left_wrist_0_rgb`` so π₀.₅'s ``observation/image``
@@ -499,9 +492,9 @@ Cluster block (collection):
          hardware:
            type: DualFranka
            configs:
-             # Same FCI IP for both arms — see "Hardware topology" warning.
-             - left_robot_ip:  "172.16.0.2"
-               right_robot_ip: "172.16.0.2"
+             # Fill in the actual FCI IPs for your rig.
+             - left_robot_ip:  "<LEFT_FCI_IP>"
+               right_robot_ip: "<RIGHT_FCI_IP>"
                base_camera_serials: ["<librealsense serial>"]
                base_camera_type:  realsense
                left_camera_serials:  ["usb-XVisio_..._<sn-left>-video-index0"]
@@ -526,8 +519,8 @@ Field-by-field reference for ``DualFrankaConfig``
    * - Field
      - Meaning
    * - ``left_robot_ip`` / ``right_robot_ip``
-     - FCI IPs (validated as IP addresses at config-load time). Same
-       value is fine because the two subnets are physically separate.
+     - FCI IPs (validated as IP addresses at config-load time); fill
+       in whatever matches your rig's actual network setup.
    * - ``left_camera_serials`` / ``right_camera_serials`` / ``base_camera_serials``
      - Serial numbers as the SDK reports them. RealSense uses the
        ``librealsense`` serial (e.g. ``<librealsense-serial>``);
@@ -544,9 +537,8 @@ Field-by-field reference for ``DualFrankaConfig``
    * - ``left_gripper_type`` / ``right_gripper_type``
      - For this Franky path use ``robotiq`` (RS-485 Modbus on
        USB-FTDI, no ROS dependency). The ``franka`` Franka-Hand
-       backend in ``common/gripper/franka_gripper.py`` requires a
-       ROS controller and is **not** wired up under
-       ``FrankyController`` — it raises at construction time.
+       backend in ``common/gripper/franka_gripper.py`` is **not yet
+       tested** under ``FrankyController``.
    * - ``left_gripper_connection`` / ``right_gripper_connection``
      - Stable ``/dev/serial/by-id`` path. ``by-id`` is **strongly**
        recommended over ``/dev/ttyUSB*`` because the ``ttyUSB*`` index

@@ -47,10 +47,8 @@ SAC / PPO 训练相比，该 rig：
   规律学习）。改用 rot6d + SE(3) body-frame delta 后可消除此类
   问题。
 * **左右臂分到两台机器上。** 每个节点用一根专线直连一根 Franka
-  （FCI 都是 ``172.16.0.2``）；两个 ``172.16.0.0/24`` 子网在物理
-  上完全独立（一根线、一张 NIC、一台机器对一台机械臂），所以同 IP
-  并不冲突。两个节点之间走另一张共享 LAN，仅用于 Ray 控制流和张量
-  同步。
+  的 FCI 端口（一根线、一张 NIC、一台机器对一台机械臂）。两个节点
+  之间走另一张共享 LAN，仅用于 Ray 控制流和张量同步。
 
 如需进行单臂 Franka 在线 RL（SAC / PPO），请参考 :doc:`franka`，
 而非本页。
@@ -82,14 +80,10 @@ SAC / PPO 训练相比，该 rig：
        右 Franka FR3 直连自己的 NIC，对接 FCI 端口；
        右 Robotiq 2F-85
 
-.. warning::
+.. note::
 
-   两台 Franka 的 FCI 走的是同一个标准 FCI IP，**这不是 IP 冲突**
-   —— 两个 FCI 子网在物理上完全独立，每台机械臂接一根专线、各自
-   一张 NIC。从 node 0 ``ping`` FCI 只到左臂；从 node 1 ``ping``
-   FCI 只到右臂。**不要**\ 为了避免“表面上冲突”而修改 FCI IP ——
-   Franka Desk 只在标准子网上暴露 FCI；让两条 NIC 物理隔离才是
-   保证两条控制环互不干扰的关键。
+   两臂的 FCI IP 与 NIC 名按你机器实际网络情况填写到下文
+   Hardware YAML 中即可。
 
 相机角色（wrapper 栈用 ``main_image_key: left_wrist_0_rgb``，
 所以 π₀.₅ 的 ``observation/image`` 槽位是**左腕**相机；
@@ -467,9 +461,9 @@ cluster 块（采集）：
          hardware:
            type: DualFranka
            configs:
-             # 两台机械臂用同一个 FCI IP —— 见上文"硬件拓扑"警告
-             - left_robot_ip:  "172.16.0.2"
-               right_robot_ip: "172.16.0.2"
+             # 按实际网络情况填左右臂的 FCI IP。
+             - left_robot_ip:  "<LEFT_FCI_IP>"
+               right_robot_ip: "<RIGHT_FCI_IP>"
                base_camera_serials: ["<librealsense serial>"]
                base_camera_type:  realsense
                left_camera_serials:  ["usb-XVisio_..._<sn-left>-video-index0"]
@@ -494,8 +488,8 @@ cluster 块（采集）：
    * - 字段
      - 含义
    * - ``left_robot_ip`` / ``right_robot_ip``
-     - FCI IP（config 加载时会执行 IP 格式校验）。两台用同一个 IP
-       是合法的，因为子网是物理隔离的。
+     - FCI IP（config 加载时会执行 IP 格式校验）；按实际网络情况
+       填写。
    * - ``left_camera_serials`` / ``right_camera_serials`` / ``base_camera_serials``
      - 每种相机用自己的 SDK 报告的 serial：
        RealSense 用 ``librealsense`` serial（如
@@ -511,8 +505,7 @@ cluster 块（采集）：
    * - ``left_gripper_type`` / ``right_gripper_type``
      - 该 Franky 路径只支持 ``robotiq`` （USB-FTDI 上运行 RS-485
        Modbus，无 ROS 依赖）。``common/gripper/franka_gripper.py``
-       中的 Franka Hand 后端依赖 ROS controller，``FrankyController``
-       中 **未接入该后端**，构造时会直接 raise。
+       中的 Franka Hand 后端在 ``FrankyController`` 下**暂未测试**。
    * - ``left_gripper_connection`` / ``right_gripper_connection``
      - 推荐用 ``/dev/serial/by-id`` 路径。**强烈** 不建议用
        ``/dev/ttyUSB*`` —— ``ttyUSB*`` 序号会随重启和热插拔变；
