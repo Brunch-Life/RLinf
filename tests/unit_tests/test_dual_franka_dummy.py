@@ -24,7 +24,7 @@ from rlinf.envs.realworld.common.wrappers.dual_euler_obs import DualQuat2EulerWr
 from rlinf.envs.realworld.common.wrappers.dual_relative_frame import DualRelativeFrame
 from rlinf.envs.realworld.franka.dual_franka_env import DualFrankaEnv
 from rlinf.envs.realworld.franka.dual_franka_franky_joint_env import (
-    DualFrankaJointEnv,
+    DualFrankaFrankyJointEnv,
 )
 
 
@@ -93,11 +93,13 @@ def test_relative_frame_action_transform_round_trip(dummy_env):
     np.testing.assert_allclose(recovered, action, atol=1e-6)
 
 
-# ── DualFrankaJointEnv (libfranka / FrankyController path) ───────────────
+# ── DualFrankaFrankyJointEnv (libfranka / FrankyController path) ───────────────
 
 
-def _make_dummy_joint_env(joint_action_mode: str = "absolute") -> DualFrankaJointEnv:
-    """Minimal dummy DualFrankaJointEnv; no controller, no camera."""
+def _make_dummy_joint_env(
+    joint_action_mode: str = "absolute",
+) -> DualFrankaFrankyJointEnv:
+    """Minimal dummy DualFrankaFrankyJointEnv; no controller, no camera."""
     cfg = {
         "is_dummy": True,
         "left_robot_ip": "0.0.0.0",
@@ -108,7 +110,7 @@ def _make_dummy_joint_env(joint_action_mode: str = "absolute") -> DualFrankaJoin
         "joint_action_mode": joint_action_mode,
         "max_num_steps": 5,
     }
-    return DualFrankaJointEnv(
+    return DualFrankaFrankyJointEnv(
         override_cfg=cfg, worker_info=None, hardware_info=None, env_idx=0
     )
 

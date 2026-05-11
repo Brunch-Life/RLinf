@@ -33,8 +33,8 @@ ACTION_DIM_PER_ARM = 8  # 7 joints + 1 gripper trigger
 
 
 @dataclass
-class DualFrankaJointRobotConfig(DualFrankaRobotConfig):
-    """Config for :class:`DualFrankaJointEnv`."""
+class DualFrankaFrankyJointRobotConfig(DualFrankaRobotConfig):
+    """Config for :class:`DualFrankaFrankyJointEnv`."""
 
     joint_position_limits_lower: np.ndarray = field(
         default_factory=lambda: JOINT_LIMITS_LOWER.copy()
@@ -55,10 +55,12 @@ class DualFrankaJointRobotConfig(DualFrankaRobotConfig):
         self.joint_position_limits_upper = np.array(self.joint_position_limits_upper)
 
 
-class DualFrankaJointEnv(DualFrankaFrankyEnv):
+class DualFrankaFrankyJointEnv(DualFrankaFrankyEnv):
     """Dual-arm Franka env with 16-D joint-space actions."""
 
-    CONFIG_CLS: type[DualFrankaJointRobotConfig] = DualFrankaJointRobotConfig
+    CONFIG_CLS: type[DualFrankaFrankyJointRobotConfig] = (
+        DualFrankaFrankyJointRobotConfig
+    )
 
     PER_ARM_ACTION_DIM = ACTION_DIM_PER_ARM
     GRIPPER_IDX_IN_ARM = JOINT_DIM_PER_ARM  # slot 7
@@ -80,7 +82,7 @@ class DualFrankaJointEnv(DualFrankaFrankyEnv):
             act_high = np.ones(NUM_ARMS * ACTION_DIM_PER_ARM, dtype=np.float32)
         else:
             raise ValueError(
-                f"DualFrankaJointEnv.joint_action_mode must be 'absolute' or "
+                f"DualFrankaFrankyJointEnv.joint_action_mode must be 'absolute' or "
                 f"'delta', got {self.config.joint_action_mode!r}"
             )
         self.action_space = gym.spaces.Box(act_low, act_high)
