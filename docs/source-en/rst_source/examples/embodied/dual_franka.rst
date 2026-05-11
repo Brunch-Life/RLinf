@@ -23,7 +23,7 @@ This page focuses on what changes for the dual-arm rig:
   :doc:`franka`,
 * three new dual-arm environments — ``DualFrankaEnv`` (legacy 14-D
   Cartesian delta), ``DualFrankaJointEnv`` (16-D joint, used at
-  collection), ``DualFrankaRot6dEnv`` (20-D TCP-rot6d, used at SFT
+  collection), ``DualFrankaFrankyRot6dEnv`` (20-D TCP-rot6d, used at SFT
   and deployment),
 * the **rot6d / SE(3) body-frame delta** action representation that
   replaces openpi's component-wise ``DeltaActions``,
@@ -169,7 +169,7 @@ The data path during **deployment** is::
                             DualFrankaRot6dOutputs (slice 20-D)
                                        │
                                        ▼
-                  DualFrankaRot6dEnv.step (per-arm move_tcp_pose)
+                  DualFrankaFrankyRot6dEnv.step (per-arm move_tcp_pose)
                                        │ C++ 1 kHz CartesianImpedanceTracker
                                        ▼
                                  Franka FR3
@@ -1414,7 +1414,7 @@ Code (canonical entry points)
   env scaffold for joint + rot6d.
 * ``rlinf/envs/realworld/franka/dual_franka_joint_env.py`` — 16-D
   joint env.
-* ``rlinf/envs/realworld/franka/dual_franka_rot6d_env.py`` — 20-D
+* ``rlinf/envs/realworld/franka/dual_franka_franky_rot6d_env.py`` — 20-D
   rot6d env.
 * ``rlinf/envs/realworld/common/wrappers/dual_gello_joint_intervention.py``
   — 1 kHz GELLO daemon.

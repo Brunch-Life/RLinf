@@ -36,7 +36,7 @@ ACTION_DIM_PER_ARM = 10  # xyz(3) + rot6d(6) + gripper(1)
 PROPRIO_DIM_PER_ARM = 9  # xyz(3) + rot6d(6); gripper has its own slot
 
 
-class DualFrankaRot6dEnv(DualFrankaFrankyEnv):
+class DualFrankaFrankyRot6dEnv(DualFrankaFrankyEnv):
     """Dual-arm Franka env with 20-D TCP-rot6d waypoint actions."""
 
     CONFIG_CLS: type[DualFrankaRobotConfig] = DualFrankaRobotConfig

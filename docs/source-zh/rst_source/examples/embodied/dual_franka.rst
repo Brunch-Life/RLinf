@@ -19,7 +19,7 @@ SFT 微调，以及通过脚踏开关将训练好的策略部署回真机。
   替代 :doc:`franka` 使用的 ROS / serl 路径，左右两台机械臂共用；
 * 三个新双臂环境 —— ``DualFrankaEnv``\ （旧版 14 维 Cartesian
   delta）、``DualFrankaJointEnv``\ （16 维 joint，采集用）、
-  ``DualFrankaRot6dEnv``\ （20 维 TCP-rot6d，SFT 与部署用）；
+  ``DualFrankaFrankyRot6dEnv``\ （20 维 TCP-rot6d，SFT 与部署用）；
 * 用 **rot6d / SE(3) body-frame delta** 替换 openpi 自带的
   component-wise ``DeltaActions``；
 * 由 3 键脚踏驱动的多任务、可断点续采的数据采集流；
@@ -157,7 +157,7 @@ SAC / PPO 训练相比，该 rig：
                             DualFrankaRot6dOutputs（切回 20 维）
                                        │
                                        ▼
-                  DualFrankaRot6dEnv.step（每台机械臂 move_tcp_pose）
+                  DualFrankaFrankyRot6dEnv.step（每台机械臂 move_tcp_pose）
                                        │ C++ 1 kHz CartesianImpedanceTracker
                                        ▼
                                  Franka FR3
@@ -1306,7 +1306,7 @@ Rot6d 部署（``realworld_eval_dual_franka.yaml``）
   joint + rot6d 共享的 env scaffold。
 * ``rlinf/envs/realworld/franka/dual_franka_joint_env.py`` —— 16 维
   joint env。
-* ``rlinf/envs/realworld/franka/dual_franka_rot6d_env.py`` —— 20 维
+* ``rlinf/envs/realworld/franka/dual_franka_franky_rot6d_env.py`` —— 20 维
   rot6d env。
 * ``rlinf/envs/realworld/common/wrappers/dual_gello_joint_intervention.py``
   —— 1 kHz GELLO 守护线程。
