@@ -249,13 +249,12 @@ class DualFrankaEnv(gym.Env):
         if self.hardware_info is None:
             return
         assert isinstance(self.hardware_info, DualFrankaHWInfo), (
-            f"hardware_info must be DualFrankaHWInfo, "
-            f"got {type(self.hardware_info)}."
+            f"hardware_info must be DualFrankaHWInfo, got {type(self.hardware_info)}."
         )
         hw = self.hardware_info.config
-        for field, default in self._HW_FALLBACK_FIELDS:
-            if getattr(self.config, field, None) is None:
-                setattr(self.config, field, getattr(hw, field, default))
+        for field_name, default in self._HW_FALLBACK_FIELDS:
+            if getattr(self.config, field_name, None) is None:
+                setattr(self.config, field_name, getattr(hw, field_name, default))
         for side in ("left_gripper_type", "right_gripper_type"):
             if getattr(self.config, side, None) is None:
                 setattr(

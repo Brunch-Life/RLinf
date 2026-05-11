@@ -155,9 +155,7 @@ class FrankyController(Worker):
                 )
             return create_gripper(gripper_type="franka_hand", robot_ip=robot_ip)
         if gt == "robotiq":
-            return create_gripper(
-                gripper_type="robotiq", port=gripper_connection
-            )
+            return create_gripper(gripper_type="robotiq", port=gripper_connection)
         raise ValueError(
             f"FrankyController: unsupported gripper_type={gripper_type!r}. "
             f"Use 'franka_hand' (libfranka) or 'robotiq'."

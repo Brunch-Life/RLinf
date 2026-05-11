@@ -169,9 +169,7 @@ class FrankyHandGripper(BaseGripper):
         s = float(speed)
         if s <= 1.0:
             s = s * _FRANKA_HAND_MAX_SPEED_MPS
-        return float(
-            np.clip(s, _FRANKA_HAND_MIN_SPEED_MPS, _FRANKA_HAND_MAX_SPEED_MPS)
-        )
+        return float(np.clip(s, _FRANKA_HAND_MIN_SPEED_MPS, _FRANKA_HAND_MAX_SPEED_MPS))
 
 
 def get_default_max_width() -> Optional[float]:
