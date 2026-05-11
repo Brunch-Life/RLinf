@@ -220,11 +220,7 @@ class DualGelloJointIntervention(gym.ActionWrapper):
 
     def step(self, action):
         new_action, replaced = self.action(action)
-        if (
-            self._direct_stream
-            and self._aligned
-            and self._stream_thread is None
-        ):
+        if self._direct_stream and self._aligned and self._stream_thread is None:
             self._start_stream_thread()
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:

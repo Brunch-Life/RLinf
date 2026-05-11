@@ -36,9 +36,7 @@ _VALID_FORMATS = ("pickle", "lerobot")
 _ID_DIR_RE = re.compile(r"^id_(\d+)$")
 
 
-def _scan_existing_lerobot_shards(
-    save_dir: str, rank: int
-) -> tuple[int, int]:
+def _scan_existing_lerobot_shards(save_dir: str, rank: int) -> tuple[int, int]:
     """Return ``(total_episodes, next_shard_id)`` for resume.
 
     ``next_shard_id`` is ``max(existing_id_numbers) + 1`` over every

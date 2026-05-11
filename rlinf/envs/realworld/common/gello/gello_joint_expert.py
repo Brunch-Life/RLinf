@@ -85,8 +85,7 @@ class GelloJointExpert:
                 if self._prev_joints is None:
                     joints = (
                         _GELLO_UNWRAP_REFERENCE
-                        + (joints - _GELLO_UNWRAP_REFERENCE + np.pi)
-                        % (2.0 * np.pi)
+                        + (joints - _GELLO_UNWRAP_REFERENCE + np.pi) % (2.0 * np.pi)
                         - np.pi
                     )
                     joints = np.clip(joints, JOINT_LIMITS_LOWER, JOINT_LIMITS_UPPER)
