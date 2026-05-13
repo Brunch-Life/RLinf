@@ -100,10 +100,6 @@ class DataCollector(Worker):
         for key, val in obs.items():
             if isinstance(val, np.ndarray):
                 val = torch.from_numpy(val)
-            # Below is for not crashed by 
-            # [extra_view_image_names/record_task_description=True].
-            if not isinstance(val, torch.Tensor):
-                continue
             val = val.cpu()
             if key == "images":
                 ret_obs["main_images"] = val.clone()

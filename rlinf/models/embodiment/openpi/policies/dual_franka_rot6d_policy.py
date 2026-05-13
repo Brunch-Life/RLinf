@@ -26,9 +26,6 @@ from openpi.models import model as _model
 
 _STATE_SLICE_DIM = 20  # padded to action_dim downstream
 
-# Asserted so a rig rename fails loud instead of swapping camera meanings.
-_EXPECTED_EXTRA_VIEW_ORDER = ("base_0_rgb", "right_wrist_0_rgb")
-
 
 def _parse_image(image) -> np.ndarray:
     image = np.asarray(image)
@@ -55,12 +52,6 @@ def _extract_extra_views(data: dict) -> tuple[np.ndarray, np.ndarray]:
     """Return (base, right_wrist) from stacked (inference) or split (training)."""
     stacked = data.get("observation/extra_view_image")
     if stacked is not None:
-        names = data.get("observation/extra_view_image_names")
-        if names is not None and tuple(names) != _EXPECTED_EXTRA_VIEW_ORDER:
-            raise AssertionError(
-                f"extra-view camera order drifted: got {tuple(names)}, "
-                f"expected {_EXPECTED_EXTRA_VIEW_ORDER}."
-            )
         extra = np.asarray(stacked)
         return _parse_image(extra[0]), _parse_image(extra[1])
     return (
