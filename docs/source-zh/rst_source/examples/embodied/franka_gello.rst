@@ -93,25 +93,13 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``gello-teleop`` 封装了 ``gello`` 驱动，并集成了 Franka 正运动学
-（使用 dm_control/MuJoCo）和遥操作代理接口。直接从 GitHub 仓库安装：
-
-.. code-block:: bash
-
-   pip install git+https://github.com/RLinf/gello-teleop.git
-
-或者，如果你希望使用可编辑安装：
+（使用 dm_control/MuJoCo）和遥操作代理接口。使用可编辑安装：
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/gello-teleop.git
    cd gello-teleop
    pip install -e .
-
-如果需要同时自动安装 ``gello`` 依赖（如果尚未单独安装）：
-
-.. code-block:: bash
-
-   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
 
 
 3. 配置串口设备
