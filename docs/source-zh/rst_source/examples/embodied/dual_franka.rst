@@ -372,7 +372,7 @@ FTDI 芯片硬件序列号，每条线唯一、跨重启不变）：
    # 列所有 FTDI 转换器
    ls -l /dev/serial/by-id/ | grep -i ftdi
 
-如果两条 GELLO 都接上，会看到两个候选。**分辨左右**用拔插对照法：
+如果两条 GELLO 都接上，会看到两个候选。 分辨左右用拔插对照法：
 
 .. code-block:: bash
 
