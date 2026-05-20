@@ -64,6 +64,8 @@ class DreamZeroConfig(VLAConfig):
         },
     )
 
+    gradient_checkpointing: bool = False
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         for key, value in kwargs.items():
@@ -73,12 +75,30 @@ class DreamZeroConfig(VLAConfig):
 class DreamZeroPolicy(VLA, BasePolicy):
     """Lightweight DreamZero action model: IdentityBackbone + WANPolicyHead."""
 
+    _no_split_modules = [
+        "T5SelfAttention",  # text encoder
+        "AttentionBlock",  # vae
+        "CausalWanAttentionBlock",  # action head
+    ]
+
     def __init__(
         self,
         config: DreamZeroConfig,
     ):
         super().__init__(config)
         self.config = config
+        try:
+            diffusion_model = getattr(getattr(self, "action_head", None), "model", None)
+            enabled = self.config.gradient_checkpointing
+            if diffusion_model is not None:
+                if hasattr(diffusion_model, "_set_gradient_checkpointing"):
+                    diffusion_model._set_gradient_checkpointing(
+                        diffusion_model, enabled
+                    )
+                elif hasattr(diffusion_model, "gradient_checkpointing"):
+                    diffusion_model.gradient_checkpointing = enabled
+        except Exception:
+            pass
 
     def apply(self, batch: Batch, **kwargs) -> Batch:
         """Normalize inputs"""
@@ -296,8 +316,20 @@ class DreamZeroPolicy(VLA, BasePolicy):
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
+        elif forward_type == ForwardType.SFT:
+            return self.sft_forward(**kwargs)
         else:
             raise NotImplementedError
+
+    def sft_forward(self, data=None, **kwargs):
+        if data is None:
+            data = kwargs.get("data")
+        if data is None:
+            raise ValueError("sft_forward requires `data` from the SFT dataloader.")
+        outputs = super().forward(data)
+        if "loss" not in outputs:
+            raise ValueError("sft_forward requires `loss` in the outputs.")
+        return outputs
 
     def default_forward(
         self,

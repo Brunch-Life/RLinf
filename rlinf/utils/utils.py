@@ -14,6 +14,7 @@
 
 import atexit
 import gc
+import importlib
 import os
 import random
 import sys
@@ -50,6 +51,23 @@ def move_to_device_if_tensor(device, item):
 
 cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"))
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
+_UINT32_MOD = 2**32
+
+
+def seed_everything(seed: int) -> int:
+    """Seed Python, NumPy, and PyTorch RNGs."""
+    normalized_seed = int(seed)
+    numpy_seed = normalized_seed % _UINT32_MOD
+
+    random.seed(normalized_seed)
+    np.random.seed(numpy_seed)
+    torch.manual_seed(normalized_seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(normalized_seed)
+        torch.cuda.manual_seed_all(normalized_seed)
+
+    return normalized_seed
 
 
 def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
@@ -108,6 +126,45 @@ def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
         swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
 
 
+def _get_nvtx_module():
+    try:
+        return importlib.import_module("nvtx")
+    except ImportError:
+        return None
+
+
+@contextmanager
+def nvtx_range(name: str, color: str | int | None = None):
+    """Annotate a code range for Nsight or other NVTX-aware profilers."""
+    nvtx_module = _get_nvtx_module()
+    if nvtx_module is not None:
+        annotate_kwargs = {"message": name}
+        if color is not None:
+            annotate_kwargs["color"] = color
+        with nvtx_module.annotate(**annotate_kwargs):
+            yield
+        return
+
+    from rlinf.utils.logging import get_logger
+
+    get_logger().warning(
+        "nvtx_range: NVTX module not found, NVTX annotations are disabled. "
+        "Using torch.cuda.nvtx instead",
+    )
+
+    if hasattr(torch.cuda, "nvtx") and torch.cuda.is_available():
+        torch.cuda.nvtx.range_push(name)
+        try:
+            yield
+        finally:
+            torch.cuda.nvtx.range_pop()
+        return
+    get_logger().warning(
+        "nvtx_range: torch.cuda.nvtx is not available, NVTX annotations are disabled."
+    )
+    yield
+
+
 def configure_batch_sizes(rank, mbs, gbs, dp=1):
     from megatron.core.num_microbatches_calculator import (
         reconfigure_num_microbatches_calculator,
@@ -133,7 +190,7 @@ def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
-    """Compute mean of tensor with a masked values."""
+    """Compute sum of tensor with a masked values."""
     return (values * mask).sum(axis=axis)
 
 
