@@ -26,19 +26,24 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Describes how to convert a saved checkpoint file into HuggingFace safetensors format,  
    which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
 
-- :doc:`hetero`  
-   Introduces how to configure and utilize heterogeneous software and hardware clusters,  
-   to fully leverage different types of computing resources and hardware devices.
-
-- :doc:`cloud-edge`
-   Shows how to build a cloud-edge training setup with EasyTier, connect cloud and
-   edge nodes into one overlay network, and run RLinf on top of that topology.
-
 - :doc:`logger`  
    Introduces how to visualize and track key metrics during your training process.  
    Currently, we support three backends for experiment tracking and visualization: 
    TensorBoard, Weights & Biases (wandb), and SwanLab.
 
+- :doc:`weight_syncer`
+   Introduces the actor-to-rollout weight synchronization optimization used in
+   embodied training, including the ``patch`` and ``bucket`` modes, their
+   configuration, recommended use cases, and performance considerations.
+
+- :doc:`nsight`
+   Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
+   selected Ray worker groups with ``nsys profile``, including how to enable,
+   disable, and target worker groups for system-level traces.
+
+- :doc:`mbridge`
+   Introduces how to use Megatron-Bridge to integrate Megatron-LM training backend,
+   to support HuggingFace-format checkpoint training.
 
 .. toctree::
    :hidden:
@@ -49,6 +54,7 @@ offering practical guidance to help you fully optimize your RL post-training wor
    version
    resume
    convertor
-   hetero
-   cloud-edge
    logger
+   nsight
+   weight_syncer
+   mbridge

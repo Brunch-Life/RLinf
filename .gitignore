@@ -23,3 +23,4 @@ PKG-INFO
 /datasets
 /models
 /checkpoints
+.claude/settings.json
