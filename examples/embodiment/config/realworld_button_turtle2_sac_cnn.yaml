@@ -112,8 +112,9 @@ env:
   train:
     total_num_envs: 1
     override_cfg:
-      use_arm_ids: [1]  # Use single arm (0=left, 1=right)
+      use_arm: right  # single arm: left / right / dual
       use_camera_ids: [2]  # Use single camera
+      camera_names: [wrist_1]
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
       random_xy_range: 0.05
@@ -127,8 +128,9 @@ env:
   eval:
     total_num_envs: 1
     override_cfg:
-      use_arm_ids: [1]  # Use single arm (0=left, 1=right)
+      use_arm: right  # single arm: left / right / dual
       use_camera_ids: [2]  # Use single camera
+      camera_names: [wrist_1]
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
 

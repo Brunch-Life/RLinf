@@ -56,6 +56,9 @@ from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
     LeRobotRealworldDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.x2robot_dataconfig import (
+    LeRobotX2RobotDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
 )
@@ -365,6 +368,18 @@ _CONFIGS = [
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
             extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        # action_horizon / repo_id / weight paths are placeholders; set them to
+        # match the converted x2robot ckpt before running.
+        name="pi0_x2robot",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotX2RobotDataConfig(
+            repo_id="x2robot_dual_arm",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),

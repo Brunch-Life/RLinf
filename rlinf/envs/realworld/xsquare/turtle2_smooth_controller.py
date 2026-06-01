@@ -40,6 +40,7 @@ class Turtle2SmoothController(Worker):
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
+        pose_mode: str = "delta",
     ):
         """Launch a Turtle2SmoothController on the specified worker's node.
 
@@ -47,19 +48,20 @@ class Turtle2SmoothController(Worker):
             freq (int): The interpolate frequency for the controller.
             node_rank (int): The rank of the node to launch the controller on.
             worker_rank (int): The rank of the env worker to the controller is associated with.
+            pose_mode (str): ``'delta'`` (speed-clamped) or ``'abs'`` (direct dispatch).
 
         Returns:
             Turtle2SmoothController: The launched Turtle2SmoothController instance.
         """
         cluster = Cluster()
         placement = NodePlacementStrategy(node_ranks=[node_rank])
-        return Turtle2SmoothController.create_group(freq).launch(
+        return Turtle2SmoothController.create_group(freq, pose_mode).launch(
             cluster=cluster,
             placement_strategy=placement,
             name=f"Turtle2SmoothController-{worker_rank}-{env_idx}",
         )
 
-    def __init__(self, freq=50):
+    def __init__(self, freq=50, pose_mode="delta"):
         super().__init__()
         self._logger = get_logger()
         # FIXME: should move to roscontroller
@@ -88,9 +90,15 @@ class Turtle2SmoothController(Worker):
         self.xyz_speed = 0.5  # m/s
         self.rpy_speed = 1.5  # rad/s
         self.freq = freq
+        if pose_mode not in {"delta", "abs"}:
+            raise ValueError(f"pose_mode must be 'delta' or 'abs', got {pose_mode!r}.")
+        self.pose_mode = pose_mode
 
         # FIXME: should move to roscontroller
-        rospy.Timer(control_period, self.smooth_action_callback)
+        # Only delta mode runs the speed-clamping callback; abs mode dispatches
+        # absolute poses directly via move_abs (interpolation is done env-side).
+        if pose_mode == "delta":
+            rospy.Timer(control_period, self.smooth_action_callback)
         rospy.Timer(state_period, self.state_callback)
 
         tracemalloc.start(15)
@@ -116,7 +124,8 @@ class Turtle2SmoothController(Worker):
         return self._state
 
     def smooth_action_callback(self, event):
-        # print("intimer")
+        if self.pose_mode != "delta":
+            raise RuntimeError("smooth_action_callback is only valid in delta mode.")
         xyz_step = self.xyz_speed / self.freq  # m
         rpy_step = self.rpy_speed / self.freq  # rad
         # start_time = time.time()
@@ -225,7 +234,11 @@ class Turtle2SmoothController(Worker):
             self.controller.arms_control(newpos1, newpos2)
             # time.sleep(0.2 / self.freq)
 
-    def move_arm(self, left_arm_target, right_arm_target):
+    def move_delta(self, left_arm_target, right_arm_target):
+        if self.pose_mode != "delta":
+            raise RuntimeError(
+                f"move_delta requires pose_mode='delta', got {self.pose_mode!r}."
+            )
         assert isinstance(left_arm_target, list) and len(left_arm_target) == 7, (
             "left_arm_target should be a list of length 7"
         )
@@ -234,6 +247,19 @@ class Turtle2SmoothController(Worker):
         )
         self.left_arm_target = left_arm_target
         self.right_arm_target = right_arm_target
+
+    def move_abs(self, left_arm_target, right_arm_target):
+        if self.pose_mode != "abs":
+            raise RuntimeError(
+                f"move_abs requires pose_mode='abs', got {self.pose_mode!r}."
+            )
+        assert isinstance(left_arm_target, list) and len(left_arm_target) == 7, (
+            "left_arm_target should be a list of length 7"
+        )
+        assert isinstance(right_arm_target, list) and len(right_arm_target) == 7, (
+            "right_arm_target should be a list of length 7"
+        )
+        self.controller.arms_control(left_arm_target, right_arm_target)
 
     def reset_arms(self):
         self.left_arm_target = [0, 0, 0, 0, 0, 0, 0]
