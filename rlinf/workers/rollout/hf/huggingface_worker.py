@@ -28,7 +28,7 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.scheduler import Channel, Cluster, CollectiveGroupOptions, Worker
+from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.placement import HybridComponentPlacement
 
@@ -48,18 +48,14 @@ class MultiStepRolloutWorker(Worker):
 
         self.placement = HybridComponentPlacement(cfg, Cluster())
 
-        actor_world_size = self.placement.get_world_size("actor")
-        self.actor_weight_src_rank = self._rank % actor_world_size
+        rollout_world_size = self.placement.get_world_size("rollout")
+        self.actor_weight_src_rank = 0
+        self._weight_sync_rollout_ranks = list(range(rollout_world_size))
+        self._weight_sync_is_sender = self._rank == 0
         self.rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
 
-        # Sync weight comm options
-        max_ctas = cfg.rollout.get("sync_weight_nccl_max_ctas", None)
-        min_ctas = cfg.rollout.get("sync_weight_nccl_min_ctas", None)
-        self._sync_weight_comm_options = CollectiveGroupOptions(
-            accel_max_ctas=max_ctas, accel_min_ctas=min_ctas
-        )
         self.total_num_train_envs = cfg.env.train.total_num_envs
         self.total_num_eval_envs = cfg.env.eval.total_num_envs
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
@@ -90,6 +86,7 @@ class MultiStepRolloutWorker(Worker):
             "rollout.weight_syncer config must be provided"
         )
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+        self._sync_weight_comm_options = self.weight_syncer.comm_options
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -262,6 +259,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.OPENPI,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
+            SupportedModel.ABOT_M0,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
@@ -349,22 +347,29 @@ class MultiStepRolloutWorker(Worker):
         """Sync model parameters from the actor worker."""
 
         async def recv_func() -> Any:
-            data = await self.recv(
-                src_group_name=self.actor_group_name,
-                src_rank=self.actor_weight_src_rank,
+            return await self.broadcast(
+                None,
+                groups=[
+                    (self.actor_group_name, self.actor_weight_src_rank),
+                    (self._group_name, self._weight_sync_rollout_ranks),
+                ],
+                src=(self.actor_group_name, self.actor_weight_src_rank),
                 async_op=True,
                 options=self._sync_weight_comm_options,
             ).async_wait()
-            return data
 
         async def send_func(data: Any) -> None:
-            await self.send(
-                data,
-                dst_group_name=self.actor_group_name,
-                dst_rank=self.actor_weight_src_rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+            if not self._weight_sync_is_sender:
+                return
+            actor_world_size = self.placement.get_world_size("actor")
+            for actor_rank in range(actor_world_size):
+                await self.send(
+                    data,
+                    dst_group_name=self.actor_group_name,
+                    dst_rank=actor_rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
         if not self.weight_syncer.receiver_initialized():
             await self.weight_syncer.init_receiver(
@@ -434,6 +439,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
 
+    @Worker.timer("rollout/generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -483,6 +489,7 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
+    @Worker.timer("rollout/recv_obs")
     async def recv_env_output(
         self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, Any]:
@@ -583,6 +590,7 @@ class MultiStepRolloutWorker(Worker):
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
 
+    @Worker.timer("rollout/send_actions")
     def send_chunk_actions(
         self,
         output_channel: Channel,
@@ -656,6 +664,7 @@ class MultiStepRolloutWorker(Worker):
             for idx in range(len(sizes))
         ]
 
+    @Worker.timer("rollout/send_traj")
     def send_rollout_result(
         self,
         output_channel: Channel,

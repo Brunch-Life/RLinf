@@ -586,6 +586,7 @@ class EnvWorker(Worker):
 
         return merged_final_obs
 
+    @Worker.timer("env/recv_actions")
     def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
         """Receive and merge chunked actions for the current env worker.
 
@@ -727,6 +728,7 @@ class EnvWorker(Worker):
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
+    @Worker.timer("env/send_obs")
     def send_env_batch(
         self,
         rollout_channel: Channel,
@@ -898,6 +900,7 @@ class EnvWorker(Worker):
             for reward_assign_step in range(2, reward_assign_length + 1):
                 rollout_rewards[-reward_assign_step][env_id] += reward[env_id]
 
+    @Worker.timer("env/bootstrap_step")
     def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
             return (
@@ -1000,6 +1003,7 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
+    @Worker.timer("env/send_rollout_trajectories")
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
