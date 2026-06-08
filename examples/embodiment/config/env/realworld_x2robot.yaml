@@ -33,12 +33,12 @@ override_cfg:
   reset_duration: 3.0           # seconds of interpolated abs-pose reset
   use_camera_ids: [0, 1, 2]
   camera_names: [face_view, left_wrist_view, right_wrist_view]
-  task_description: "pick up the object and place it"
+  task_description: "fold the towel"
   use_dense_reward: False
   enforce_gripper_close: False
   # Safety box per arm [x, y, z, r, p, y]; fill from real calibration.
   target_ee_pose: [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
-  reset_ee_pose: [[0.3, 0.0, 0.1, 0.0, 0.0, 0.0], [0.1, 0.0, 0.1, 0.0, 0.0, 0.0]]
+  reset_ee_pose: [[-0.002777770599435306, -0.00037231527336321554, 0.0014519858255221674, 0.004020961730298178, 0.004386900374405497, -0.004196153947005824], [-0.0017664295027348537, 0.00010039842898434967, -0.00508860601030417, 0.008593506352349397, 0.022315979998901878, 0.0003815791868463077]]
   ee_pose_limit_min: [[-1.0, -1.0, -1.0, -3.2, -3.2, -3.2], [-1.0, -1.0, -1.0, -3.2, -3.2, -3.2]]
   ee_pose_limit_max: [[1.0, 1.0, 1.0, 3.2, 3.2, 3.2], [1.0, 1.0, 1.0, 3.2, 3.2, 3.2]]
   gripper_width_limit_min: 0.0

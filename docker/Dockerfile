@@ -54,6 +54,10 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 # bypasses the platform switch and always uses a plain Ubuntu base.
 FROM ubuntu:20.04 AS base-image-embodied-franka
 
+# XSquare Turtle2 also uses ROS Noetic, so it follows the Franka real-world
+# target and stays on Ubuntu 20.04 instead of the platform base.
+FROM ubuntu:20.04 AS base-image-embodied-xsquare_turtle2
+
 
 ##################################################################################################
 # Select base image according to BUILD_TARGET
@@ -87,7 +91,8 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
             sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; \
         fi; \
     fi
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY && \
+    apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
     build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
     wget unzip curl
@@ -96,14 +101,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ##################################################################################################
 # Python / pip / uv setup
 ##################################################################################################
-RUN pip config set global.index-url https://mirrors.ustc.edu.cn/pypi/simple
-RUN python3 -m pip install -i https://mirrors.ustc.edu.cn/pypi/simple --upgrade pip setuptools wheel uv
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN python3 -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip setuptools wheel uv
 
 ENV HF_HOME=/opt/.cache/huggingface
 RUN mkdir -p $HF_HOME
 
 ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
-ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
+ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://pypi.tuna.tsinghua.edu.cn/simple"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
 
@@ -311,6 +316,17 @@ RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
 
 # Set default env (recommended libfranka 0.15.0)
 RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: XSquare Turtle2 (Ubuntu 20.04, ROS Noetic)
+##################################################################################################
+FROM embodied-common-image AS embodied-xsquare_turtle2-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv xsquare_turtle2 --env xsquare_turtle2
+
+# Set default env
+RUN echo "source ${UV_PATH}/xsquare_turtle2/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

@@ -740,11 +740,8 @@ install_uv() {
 
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
-        export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
-        export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
+        export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        export GITHUB_PREFIX="https://ghfast.top/"
-        git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
     fi
 }
 
@@ -753,7 +750,9 @@ unset_mirror() {
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
         unset HF_ENDPOINT
-        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf
+        if [ -n "$GITHUB_PREFIX" ]; then
+            git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf
+        fi
     fi
 }
 
@@ -1651,7 +1650,14 @@ install_franka_dexhand_deps() {
 }
 
 install_xsquare_turtle2_env() {
+    if [ "$SKIP_ROS" -ne 1 ] && [ "$NO_ROOT" -eq 0 ]; then
+        bash "$SCRIPT_DIR/embodied/ros_turtle2_install.sh"
+    fi
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+    if [ "$SKIP_ROS" -ne 1 ]; then
+        echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
+        echo 'if [ -f /home/arm/prj/turtle2/modules/devel/setup.bash ]; then source /home/arm/prj/turtle2/modules/devel/setup.bash; fi' >> "$VENV_DIR/bin/activate"
+    fi
 }
 
 install_robotwin_env() {

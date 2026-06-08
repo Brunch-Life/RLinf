@@ -6,6 +6,14 @@ Brief for AI coding agents working on RLinf. For full contribution flow, code st
 
 ---
 
+## Local workspace notes
+
+- On this machine, the local Python environment is the project-root `.venv`.
+  For host-side commands, activate it with `source .venv/bin/activate` before
+  running Python, Hydra, tests, or RLinf scripts.
+
+---
+
 ## Code structure
 
 - **`.cursor/`** – Rules and skills: `rules/agents-md.mdc`, `skills/add-install-docker-ci-e2e`, `skills/add-example-doc-model-env`, `skills/review-pr`.
