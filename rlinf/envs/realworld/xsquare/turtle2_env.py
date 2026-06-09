@@ -653,16 +653,39 @@ class Turtle2Env(gym.Env):
     def _crop_frame(
         self, frame: np.ndarray, reshape_size: tuple[int, int]
     ) -> np.ndarray:
-        """Crop the frame to the desired resolution."""
-        h, w, _ = frame.shape
-        crop_size = min(h, w)
-        start_x = (w - crop_size) // 2
-        start_y = (h - crop_size) // 2
-        cropped_frame = frame[
-            start_y : start_y + crop_size, start_x : start_x + crop_size
-        ]
-        resized_frame = cv2.resize(cropped_frame, reshape_size)
-        return resized_frame
+        """Letterbox the frame to ``reshape_size`` (aspect-preserving resize +
+        symmetric black padding), replicating openpi ``resize_with_pad``.
+
+        The fold_towel checkpoint was trained on the FULL 640x480 frame fed
+        through ``resize_with_pad(224, 224)`` (letterboxed, top/bottom padding) —
+        NOT a center crop. The working reference deploy likewise sends the full
+        frame and lets the model's ``resize_with_pad`` letterbox it. A center
+        crop would change the field of view and drop the letterbox padding the
+        policy expects, so we must letterbox here too. (resize_with_pad to 128
+        then the model's resize_with_pad to 224 yields the same framing as the
+        reference's direct 640->224, only at lower intermediate resolution.)
+
+        Channel order: the turtle2 camera returns RGB (``imgmsg_to_cv2`` with
+        ``"rgb8"``) and the reference feeds the model RGB too (its server does
+        ``cv2.cvtColor(..., COLOR_BGR2RGB)`` after decoding the bgr8 JPEG), so we
+        keep RGB and do NOT swap channels.
+        """
+        target_h, target_w = reshape_size
+        h, w = frame.shape[:2]
+        ratio = max(w / target_w, h / target_h)
+        resized_w = max(1, int(w / ratio))
+        resized_h = max(1, int(h / ratio))
+        resized = cv2.resize(
+            frame, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR
+        )
+        pad_h0, rem_h = divmod(target_h - resized_h, 2)
+        pad_h1 = pad_h0 + rem_h
+        pad_w0, rem_w = divmod(target_w - resized_w, 2)
+        pad_w1 = pad_w0 + rem_w
+        return cv2.copyMakeBorder(
+            resized, pad_h0, pad_h1, pad_w0, pad_w1,
+            cv2.BORDER_CONSTANT, value=(0, 0, 0),
+        )
 
     # Robot actions
 

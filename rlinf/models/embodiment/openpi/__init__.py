@@ -33,6 +33,15 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         OpenPi0ForRLActionPrediction,
     )
 
+    # pi0's Observation.state is typed 2-D (`*b s`); the x2robot sm2sm deploy
+    # feeds a (batch, seq_len, dim) state window. Disable jaxtyping's
+    # construction-time shape check in this (inference) process so the sequence
+    # state reaches the model, which handles it in `embed_suffix`. Single-frame
+    # s2m state would pass the check anyway, so this is a no-op for it.
+    import jaxtyping as _jaxtyping
+
+    _jaxtyping.config.update("jaxtyping_disable", True)
+
     # config
     config_name = getattr(cfg.openpi, "config_name", None)
     data_kwargs = getattr(cfg, "openpi_data", None)

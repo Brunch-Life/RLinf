@@ -137,7 +137,7 @@ python -c "import rospy; rospy.init_node('rlinf_turtle2_import_test', anonymous=
 
 ## 4. 启动远端 RLinf Ray worker 容器
 
-真实跑 `realworld_x2robot_eval` 时，入口脚本在 GPU/head 节点执行；远端
+真实跑 `realworld_x2robot_s2m_eval` 时，入口脚本在 GPU/head 节点执行；远端
 `sohu-turtle-1` 上这个容器只负责 Ray worker 和真机 env。
 
 先在 GPU/head 节点启动 Ray head。示例：
@@ -199,7 +199,7 @@ ray status
 
 ## 5. 在 head 节点运行 RLinf 程序
 
-当前 `examples/embodiment/config/realworld_x2robot_eval.yaml` 的拓扑是：
+当前 `examples/embodiment/config/realworld_x2robot_s2m_eval.yaml` 的拓扑是：
 
 - `actor` 和 `rollout` 放在 node group `"4090"`，即 node rank `0`
 - `env` 放在 node group `turtle2`，即 node rank `1`
@@ -215,7 +215,7 @@ export PYTHONPATH=/path/to/RLinf:${PYTHONPATH}
 export RLINF_NODE_RANK=0
 export RLINF_COMM_NET_DEVICES=<gpu_head_network_interface>
 
-bash examples/embodiment/run_realworld_eval.sh realworld_x2robot_eval \
+bash examples/embodiment/run_realworld_eval.sh realworld_x2robot_s2m_eval \
   env.train.override_cfg.is_dummy=True \
   env.eval.override_cfg.is_dummy=True \
   runner.ckpt_path=/path/to/x2robot_ckpt.pt \
@@ -225,14 +225,14 @@ bash examples/embodiment/run_realworld_eval.sh realworld_x2robot_eval \
 dummy 通过后，再改成真机：
 
 ```bash
-bash examples/embodiment/run_realworld_eval.sh realworld_x2robot_eval \
+bash examples/embodiment/run_realworld_eval.sh realworld_x2robot_s2m_eval \
   env.train.override_cfg.is_dummy=False \
   env.eval.override_cfg.is_dummy=False \
   runner.ckpt_path=/path/to/x2robot_ckpt.pt \
   rollout.model.model_path=/path/to/x2robot_model
 ```
 
-真机运行前必须确认 `examples/embodiment/config/env/realworld_x2robot.yaml` 中这些值已经按实机标定更新：
+真机运行前必须确认 `examples/embodiment/config/env/realworld_x2robot_s2m.yaml` 中这些值已经按实机标定更新：
 
 - `reset_ee_pose`
 - `target_ee_pose`

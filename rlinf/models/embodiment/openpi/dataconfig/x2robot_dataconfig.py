@@ -27,6 +27,9 @@ class LeRobotX2RobotDataConfig(DataConfigFactory):
     """Data configuration for x2robot/Turtle2 dual-arm absolute-pose datasets."""
 
     default_prompt: str | None = None
+    # Real action dims to keep from the model's padded (32-dim) output.
+    # 14 for s2m (dual-arm slave); 28 for sm2sm (slave 14 + master 14).
+    output_action_dim: int = 14
 
     @override
     def create(
@@ -48,7 +51,7 @@ class LeRobotX2RobotDataConfig(DataConfigFactory):
 
         data_transforms = _transforms.Group(
             inputs=[x2robot_policy.X2RobotInputs(action_dim=model_config.action_dim)],
-            outputs=[x2robot_policy.X2RobotOutputs()],
+            outputs=[x2robot_policy.X2RobotOutputs(action_dim=self.output_action_dim)],
         )
 
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(

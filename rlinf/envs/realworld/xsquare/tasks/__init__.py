@@ -27,7 +27,8 @@ from rlinf.envs.realworld.xsquare.tasks.button_env import (
     ButtonEnv as ButtonEnv,
 )
 from rlinf.envs.realworld.xsquare.tasks.x2robot_deploy import (
-    X2RobotDeployEnv as X2RobotDeployEnv,
+    X2RobotS2mDeployEnv as X2RobotS2mDeployEnv,
+    X2RobotSm2smDeployEnv as X2RobotSm2smDeployEnv,
 )
 
 
@@ -47,14 +48,30 @@ def create_button_env(
     return apply_single_arm_wrappers(env, env_cfg)
 
 
-def create_x2robot_deploy_env(
+def create_x2robot_s2m_deploy_env(
     override_cfg: dict[str, Any],
     worker_info: Any,
     hardware_info: Any,
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
-    env = X2RobotDeployEnv(
+    env = X2RobotS2mDeployEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return AbsolutePoseChunkWrapper(env)
+
+
+def create_x2robot_sm2sm_deploy_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = X2RobotSm2smDeployEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
@@ -69,6 +86,11 @@ register(
 )
 
 register(
-    id="X2RobotDeploy-v1",
-    entry_point="rlinf.envs.realworld.xsquare.tasks:create_x2robot_deploy_env",
+    id="X2RobotS2mDeploy-v1",
+    entry_point="rlinf.envs.realworld.xsquare.tasks:create_x2robot_s2m_deploy_env",
+)
+
+register(
+    id="X2RobotSm2smDeploy-v1",
+    entry_point="rlinf.envs.realworld.xsquare.tasks:create_x2robot_sm2sm_deploy_env",
 )

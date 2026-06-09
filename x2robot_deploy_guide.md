@@ -16,7 +16,7 @@
 3. XSquare 约定的位姿格式为 6 维：`[x, y, z, rz, ry, rx]`（单位：米、弧度）。
 
 ### B. 校准环境配置文件
-打开 `examples/embodiment/config/env/realworld_x2robot.yaml`，按标定数据更新以下字段：
+打开 `examples/embodiment/config/env/realworld_x2robot_s2m.yaml`，按标定数据更新以下字段：
 ```yaml
 override_cfg:
   is_dummy: False                 # 确保物理运行前该值设为 False
@@ -36,7 +36,7 @@ override_cfg:
 ```
 
 ### C. 校准全局评估配置文件
-打开 `examples/embodiment/config/realworld_x2robot_eval.yaml`，确保核心维度及路径与你转换的 Checkpoint 对应：
+打开 `examples/embodiment/config/realworld_x2robot_s2m_eval.yaml`，确保核心维度及路径与你转换的 Checkpoint 对应：
 ```yaml
 runner:
   ckpt_path: "/path/to/x2robot_ckpt.pt"                  # RLinf 覆盖权重路径
@@ -106,10 +106,10 @@ ray start --address='<gpu_pc_ip_address>:6379'
 
 在正式让机械臂物理动起来之前，建议进行 **Dummy 闭环自检**，以验证两端通信与 VLA 推理速度是否达到预期：
 
-1. 在 `examples/embodiment/config/env/realworld_x2robot.yaml` 中，临时将 `is_dummy: False` 修改为 `is_dummy: True`。
+1. 在 `examples/embodiment/config/env/realworld_x2robot_s2m.yaml` 中，临时将 `is_dummy: False` 修改为 `is_dummy: True`。
 2. 在 GPU PC 终端执行评估命令：
    ```bash
-   bash examples/embodiment/eval_embodiment.sh realworld_x2robot_eval
+   bash examples/embodiment/eval_embodiment.sh realworld_x2robot_s2m_eval
    ```
 3. 观察输出日志，若两端顺利完成了 Ray Channel 的 Observation 和 Actions 数据包同步，代表分布式链路搭建完成。验证通过后，将 `is_dummy` 改回 `False`。
 

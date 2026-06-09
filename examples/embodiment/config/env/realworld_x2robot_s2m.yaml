@@ -21,7 +21,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/train
 
 init_params:
-  id: "X2RobotDeploy-v1"
+  id: "X2RobotS2mDeploy-v1"
   num_envs: null
 
 override_cfg:
@@ -32,7 +32,10 @@ override_cfg:
   exec_frequency: 60.0          # high-frequency dispatch rate
   reset_duration: 3.0           # seconds of interpolated abs-pose reset
   use_camera_ids: [0, 1, 2]
-  camera_names: [face_view, left_wrist_view, right_wrist_view]
+  # See realworld_x2robot_sm2sm.yaml: /camera1 & /camera3 are WRIST cams,
+  # /camera2 is the FRONT/face cam. Order names by use_camera_ids to match the
+  # reference (/cam1->left_wrist, /cam2->face, /cam3->right_wrist).
+  camera_names: [left_wrist_view, face_view, right_wrist_view]
   task_description: "fold the towel"
   use_dense_reward: False
   enforce_gripper_close: False

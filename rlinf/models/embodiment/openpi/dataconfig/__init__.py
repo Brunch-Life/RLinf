@@ -374,12 +374,28 @@ _CONFIGS = [
     TrainConfig(
         # repo_id / weight paths are placeholders; set them to match the
         # converted x2robot ckpt before running.
-        name="pi0_x2robot",
+        name="pi0_x2robot_s2m",
         model=pi0_config.Pi0Config(action_horizon=10),
         data=LeRobotX2RobotDataConfig(
             repo_id="x2robot_dual_arm",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        # sm2sm fold_towel ckpt (HF safetensors): state = slave14 + master14
+        # (+ master_mask), action = slave14 + master14 (output_action_dim=28).
+        # action_horizon=20 matches training; repo_id is the norm_stats asset id
+        # (assets/<repo_id>/norm_stats.json under model_path). Set model_path to
+        # the converted ckpt dir via rollout.model.model_path.
+        name="pi0_x2robot_sm2sm",
+        model=pi0_config.Pi0Config(action_horizon=20),
+        data=LeRobotX2RobotDataConfig(
+            repo_id="fold_towel_tele_0317_0318_0420",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            output_action_dim=28,
         ),
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),

@@ -1,6 +1,6 @@
 defaults:
-  - env/realworld_x2robot@env.train
-  - env/realworld_x2robot@env.eval
+  - env/realworld_x2robot_s2m@env.train
+  - env/realworld_x2robot_s2m@env.eval
   - model/pi0@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
@@ -110,12 +110,12 @@ actor:
 
   model:
     model_path: ${rollout.model.model_path}
-    num_action_chunks: 10   # chunk length T; matches pi0_x2robot action_horizon
+    num_action_chunks: 10   # chunk length T; matches pi0_x2robot_s2m action_horizon
     state_dim: 14           # dual-arm xyz_rpy_gripper (7 x 2)
     action_dim: 14
     add_value_head: False
 
     openpi:
-      config_name: "pi0_x2robot"
+      config_name: "pi0_x2robot_s2m"
       num_images_in_input: 3
       action_chunk: ${actor.model.num_action_chunks}

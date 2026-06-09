@@ -1,0 +1,131 @@
+defaults:
+  - env/realworld_x2robot_sm2sm@env.train
+  - env/realworld_x2robot_sm2sm@env.eval
+  - model/pi0@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: "4090"
+      placement: 0
+    env:
+      node_group: turtle2
+      placement: 0
+    rollout:
+      node_group: "4090"
+      placement: 0
+  node_groups:
+    - label: "4090"
+      node_ranks: 0
+    - label: turtle2
+      node_ranks: 1
+      hardware:
+        type: Turtle2
+        configs:
+          - node_rank: 1
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "realworld-x2robot-sm2sm-eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+  val_check_interval: -1
+
+  # Weights + norm_stats are loaded from rollout.model.model_path (HF safetensors
+  # + assets/<asset_id>/norm_stats.json); leave ckpt_path null.
+  ckpt_path: null
+
+algorithm:
+  group_size: 1
+  eval_rollout_epoch: 1   # DEBUG: one short episode for the obs dump (revert to 10)
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: "token-mean"
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  length_params:
+    max_new_token: 28
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+  train:
+    total_num_envs: 1
+
+  eval:
+    ignore_terminations: False
+    total_num_envs: 1
+    max_steps_per_rollout_epoch: 1995   # ~2000, multiple of num_action_chunks=15 (133*15)
+    max_episode_steps: 1995
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+
+  model:
+    # HF safetensors sm2sm ckpt dir (contains model-*.safetensors +
+    # assets/fold_towel_tele_0317_0318_0420/norm_stats.json).
+    model_path: "/home/i-yinuo/models/fold_towel_lzh_0317_0318_0420_2of4"
+    precision: ${actor.model.precision}
+
+critic:
+  use_critic_model: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+
+  micro_batch_size: 64
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: True
+
+  model:
+    model_path: ${rollout.model.model_path}
+    # TEMP cadence fix to match the reference move_steps=15: model generates
+    # action_horizon=20 but we consume only the first 15 frames per inference,
+    # then re-infer (more closed-loop, less open-loop drift). REVERT to 20 (and
+    # max_steps back to 500) to undo. max_steps (495) must be divisible by this.
+    num_action_chunks: 15
+    # Reference openpi inference uses 10 flow-denoise steps; RLinf's pi0 default
+    # (model/pi0.yaml) is 4 (cheaper, for RL training). Match the reference for
+    # clean eval action quality.
+    num_steps: 10
+    state_dim: 28           # per-frame [slave 14 | master 14]
+    action_dim: 28          # model output sliced to slave 14 + master 14
+    add_value_head: False
+
+    openpi:
+      config_name: "pi0_x2robot_sm2sm"
+      num_images_in_input: 3
+      action_chunk: ${actor.model.num_action_chunks}

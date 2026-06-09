@@ -24,7 +24,11 @@ import torch.nn.functional as F
 from openpi import transforms as _transforms
 from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
-from openpi.models_pytorch.pi0_pytorch import PI0Pytorch, make_att_2d_masks
+from openpi.models_pytorch.pi0_pytorch import (
+    PI0Pytorch,
+    create_sinusoidal_pos_embedding,
+    make_att_2d_masks,
+)
 from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -623,6 +627,101 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "forward_inputs": forward_inputs,
         }
         return actions, result
+
+    def embed_suffix(self, state, noisy_actions, timestep):
+        """Override of ``PI0Pytorch.embed_suffix`` that supports a multi-token
+        state window ``(B, seq_len, state_dim)`` (sm2sm history/future), while
+        producing byte-identical tokens to the parent for single-frame
+        ``(B, state_dim)`` state (s2m). Only the state-embedding block differs:
+        the parent emits exactly one state token; here a single frame still
+        yields one token, but a window yields ``seq_len`` state tokens.
+        """
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+        if not self.pi05:
+            if self.state_proj.weight.dtype == torch.float32:
+                state = state.to(torch.float32)
+
+            # (B, state_dim) single frame -> 1 token [s2m, identical to parent];
+            # (B, seq_len, state_dim) window -> seq_len state tokens [sm2sm].
+            if state.ndim == 2:
+                state = state[:, None, :]
+            num_state_tokens = state.shape[1]
+
+            def state_proj_func(state):
+                return self.state_proj(state)
+
+            state_emb = self._apply_checkpoint(state_proj_func, state)
+
+            embs.append(state_emb)
+            bsize = state_emb.shape[0]
+            device = state_emb.device
+
+            state_mask = torch.ones(
+                bsize, num_state_tokens, dtype=torch.bool, device=device
+            )
+            pad_masks.append(state_mask)
+
+            # One attention block opens at the first state token; any remaining
+            # state tokens attend within that block.
+            att_masks += [1] + ([0] * (num_state_tokens - 1))
+
+        time_emb = create_sinusoidal_pos_embedding(
+            timestep,
+            self.action_in_proj.out_features,
+            min_period=4e-3,
+            max_period=4.0,
+            device=timestep.device,
+        )
+        time_emb = time_emb.type(dtype=timestep.dtype)
+
+        def action_proj_func(noisy_actions):
+            return self.action_in_proj(noisy_actions)
+
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+
+        if not self.pi05:
+            time_emb = time_emb[:, None, :].expand_as(action_emb)
+            action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+            def mlp_func(action_time_emb):
+                x = self.action_time_mlp_in(action_time_emb)
+                x = F.silu(x)  # swish == silu
+                return self.action_time_mlp_out(x)
+
+            action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
+            adarms_cond = None
+        else:
+
+            def time_mlp_func(time_emb):
+                x = self.time_mlp_in(time_emb)
+                x = F.silu(x)  # swish == silu
+                x = self.time_mlp_out(x)
+                return F.silu(x)
+
+            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
+            action_time_emb = action_emb
+            adarms_cond = time_emb
+
+        embs.append(action_time_emb)
+
+        bsize, action_time_dim = action_time_emb.shape[:2]
+        action_time_mask = torch.ones(
+            bsize, action_time_dim, dtype=torch.bool, device=timestep.device
+        )
+        pad_masks.append(action_time_mask)
+
+        # image, language and state inputs do not attend to action tokens
+        att_masks += [1] + ([0] * (self.config.action_horizon - 1))
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=embs.dtype, device=embs.device)
+        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
+
+        return embs, pad_masks, att_masks, adarms_cond
 
     @torch.no_grad()
     def sample_actions(

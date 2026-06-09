@@ -1,0 +1,70 @@
+env_type: realworld
+
+total_num_envs: null
+
+auto_reset: True
+ignore_terminations: True
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 200
+max_episode_steps: 200
+# face_view is the main image; the two wrist views become extra_view_images
+# (sorted: left_wrist_view, right_wrist_view), matching X2RobotInputs.
+main_image_key: face_view
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+# DEBUG: dump every rollout step's obs (main_images / extra_view_images / states)
+# to pickle so we can inspect the exact image (post _crop_frame BGR-swap) + state
+# window the model receives. Runs in the env worker on the robot; save_dir is a
+# robot-side path (maps to host /home/arm/RLinf_feature_turtle2_deploy/...).
+# Pickle flushes one file per episode on truncation. Remove this block to disable.
+data_collection:
+  enabled: True
+  save_dir: /workspace/RLinf/rollout_dump_sm2sm
+  export_format: "pickle"
+  only_success: False
+  robot_type: "turtle2"
+  fps: 20
+
+init_params:
+  id: "X2RobotSm2smDeploy-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: False
+  use_arm: dual                 # dual / left / right
+  state_format: xyz_rpy_gripper
+  step_frequency: 20.0          # chunk-frame rate fed by rollout
+  exec_frequency: 60.0          # high-frequency dispatch rate
+  reset_duration: 3.0           # seconds of interpolated abs-pose reset
+  # sm2sm state window: state = (history+1+future, [slave_14 | master_14]).
+  state_history_size: 3
+  state_future_size: 2
+  use_camera_ids: [0, 1, 2]
+  # CRITICAL slot mapping. get_camN_data reads /cameraN: physically /camera1 &
+  # /camera3 are the WRIST cams, /camera2 is the FRONT/face cam (it sees both
+  # arms). The reference deploy maps /camera1->left_wrist, /camera2->face,
+  # /camera3->right_wrist. camera_names is ordered by use_camera_ids, so it must
+  # be [left_wrist_view(/cam1), face_view(/cam2), right_wrist_view(/cam3)].
+  # (Was [face_view, left_wrist_view, ...], which fed a wrist cam into the
+  # base_0_rgb/face slot and the front cam into the wrist slot — swapped.)
+  camera_names: [left_wrist_view, face_view, right_wrist_view]
+  # The reference sm2sm deploy (x2robot_infer_seq.py) feeds an EMPTY prompt;
+  # match it (a non-empty prompt shifts the language-conditioned policy).
+  task_description: ""
+  use_dense_reward: False
+  enforce_gripper_close: False
+  # Safety box per arm [x, y, z, r, p, y]; fill from real calibration.
+  target_ee_pose: [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+  reset_ee_pose: [[-0.002777770599435306, -0.00037231527336321554, 0.0014519858255221674, 0.004020961730298178, 0.004386900374405497, -0.004196153947005824], [-0.0017664295027348537, 0.00010039842898434967, -0.00508860601030417, 0.008593506352349397, 0.022315979998901878, 0.0003815791868463077]]
+  ee_pose_limit_min: [[-1.0, -1.0, -1.0, -3.2, -3.2, -3.2], [-1.0, -1.0, -1.0, -3.2, -3.2, -3.2]]
+  ee_pose_limit_max: [[1.0, 1.0, 1.0, 3.2, 3.2, 3.2], [1.0, 1.0, 1.0, 3.2, 3.2, 3.2]]
+  gripper_width_limit_min: 0.0
+  gripper_width_limit_max: 5.0
