@@ -750,9 +750,6 @@ unset_mirror() {
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
         unset HF_ENDPOINT
-        if [ -n "$GITHUB_PREFIX" ]; then
-            git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf
-        fi
     fi
 }
 

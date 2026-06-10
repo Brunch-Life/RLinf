@@ -372,8 +372,8 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
     TrainConfig(
-        # repo_id / weight paths are placeholders; set them to match the
-        # converted x2robot ckpt before running.
+        # action_horizon / repo_id / weight paths are placeholders; set them to
+        # match the converted x2robot ckpt before running.
         name="pi0_x2robot",
         model=pi0_config.Pi0Config(action_horizon=10),
         data=LeRobotX2RobotDataConfig(

@@ -6,17 +6,11 @@ SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_PATH="$(dirname "$SCRIPT_PATH")"
 RAY_HEAD_IP_FILE="${RAY_HEAD_IP_FILE:-$REPO_PATH/ray_utils/ray_head_ip.txt}"
 
-if [[ "$REPO_PATH" == "/workspace/RLinf" || "$REPO_PATH" == "/home/arm/RLinf_feature_turtle2_deploy" || "$(hostname)" == "arm-turtle" ]]; then
-    export RLINF_NODE_RANK=1
-    export RLINF_COMM_NET_DEVICES=enp1s0
-    export RAY_HEAD_IP=192.168.120.237
-else
-    export RLINF_NODE_RANK=0
-    export RLINF_COMM_NET_DEVICES=enp132s0
+if [[ -z "${RLINF_NODE_RANK:-}" ]]; then
+    echo "Error: RLINF_NODE_RANK environment variable not set!" >&2
+    exit 1
 fi
-
 RANK_VALUE="$RLINF_NODE_RANK"
-export RLINF_NODE_RANK="$RANK_VALUE"
 
 RAY_PORT="${RAY_PORT:-6379}"
 RAY_STOP_BEFORE_START="${RAY_STOP_BEFORE_START:-1}"
