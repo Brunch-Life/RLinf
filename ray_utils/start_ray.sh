@@ -1,93 +1,48 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-set -euo pipefail
-
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_PATH="$(dirname "$SCRIPT_PATH")"
-RAY_HEAD_IP_FILE="${RAY_HEAD_IP_FILE:-$REPO_PATH/ray_utils/ray_head_ip.txt}"
-
-if [[ -z "${RLINF_NODE_RANK:-}" ]]; then
-    echo "Error: RLINF_NODE_RANK environment variable not set!" >&2
-    exit 1
-fi
-RANK_VALUE="$RLINF_NODE_RANK"
-
-RAY_PORT="${RAY_PORT:-6379}"
-RAY_STOP_BEFORE_START="${RAY_STOP_BEFORE_START:-1}"
-RAY_BLOCK="${RAY_BLOCK:-0}"
-RAY_TEMP_DIR="${RAY_TEMP_DIR:-/tmp/ray-rlinf}"
-
-unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
-
-get_ip_from_interface() {
-    local iface="$1"
-    ip -4 -o addr show dev "$iface" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1
-}
-
-get_default_ip() {
-    hostname -I | awk '{print $1}'
-}
-
-NODE_IP="${RAY_NODE_IP_ADDRESS:-}"
-if [[ -z "$NODE_IP" && -n "${RLINF_COMM_NET_DEVICES:-}" ]]; then
-    NODE_IP="$(get_ip_from_interface "$RLINF_COMM_NET_DEVICES")"
-fi
-if [[ -z "$NODE_IP" ]]; then
-    NODE_IP="$(get_default_ip)"
-fi
-if [[ -z "$NODE_IP" ]]; then
-    echo "Error: could not determine node IP. Set RAY_NODE_IP_ADDRESS explicitly." >&2
+# Parameter check
+if [ -z "$RANK" ]; then
+    echo "Error: RANK environment variable not set!"
     exit 1
 fi
 
-export PYTHONPATH="$REPO_PATH:${PYTHONPATH:-}"
+# Configuration file path (modify according to actual needs)
+SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_PATH=$(dirname "$SCRIPT_PATH")
+RAY_HEAD_IP_FILE=$REPO_PATH/ray_utils/ray_head_ip.txt
+RAY_PORT=${RAY_PORT:-29500}  # Default port for Ray, can be modified if needed
 
-if [[ "$RAY_STOP_BEFORE_START" == "1" ]]; then
-    ray stop --force || true
-    pkill -9 gcs_server 2>/dev/null || true
-    pkill -9 raylet 2>/dev/null || true
-fi
-
-ray_args=(--node-ip-address="$NODE_IP" --disable-usage-stats)
-
-if [[ -n "${RAY_TEMP_DIR:-}" ]]; then
-    ray_args+=(--temp-dir="$RAY_TEMP_DIR")
-fi
-if [[ -n "${RAY_MEMORY:-}" ]]; then
-    ray_args+=(--memory="$RAY_MEMORY")
-fi
-if [[ -n "${RAY_OBJECT_STORE_MEMORY:-}" ]]; then
-    ray_args+=(--object-store-memory="$RAY_OBJECT_STORE_MEMORY")
-fi
-if [[ "$RAY_BLOCK" == "1" ]]; then
-    ray_args+=(--block)
-fi
-
-if [[ "$RANK_VALUE" -eq 0 ]]; then
-    RAY_NUM_GPUS="${RAY_NUM_GPUS:-1}"
-    if [[ -n "${RAY_NUM_GPUS:-}" ]]; then
-        ray_args+=(--num-gpus="$RAY_NUM_GPUS")
-    fi
-
-    echo "Starting Ray head: rank=$RANK_VALUE ip=$NODE_IP port=$RAY_PORT"
-    ray start --head --port="$RAY_PORT" "${ray_args[@]}"
-
-    echo "$NODE_IP" > "$RAY_HEAD_IP_FILE"
+# Head node startup logic
+if [ "$RANK" -eq 0 ]; then
+    # Get local machine IP address (assumed to be intranet IP)
+    IP_ADDRESS=$(hostname -I | awk '{print $1}')
+    # Start Ray head node
+    echo "Starting Ray head node on rank 0, IP: $IP_ADDRESS"
+    ray start --head --memory=461708984320 --port=$RAY_PORT
+    
+    # Write IP to file
+    echo "$IP_ADDRESS" > $RAY_HEAD_IP_FILE
     echo "Head node IP written to $RAY_HEAD_IP_FILE"
 else
-    HEAD_ADDRESS="${RAY_ADDRESS:-}"
-    if [[ -z "$HEAD_ADDRESS" ]]; then
-        HEAD_IP="${RAY_HEAD_IP:-}"
-        if [[ -z "$HEAD_IP" && -f "$RAY_HEAD_IP_FILE" ]]; then
-            HEAD_IP="$(cat "$RAY_HEAD_IP_FILE")"
+    # Worker node startup logic
+    echo "Waiting for head node IP file..."
+    
+    # Wait for file to appear (wait up to 360 seconds)
+    for i in {1..360}; do
+        if [ -f $RAY_HEAD_IP_FILE ]; then
+            HEAD_ADDRESS=$(cat $RAY_HEAD_IP_FILE)
+            if [ -n "$HEAD_ADDRESS" ]; then
+                break
+            fi
         fi
-        if [[ -z "$HEAD_IP" ]]; then
-            echo "Error: set RAY_HEAD_IP or RAY_ADDRESS on worker nodes." >&2
-            exit 1
-        fi
-        HEAD_ADDRESS="$HEAD_IP:$RAY_PORT"
+        sleep 1
+    done
+    
+    if [ -z "$HEAD_ADDRESS" ]; then
+        echo "Error: Could not get head node address from $RAY_HEAD_IP_FILE"
+        exit 1
     fi
-
-    echo "Starting Ray worker: rank=$RANK_VALUE ip=$NODE_IP head=$HEAD_ADDRESS"
-    ray start --address="$HEAD_ADDRESS" "${ray_args[@]}"
+    
+    echo "Starting Ray worker node connecting to head at $HEAD_ADDRESS"
+    ray start --memory=461708984320 --address="$HEAD_ADDRESS:$RAY_PORT"
 fi

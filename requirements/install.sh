@@ -741,8 +741,12 @@ install_uv() {
 
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
-        export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+        export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+        export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
+        export GITHUB_PREFIX="https://ghfast.top/"
+        git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
+        trap 'unset_mirror' EXIT INT TERM HUP
     fi
 }
 
@@ -751,6 +755,8 @@ unset_mirror() {
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
         unset HF_ENDPOINT
+        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
+        unset GITHUB_PREFIX
     fi
 }
 

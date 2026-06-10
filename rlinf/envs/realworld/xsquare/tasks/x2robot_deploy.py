@@ -26,7 +26,7 @@ POSE_DIM = 6  # xyz(3) + rpy(3) per arm
 
 @dataclass
 class X2RobotDeployConfig(Turtle2RobotConfig):
-    """Dual-arm absolute-pose deployment config for openpi s2s inference."""
+    """Dual-arm absolute-pose deployment config for openpi s2m inference."""
 
     use_camera_ids: list = field(default_factory=lambda: [0, 1, 2])
     use_arm: str = "dual"
