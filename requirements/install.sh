@@ -1705,7 +1705,14 @@ install_franka_dexhand_deps() {
 }
 
 install_xsquare_turtle2_env() {
+    if [ "$SKIP_ROS" -ne 1 ] && [ "$NO_ROOT" -eq 0 ]; then
+        bash "$SCRIPT_DIR/embodied/ros_turtle2_install.sh"
+    fi
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
+    if [ "$SKIP_ROS" -ne 1 ]; then
+        echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
+        echo 'if [ -f /home/arm/prj/turtle2/modules/devel/setup.bash ]; then source /home/arm/prj/turtle2/modules/devel/setup.bash; fi' >> "$VENV_DIR/bin/activate"
+    fi
 }
 
 install_robotwin_env() {

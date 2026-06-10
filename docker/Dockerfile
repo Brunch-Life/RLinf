@@ -55,6 +55,10 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 # bypasses the platform switch and always uses a plain Ubuntu base.
 FROM ubuntu:20.04 AS base-image-embodied-franka
 
+# XSquare Turtle2 also uses ROS Noetic, so it follows the Franka real-world
+# target and stays on Ubuntu 20.04 instead of the platform base.
+FROM ubuntu:20.04 AS base-image-embodied-xsquare_turtle2
+
 
 ##################################################################################################
 # Select base image according to BUILD_TARGET
@@ -313,6 +317,17 @@ RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0; do \
 
 # Set default env (recommended libfranka 0.15.0)
 RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
+# Embodied: XSquare Turtle2 (Ubuntu 20.04, ROS Noetic)
+##################################################################################################
+FROM embodied-common-image AS embodied-xsquare_turtle2-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv xsquare_turtle2 --env xsquare_turtle2
+
+# Set default env
+RUN echo "source ${UV_PATH}/xsquare_turtle2/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################

@@ -24,6 +24,7 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from rlinf.envs.realworld.xsquare.chunk_interpolation import interpolate_segment
 from rlinf.envs.realworld.xsquare.turtle2_robot_state import Turtle2RobotState
 from rlinf.scheduler import (
     Turtle2HWInfo,
@@ -41,6 +42,13 @@ class Turtle2RobotConfig:
     use_dense_reward: bool = False
     step_frequency: float = 10.0  # Max number of steps per second
     smooth_frequency: int = 50  # Frequency for smooth controller
+
+    # Deployment (absolute-pose) options; defaults keep the existing RL behavior.
+    exec_frequency: float = 60.0  # high-frequency dispatch rate for abs mode
+    state_format: str = "xyz_quat"  # or "xyz_rpy_gripper"
+    camera_names: Optional[list] = None  # view names ordered by use_camera_ids
+    task_description: Optional[str] = None
+    use_arm: Optional[str] = None  # "dual"/"left"/"right"; None -> use_arm_ids
 
     # Positions are stored in eular angles (xyz for position, rzryrx for orientation)
     # It will be converted to quaternions internally
@@ -88,6 +96,8 @@ class Turtle2Env(gym.Env):
     dense/sparse rewards, safety-box clipping, and a dummy mode for offline use.
     """
 
+    POSE_MODE: str = "delta"
+
     def __init__(
         self,
         config: Turtle2RobotConfig,
@@ -105,6 +115,10 @@ class Turtle2Env(gym.Env):
         """
         self._logger = get_logger()
         self.config = config
+        if self.config.use_arm is not None:
+            self.config.use_arm_ids = {"dual": [0, 1], "left": [0], "right": [1]}[
+                self.config.use_arm
+            ]
         self.hardware_info = hardware_info
         self.env_idx = env_idx
         self.node_rank = 0
@@ -121,6 +135,8 @@ class Turtle2Env(gym.Env):
         ), "please choose camera IDs from [0, 1, 2]."
         self._turtle2_state = Turtle2RobotState()
         self._num_steps = 0
+        # Previous absolute target for abs-dispatch interpolation (abs path only).
+        self._last_abs_target = None
 
         if not self.config.is_dummy:
             self._setup_hardware()
@@ -150,6 +166,7 @@ class Turtle2Env(gym.Env):
             env_idx=self.env_idx,
             node_rank=self.node_rank,
             worker_rank=self.env_worker_rank,
+            pose_mode=self.POSE_MODE,
         )
 
     def _init_action_obs_spaces(self):
@@ -179,29 +196,99 @@ class Turtle2Env(gym.Env):
             np.ones((len(self.config.use_arm_ids) * 7), dtype=np.float32),
         )
 
-        obs_dim_per_arm = 7  # xyz(3) + quat(4)
+        num_arms = len(self.config.use_arm_ids)
+        if self.config.state_format not in ("xyz_rpy_gripper", "xyz_quat"):
+            raise ValueError(
+                f"Unsupported state_format={self.config.state_format!r}; "
+                "expected 'xyz_rpy_gripper' or 'xyz_quat'."
+            )
+        # tcp_pose is 7 per arm either way: xyz+rpy+gripper, or xyz+quat.
         self.observation_space = gym.spaces.Dict(
             {
                 "state": gym.spaces.Dict(
                     {
                         "tcp_pose": gym.spaces.Box(
-                            -np.inf,
-                            np.inf,
-                            shape=(len(self.config.use_arm_ids) * obs_dim_per_arm,),
+                            -np.inf, np.inf, shape=(num_arms * 7,)
                         ),
                     }
                 ),
                 "frames": gym.spaces.Dict(
                     {
-                        f"wrist_{k + 1}": gym.spaces.Box(
+                        key: gym.spaces.Box(
                             0, 255, shape=(128, 128, 3), dtype=np.uint8
                         )
-                        for k in range(len(self.config.use_camera_ids))
+                        for key in self._frame_keys()
                     }
                 ),
             }
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
+
+    def _frame_keys(self) -> list[str]:
+        if not self.config.camera_names:
+            raise ValueError(
+                "camera_names must list a view name per use_camera_ids entry, e.g. "
+                "['face_view', 'left_wrist_view', 'right_wrist_view']."
+            )
+        if len(self.config.camera_names) != len(self.config.use_camera_ids):
+            raise ValueError("camera_names length must match use_camera_ids.")
+        return list(self.config.camera_names)
+
+    def get_abs_action_space(self) -> gym.spaces.Box:
+        """Absolute ee-pose action space (per arm: xyz, rpy, gripper)."""
+        lows, highs = [], []
+        for arm_id in self.config.use_arm_ids:
+            lows.append(
+                np.concatenate(
+                    [
+                        self.config.ee_pose_limit_min[arm_id],
+                        [self.config.gripper_width_limit_min],
+                    ]
+                )
+            )
+            highs.append(
+                np.concatenate(
+                    [
+                        self.config.ee_pose_limit_max[arm_id],
+                        [self.config.gripper_width_limit_max],
+                    ]
+                )
+            )
+        return gym.spaces.Box(
+            low=np.concatenate(lows).astype(np.float32),
+            high=np.concatenate(highs).astype(np.float32),
+            dtype=np.float32,
+        )
+
+    def _build_tcp_pose(self) -> np.ndarray:
+        """Per-arm state. ``xyz_rpy_gripper`` concatenates gripper (x2robot ckpt
+        layout); ``xyz_quat`` is xyz+quat without gripper (RL / franka style)."""
+        poses = {
+            0: self._turtle2_state.follow1_pos,
+            1: self._turtle2_state.follow2_pos,
+        }
+        parts = []
+        for arm_id in self.config.use_arm_ids:
+            p = poses[arm_id]
+            if self.config.state_format == "xyz_rpy_gripper":
+                parts.append(np.asarray(p[:7], dtype=np.float64))  # xyz, rpy, gripper
+            else:  # xyz_quat (validated in _init_action_obs_spaces)
+                quat = R.from_euler("xyz", p[3:6]).as_quat()
+                parts.append(np.concatenate([p[0:3], quat]).astype(np.float64))
+        return np.concatenate(parts, axis=0)
+
+    def get_current_pose(self) -> np.ndarray:
+        """Current absolute ee pose (xyz, rpy, gripper per selected arm)."""
+        poses = {
+            0: self._turtle2_state.follow1_pos,
+            1: self._turtle2_state.follow2_pos,
+        }
+        return np.concatenate(
+            [
+                np.asarray(poses[a][:7], dtype=np.float64)
+                for a in self.config.use_arm_ids
+            ]
+        )
 
     def _reset_arms(self) -> None:
         """Move both arms to their reset poses, blocking until they arrive.
@@ -212,7 +299,7 @@ class Turtle2Env(gym.Env):
             return
 
         self._logger.info("pre-reset")
-        self._controller.move_arm(
+        self._controller.move_delta(
             [0.2, 0, 0.1, 0, 0, 0, 0], [0.2, 0, 0.1, 0, 0, 0, 0]
         ).wait()
         time.sleep(2.0)
@@ -259,7 +346,7 @@ class Turtle2Env(gym.Env):
             repr(right_arm_reset_pose),
         )
 
-        self._controller.move_arm(left_arm_reset_pose, right_arm_reset_pose).wait()
+        self._controller.move_delta(left_arm_reset_pose, right_arm_reset_pose).wait()
 
         reach = False
         start_time = time.time()
@@ -315,6 +402,8 @@ class Turtle2Env(gym.Env):
         self._reset_arms()
         self._num_steps = 0
         self._turtle2_state = self._controller.get_state().wait()[0]
+        # Next abs step interpolates from the current (reset) pose.
+        self._last_abs_target = None
         observation = self._get_observation()
         # save if debug
         # for key in observation["frames"].keys():
@@ -335,16 +424,32 @@ class Turtle2Env(gym.Env):
         action[:6] = np.linalg.inv(self.adjoint_matrix) @ action[:6]
         return action
 
-    def step(self, action: np.ndarray) -> tuple[dict, float, bool, bool, dict]:
+    def step(
+        self, action: np.ndarray, dispatch: str = "delta"
+    ) -> tuple[dict, float, bool, bool, dict]:
         """Take a step in the environment.
 
         Args:
-            action: Delta end-effector action of shape ``(7,)`` for single arm
-                or ``(14,)`` for dual arm (xyz, rpy, gripper per arm).
+            action: For ``dispatch='delta'`` a delta ee action of shape ``(7,)``
+                single arm / ``(14,)`` dual arm; for ``dispatch='abs'`` one absolute
+                ee-pose frame of the same shape (xyz, rpy, gripper per arm).
+            dispatch: ``'delta'`` (speed-clamped) or ``'abs'`` (interpolated direct
+                dispatch from the previous absolute target to this frame).
 
         Returns:
             Tuple of ``(observation, reward, terminated, truncated, info)``.
         """
+        if dispatch == "delta":
+            return self._step_delta(action)
+        if dispatch == "abs":
+            return self._step_abs(action)
+        raise ValueError(
+            f"Unsupported dispatch={dispatch!r}; expected 'delta' or 'abs'."
+        )
+
+    def _step_delta(
+        self, action: np.ndarray
+    ) -> tuple[dict, float, bool, bool, dict]:
         assert action.shape == (len(self.config.use_arm_ids) * 7,), (
             f"Action shape must be {(len(self.config.use_arm_ids) * 7,)}, but got {action.shape}."
         )
@@ -357,7 +462,6 @@ class Turtle2Env(gym.Env):
         action = action.reshape(-1, 7)
         xyz_delta = action[:, :3]
 
-        # self._turtle2_state = self._controller.get_state().wait()[0]
         next_position1 = self._turtle2_state.follow1_pos.copy()
         next_position2 = self._turtle2_state.follow2_pos.copy()
 
@@ -397,7 +501,7 @@ class Turtle2Env(gym.Env):
         next_position2 = next_position[1]
 
         if not self.config.is_dummy:
-            self._controller.move_arm(
+            self._controller.move_delta(
                 next_position1.tolist(), next_position2.tolist()
             ).wait()
         else:
@@ -416,6 +520,71 @@ class Turtle2Env(gym.Env):
         terminated = reward == 1
         truncated = self._num_steps >= self.config.max_num_steps
         return observation, reward, terminated, truncated, {}
+
+    def _step_abs(
+        self, action: np.ndarray
+    ) -> tuple[dict, float, bool, bool, dict]:
+        """Consume one absolute ee-pose frame.
+
+        Interpolates from the previous absolute target to this frame and dispatches
+        each substep at ``exec_frequency`` (direct, unclamped), then returns a single
+        observation with reward 0.
+        """
+        frame = np.asarray(action, dtype=np.float64).reshape(-1)
+        if self._last_abs_target is None:
+            self._last_abs_target = self.get_current_pose()
+        num_substeps = max(
+            1, round(self.config.exec_frequency / self.config.step_frequency)
+        )
+        dt = 1.0 / self.config.exec_frequency
+        for point in interpolate_segment(self._last_abs_target, frame, num_substeps):
+            t0 = time.time()
+            self.apply_abs_pose(point)
+            time.sleep(max(0.0, dt - (time.time() - t0)))
+        self._last_abs_target = frame
+        return self.observe_only()
+
+    def apply_abs_pose(self, pose: np.ndarray) -> None:
+        """Dispatch one absolute ee pose, bypassing speed clamping.
+
+        Clips to the safety box and writes to the controller without fetching
+        observations; called by ``_step_abs`` for per-substep dispatch.
+        Arms not in ``use_arm_ids`` keep their current pose.
+        """
+        pose = np.asarray(pose, dtype=np.float64).reshape(-1, 7)
+        next_position1 = self._turtle2_state.follow1_pos.copy().astype(np.float64)
+        next_position2 = self._turtle2_state.follow2_pos.copy().astype(np.float64)
+        targets = {0: next_position1, 1: next_position2}
+        for row, arm_id in zip(pose, self.config.use_arm_ids, strict=False):
+            targets[arm_id][:] = row
+
+        if self.config.enforce_gripper_close:
+            next_position1[6] = self.config.gripper_width_limit_min
+            next_position2[6] = self.config.gripper_width_limit_min
+
+        next_position = self._clip_position_to_safety_box(
+            np.stack([next_position1, next_position2])
+        )
+        if not self.config.is_dummy:
+            self._controller.move_abs(
+                next_position[0].tolist(), next_position[1].tolist()
+            ).wait()
+        else:
+            self._turtle2_state.follow1_pos = next_position[0].astype(np.float32)
+            self._turtle2_state.follow2_pos = next_position[1].astype(np.float32)
+
+    def observe_only(self) -> tuple[dict, float, bool, bool, dict]:
+        """Refresh state and return observation with reward 0 (deployment path)."""
+        self._num_steps += 1
+        if not self.config.is_dummy:
+            self._turtle2_state = self._controller.get_state().wait()[0]
+        observation = self._get_observation()
+        truncated = self._num_steps >= self.config.max_num_steps
+        return observation, 0.0, False, truncated, {}
+
+    @property
+    def task_description(self):
+        return self.config.task_description or ""
 
     @property
     def num_steps(self):
@@ -528,40 +697,19 @@ class Turtle2Env(gym.Env):
     def _get_observation(self) -> dict[str, dict[str, np.ndarray]]:
         """Get current observation from robot state and cameras.
 
-        Returns:
-            Observation dict with 'state' (tcp_pose) and 'frames' (camera images).
+        State layout follows ``state_format`` (single ``tcp_pose`` key); frame keys
+        follow ``camera_names``.
         """
-        if not self.config.is_dummy:
-            frames = self._controller.get_cams(self.config.use_camera_ids).wait()[0]
-            assert len(frames) == len(self.config.use_camera_ids), "get frames failed."
-            for i in range(len(frames)):
-                frames[i] = self._crop_frame(frames[i], (128, 128))
-            tcp_pose = []
-            if 0 in self.config.use_arm_ids:
-                tmp = np.zeros(7)
-                tmp[0:3] = self._turtle2_state.follow1_pos[0:3]
-                r1 = R.from_euler("xyz", self._turtle2_state.follow1_pos[3:6])
-                tmp[3:7] = r1.as_quat()
-                tcp_pose.append(tmp.copy())
-            if 1 in self.config.use_arm_ids:
-                tmp = np.zeros(7)
-                tmp[0:3] = self._turtle2_state.follow2_pos[0:3]
-                r2 = R.from_euler("xyz", self._turtle2_state.follow2_pos[3:6])
-                tmp[3:7] = r2.as_quat()
-                tcp_pose.append(tmp.copy())
-            tcp_pose = np.concatenate(tcp_pose, axis=0)
-            state = {
-                "tcp_pose": tcp_pose,
-            }
-            frames_dict = {}
-            for k in range(len(self.config.use_camera_ids)):
-                frames_dict[f"wrist_{k + 1}"] = frames[k]
+        if self.config.is_dummy:
+            return self._base_observation_space.sample()
 
-            observation = {
-                "state": state,
-                "frames": frames_dict,
-            }
-            return copy.deepcopy(observation)
-        else:
-            obs = self._base_observation_space.sample()
-            return obs
+        frames = self._controller.get_cams(self.config.use_camera_ids).wait()[0]
+        assert len(frames) == len(self.config.use_camera_ids), "get frames failed."
+        frames = [self._crop_frame(f, (128, 128)) for f in frames]
+        frames_dict = dict(zip(self._frame_keys(), frames, strict=True))
+
+        observation = {
+            "state": {"tcp_pose": self._build_tcp_pose()},
+            "frames": frames_dict,
+        }
+        return copy.deepcopy(observation)
