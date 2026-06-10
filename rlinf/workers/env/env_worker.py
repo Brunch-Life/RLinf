@@ -21,12 +21,14 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
     EnvOutput,
     RolloutResult,
     Trajectory,
+    convert_trajectories_to_batch,
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
@@ -38,9 +40,15 @@ from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
     split_dict,
+    split_dict_to_chunk,
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import (
+    flatten_embodied_batch,
+    pack_batch,
+    preprocess_embodied_batch,
+)
 from rlinf.workers.env.history_manager import HistoryManager
 
 
@@ -85,20 +93,28 @@ class EnvWorker(Worker):
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
 
         # Env configurations
+        self.use_training_pipeline = self.cfg.runner.get("use_training_pipeline", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         train_env_cfg = self.cfg.env.get("train", None)
         eval_env_cfg = self.cfg.env.eval
-        self.enable_offload = (
+        if not self.only_eval and train_env_cfg is None:
+            raise ValueError(
+                "env.train config is required when runner.only_eval=False."
+            )
+        self.train_enable_offload = (
             train_env_cfg.get("enable_offload", False)
             if train_env_cfg is not None
-            else eval_env_cfg.get("enable_offload", False)
+            else False
         )
+        self.eval_enable_offload = eval_env_cfg.get("enable_offload", False)
+        self.train_enable_init_offload = (
+            train_env_cfg.get("enable_init_offload", True)
+            if train_env_cfg is not None
+            else True
+        )
+        self.eval_enable_init_offload = eval_env_cfg.get("enable_init_offload", True)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
         if not self.only_eval:
-            if train_env_cfg is None:
-                raise ValueError(
-                    "env.train config is required when runner.only_eval=False."
-                )
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
@@ -152,6 +168,11 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
+            if self.train_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.env_list), (
+                    "train envs must have an offload method to enable offload!"
+                )
+
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -159,15 +180,20 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.eval,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
+            if self.eval_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
+                    "eval envs must have an offload method to enable offload!"
+                )
 
         if not self.only_eval:
-            self._init_env()
             if self.reward_mode == "history_buffer":
                 self.train_history_managers = [
                     HistoryManager(self.cfg.reward, self.train_num_envs_per_stage)
                     for _ in range(self.stage_num)
                 ]
                 self.history_lengths = [{} for _ in range(self.stage_num)]
+
+        self._init_env()
 
     def update_env_cfg(self):
         if not self.only_eval:
@@ -383,12 +409,16 @@ class EnvWorker(Worker):
 
     def _init_env(self):
         for i in range(self.stage_num):
-            if self.cfg.env.train.auto_reset:
-                extracted_obs, _ = self.env_list[i].reset()
-                self.last_obs_list.append(extracted_obs)
-                self.last_intervened_info_list.append((None, None))
-            if self.enable_offload and hasattr(self.env_list[i], "offload"):
-                self.env_list[i].offload()
+            if not self.only_eval:
+                if self.cfg.env.train.auto_reset:
+                    extracted_obs, _ = self.env_list[i].reset()
+                    self.last_obs_list.append(extracted_obs)
+                    self.last_intervened_info_list.append((None, None))
+                if self.train_enable_offload and self.train_enable_init_offload:
+                    self.env_list[i].offload()
+            if self.enable_eval:
+                if self.eval_enable_offload and self.eval_enable_init_offload:
+                    self.eval_env_list[i].offload()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -982,19 +1012,12 @@ class EnvWorker(Worker):
         )
 
     def record_env_metrics(
-        self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
+        self,
+        env_metrics: dict[str, list],
+        env_info: dict[str, Any],
     ):
         for key, value in env_info.items():
-            if (
-                not self.cfg.env.train.auto_reset
-                and not self.cfg.env.train.ignore_terminations
-            ):
-                if key in env_metrics and len(env_metrics[key]) > epoch:
-                    env_metrics[key][epoch] = value
-                else:
-                    env_metrics[key].append(value)
-            else:
-                env_metrics[key].append(value)
+            env_metrics.setdefault(key, []).append(value)
 
     def store_last_obs_and_intervened_info(self, env_output_list: list[EnvOutput]):
         self.last_obs_list = [env_output.obs for env_output in env_output_list]
@@ -1126,8 +1149,13 @@ class EnvWorker(Worker):
                         )
 
                     env_outputs[stage_id] = env_output
-                    self.record_env_metrics(env_metrics, env_info, epoch)
-
+                    should_record = (
+                        self.cfg.env.train.auto_reset
+                        or self.cfg.env.train.ignore_terminations
+                        or chunk_step_idx == self.n_train_chunk_steps - 1
+                    )
+                    if should_record:
+                        self.record_env_metrics(env_metrics, env_info)
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
@@ -1171,10 +1199,22 @@ class EnvWorker(Worker):
                 ):
                     self.assign_history_reward(stage_id, reward_model_output)
 
+            if self.use_training_pipeline and actor_channel is not None:
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories_pipeline(
+                        self.rollout_results[stage_id], actor_channel
+                    )
+                self.rollout_results: list[EmbodiedRolloutResult] = [
+                    EmbodiedRolloutResult(
+                        max_episode_length=self.cfg.env.train.max_episode_steps,
+                    )
+                    for _ in range(self.stage_num)
+                ]
+
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
-        if actor_channel is not None:
+        if not self.use_training_pipeline and actor_channel is not None:
             for stage_id in range(self.stage_num):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], actor_channel
@@ -1205,7 +1245,7 @@ class EnvWorker(Worker):
         )
 
         for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
+            if self.train_enable_offload:
                 env.offload()
 
         return env_metrics
@@ -1273,9 +1313,7 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
-            if self.cfg.env.eval.get("enable_offload", False) and hasattr(
-                self.eval_env_list[stage_id], "offload"
-            ):
+            if self.eval_enable_offload:
                 self.eval_env_list[stage_id].offload()
 
         for key, value in eval_metrics.items():
@@ -1288,3 +1326,76 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
+
+    def compute_advantages_and_returns(
+        self, rollout_batch: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        # Advantages/returns are rollout-level quantities, so compute them before
+        # splitting. After this point each channel item is an actor micro-batch that can
+        # be trained directly without reconstructing the full rollout batch on actor.
+        kwargs = {
+            "task_type": self.cfg.runner.task_type,
+            "adv_type": self.cfg.algorithm.adv_type,
+            "rewards": rollout_batch["rewards"],
+            "dones": rollout_batch["dones"],
+            "values": rollout_batch.get("prev_values", None),
+            "gamma": self.cfg.algorithm.get("gamma", 1),
+            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
+            "group_size": self.cfg.algorithm.get("group_size", 8),
+            "reward_type": self.cfg.algorithm.reward_type,
+            "loss_mask": rollout_batch.get("loss_mask", None),
+            "loss_mask_sum": rollout_batch.get("loss_mask_sum", None),
+            "normalize_advantages": self.cfg.algorithm.get(
+                "normalize_advantages", True
+            ),
+        }
+        advantages_and_returns = calculate_adv_and_returns(**kwargs)
+        rollout_batch.update(advantages_and_returns)
+        if kwargs["loss_mask"] is not None:
+            rollout_batch["loss_mask"] = kwargs["loss_mask"]
+        if kwargs["loss_mask_sum"] is not None:
+            rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
+        return rollout_batch
+
+    def prepare_micro_batches(
+        self, trajectory: Trajectory
+    ) -> list[dict[str, torch.Tensor]]:
+        # In training pipeline mode, send ready-to-train actor micro-batches instead of
+        # full rollout trajectories. This keeps nested observations out of the channel
+        # payload so packed tensors can use the channel tensor fast path.
+        batch = convert_trajectories_to_batch([trajectory])
+        batch = preprocess_embodied_batch(
+            batch,
+            rollout_epoch=1,
+            auto_reset=self.cfg.env.train.auto_reset,
+            ignore_terminations=self.cfg.env.train.ignore_terminations,
+            reward_type=self.cfg.algorithm.reward_type,
+            filter_rewards=self.cfg.algorithm.get("filter_rewards", False),
+            group_size=self.cfg.algorithm.group_size,
+            rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
+            rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+        )
+
+        batch = self.compute_advantages_and_returns(batch)
+
+        batch_size = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
+        flatten_batch = flatten_embodied_batch(batch, torch.arange(batch_size))
+        micro_batch_size = self.cfg.actor.micro_batch_size
+        assert batch_size % micro_batch_size == 0, (
+            f"Batch size {batch_size} is not divisible by micro_batch_size {micro_batch_size}."
+        )
+        num_micro_batches = batch_size // micro_batch_size
+        micro_batches = split_dict_to_chunk(flatten_batch, num_micro_batches, dim=0)
+        return [pack_batch(micro_batch) for micro_batch in micro_batches]
+
+    async def send_rollout_trajectories_pipeline(
+        self, rollout_result: EmbodiedRolloutResult, channel: Channel
+    ) -> None:
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
+            self.actor_split_num
+        )
+        for trajectory in trajectories:
+            with self.worker_timer("prepare_micro_batches"):
+                micro_batches = self.prepare_micro_batches(trajectory)
+                for micro_batch in micro_batches:
+                    channel.put(micro_batch, async_op=True)
