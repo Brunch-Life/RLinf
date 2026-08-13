@@ -19,6 +19,8 @@ outputs/*
 .docs-venv
 uv.lock
 rlinf/envs/maniskill/assets
+data/realagainst_peg_slot_expert/
+models/pi05_base_pytorch_new/
 PKG-INFO
 *.egg-info/
 .claude/settings.json
