@@ -1,0 +1,115 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: realagainst_peg_slot_openpi_rlinf_eval
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  max_steps: 1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    env_type: maniskill
+    total_num_envs: 16
+    rollout_epoch: 6
+    reset_seed_mode: sequential
+    wrap_obs_mode: raw
+    auto_reset: false
+    ignore_terminations: false
+    use_rel_reward: false
+    reward_mode: raw
+    seed: 0
+    group_size: 1
+    use_fixed_reset_state_ids: false
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    enable_offload: false
+    video_cfg:
+      save_video: true
+      info_on_video: true
+      image_keys: [main_images, wrist_images]
+      separate_envs: true
+      stop_on_termination: true
+      stop_on_info_key: success
+      outcome_info_key: success
+      extra_info_on_video: [success]
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      id: RealAgainstPegSlot-v0
+      num_envs: null
+      obs_mode: rgb
+      control_mode: null
+      sim_backend: gpu
+      sim_config:
+        sim_freq: 200
+        control_freq: 20
+      max_episode_steps: ${..max_episode_steps}
+      sensor_configs:
+        width: 224
+        height: 224
+        shader_pack: default
+      render_mode: all
+
+rollout:
+  group_name: RolloutGroup
+  rollout_backend: huggingface
+  generation_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: openpi_rlinf
+    model_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260812-16:57:36-realagainst_peg_slot_sft_openpi_pi05/realagainst_peg_slot_pi05_sft/checkpoints/global_step_10000
+    precision: bf16
+    pi05: true
+    is_lora: false
+    lora_rank: 32
+    num_action_chunks: 10
+    action_dim: 9
+    policy_setup: panda-ee-dpose
+    use_proprio: true
+    num_steps: 5
+    add_value_head: false
+    openpi_data:
+      repo_id: local/realagainst_peg_slot
+      default_prompt: insert the grasped peg downward into the movable slot
+      norm_stats_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/assets/pi05_realagainst_peg_slot/data/realagainst_peg_slot_expert/norm_stats.json
+    openpi:
+      task: eval
+      config_name: pi05_realagainst_peg_slot
+      num_images_in_input: 2
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      action_horizon: ${..num_action_chunks}
+      num_steps: ${..num_steps}
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      use_rlt: false
+
+reward:
+  use_reward_model: false

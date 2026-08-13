@@ -14,9 +14,9 @@ The saved policy action is flat and normalized::
     actions[0:6] = Panda end-effector delta pose
     actions[6:9] = movable slot [dx, dy, dyaw]
 
-The state is ``Panda qpos (9) + slot XY (2) + slot yaw (1)``.  The slot remains
-fixed after reset; each episode moves the grasped peg over the slot with the
-arm and then lowers the end effector.
+The state is the Panda qpos (9). The slot pose is observed through RGB. The slot
+remains fixed after reset; each episode moves the grasped peg over the slot with
+the arm and then lowers the end effector.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from rlinf.data.storage.lerobot import add_frame_to_dataset  # noqa: E402
 LOG = logging.getLogger("collect_realagainst_peg_slot")
 ENV_ID = "RealAgainstPegSlot-v0"
 TASK = "insert the grasped peg downward into the movable slot"
-STATE_DIM = 12
+STATE_DIM = 9
 ACTION_DIM = 9
 
 
@@ -64,9 +64,7 @@ def _rgb(obs: dict[str, Any], camera: str) -> np.ndarray:
 def _state(env: Any) -> np.ndarray:
     base = env.unwrapped
     qpos = _to_numpy(base.agent.robot.get_qpos()).astype(np.float32)
-    slot_xy = _to_numpy(base._slot_xy).astype(np.float32)
-    slot_yaw = _to_numpy(base._slot_yaw).astype(np.float32).reshape(1)
-    state = np.concatenate((qpos[:9], slot_xy[:2], slot_yaw))
+    state = qpos[:9]
     if state.shape != (STATE_DIM,):
         raise ValueError(f"Expected state shape {(STATE_DIM,)}, got {state.shape}")
     return state.astype(np.float32)
@@ -96,7 +94,7 @@ def _collect_episode(env: Any, seed: int, max_steps: int) -> list[dict[str, Any]
         action = _expert_action(env)
         frames.append(
             {
-                "image": _rgb(obs, "task_camera"),
+                "image": _rgb(obs, "3rd_view_camera"),
                 "wrist_image": _rgb(obs, "hand_camera"),
                 "state": _state(env),
                 "actions": action,
@@ -159,7 +157,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--fps", type=int, default=20)
-    parser.add_argument("--sim-backend", default="physx_cpu")
+    parser.add_argument("--sim-backend", default="gpu")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 

@@ -111,7 +111,11 @@ class PegSlotEnv(BaseEnv):
         camera_pose = sapien_utils.look_at(
             eye=[0.42, -0.52, 0.62], target=[0.0, 0.0, 0.12]
         )
-        return [CameraConfig("task_camera", camera_pose, 256, 256, 1.0, 0.01, 2.0)]
+        return [
+            CameraConfig(
+                "3rd_view_camera", camera_pose, 256, 256, 1.0, 0.01, 2.0
+            )
+        ]
 
     @property
     def _default_human_render_camera_configs(self):
@@ -177,6 +181,15 @@ class PegSlotEnv(BaseEnv):
             self.agent.robot.set_qpos(qpos)
             self.agent.robot.set_qvel(torch.zeros_like(qpos))
             self.agent.robot.set_pose(self._ROBOT_BASE_POSE)
+
+            # ``set_qpos`` only stages the articulation state on GPU. Refresh
+            # forward kinematics before reading ``tcp.pose``; otherwise resets
+            # after the first episode place the peg at the previous episode's
+            # terminal TCP pose.
+            if self.gpu_sim_enabled:
+                self.scene._gpu_apply_all()
+                self.scene.px.gpu_update_articulation_kinematics()
+                self.scene._gpu_fetch_all()
 
             # Panda TCP local +Z points down in this reset pose. Keeping the peg's
             # local frame equal to the TCP frame makes its +Z the insertion axis.
@@ -248,8 +261,19 @@ class PegSlotEnv(BaseEnv):
         closed_gripper = -torch.ones((self.num_envs, 1), device=self.device)
         return torch.cat((scaled_arm_action, closed_gripper), dim=-1)
 
+    def reset(self, *args, **kwargs):
+        """Reset and expose the standardized RLinf observation in ``info``."""
+        raw_obs, info = super().reset(*args, **kwargs)
+        info["extracted_obs"] = self._build_rlinf_observation(raw_obs)
+        return raw_obs, info
+
     def step(self, action):
-        return super().step(self._prepare_action(action))
+        """Apply the public 9D action and expose the standardized observation."""
+        raw_obs, reward, terminated, truncated, info = super().step(
+            self._prepare_action(action)
+        )
+        info["extracted_obs"] = self._build_rlinf_observation(raw_obs)
+        return raw_obs, reward, terminated, truncated, info
 
     def _alignment(self):
         tip_in_slot = self.slot_hole_pose.inv() * self.peg_tip_pose
@@ -304,9 +328,25 @@ class PegSlotEnv(BaseEnv):
             )
         return observation
 
+    def _build_rlinf_observation(self, raw_obs: dict) -> dict:
+        """Build the standardized observation consumed by RLinf OpenPI.
+
+        This mirrors the expert dataset exactly: task and wrist RGB images plus
+        the Panda's nine joint positions. Slot pose is observed through RGB.
+        """
+        sensor_data = raw_obs["sensor_data"]
+        state = raw_obs["agent"]["qpos"][..., :9].to(dtype=torch.float32)
+        return {
+            "main_images": sensor_data["3rd_view_camera"]["rgb"].to(torch.uint8),
+            "wrist_images": sensor_data["hand_camera"]["rgb"].to(torch.uint8),
+            "extra_view_images": None,
+            "states": state,
+            "task_descriptions": self.get_language_instruction(),
+        }
+
     def get_language_instruction(self):
         return [
-            "Insert the grasped peg downward into the movable slot."
+            "insert the grasped peg downward into the movable slot"
             for _ in range(self.num_envs)
         ]
 

@@ -53,8 +53,17 @@ class ManiskillEnv(gym.Env):
         record_metrics=True,
     ):
         env_seed = cfg.seed
+        self.base_seed = env_seed
         self.seed = env_seed + seed_offset
+        self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
+        self.reset_seed_mode = str(getattr(cfg, "reset_seed_mode", "fixed"))
+        if self.reset_seed_mode not in {"fixed", "sequential"}:
+            raise ValueError(
+                "reset_seed_mode must be either 'fixed' or 'sequential', got "
+                f"{self.reset_seed_mode!r}."
+            )
+        self._full_reset_count = 0
         self.worker_info = worker_info
         self.auto_reset = cfg.auto_reset
         self.use_rel_reward = cfg.use_rel_reward
@@ -275,7 +284,18 @@ class ManiskillEnv(gym.Env):
         options: Optional[dict] = None,
     ):
         if options is None:
-            seed = self.seed
+            if seed is None:
+                seed = self.seed
+                if self.reset_seed_mode == "sequential":
+                    first_seed = (
+                        self.base_seed
+                        + self.seed_offset * self.num_envs
+                        + self._full_reset_count
+                        * self.num_envs
+                        * self.total_num_processes
+                    )
+                    seed = list(range(first_seed, first_seed + self.num_envs))
+            self._full_reset_count += 1
             options = (
                 {"episode_id": self.reset_state_ids}
                 if self.use_fixed_reset_state_ids
