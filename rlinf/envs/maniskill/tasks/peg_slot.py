@@ -350,6 +350,27 @@ class PegSlotEnv(BaseEnv):
             for _ in range(self.num_envs)
         ]
 
+    def compute_expert_action(self) -> torch.Tensor:
+        """Return a batched recovery-capable scripted arm action for DAgger."""
+        tip_position = self.peg_tip_pose.p
+        xy_error = self._slot_xy - tip_position[:, :2]
+        lateral_error = torch.linalg.vector_norm(xy_error, dim=-1)
+
+        action = torch.zeros((self.num_envs, 9), device=self.device)
+        needs_alignment = lateral_error >= 0.0025
+        safe_tip_height = 0.050
+        needs_lift = needs_alignment & (tip_position[:, 2] < safe_tip_height)
+        can_translate = needs_alignment & ~needs_lift
+
+        action[can_translate, :2] = (xy_error[can_translate] / 0.025).clamp(
+            -0.7, 0.7
+        )
+        action[needs_lift, 2] = (
+            (safe_tip_height - tip_position[needs_lift, 2]) / 0.025
+        ).clamp(0.08, 0.5)
+        action[~needs_alignment, 2] = -0.16
+        return action
+
     def compute_sparse_reward(self, obs, action, info: dict):
         return info["success"].to(torch.float32)
 

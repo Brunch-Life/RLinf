@@ -20,6 +20,7 @@ outputs/*
 uv.lock
 rlinf/envs/maniskill/assets
 data/realagainst_peg_slot_expert/
+data/realagainst_peg_slot_dagger_round1/
 models/pi05_base_pytorch_new/
 PKG-INFO
 *.egg-info/

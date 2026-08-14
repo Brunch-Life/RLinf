@@ -72,18 +72,7 @@ def _state(env: Any) -> np.ndarray:
 
 def _expert_action(env: Any) -> np.ndarray:
     base = env.unwrapped
-    xy_error = base._slot_xy[0] - base.peg_tip_pose.p[0, :2]
-
-    action = np.zeros(ACTION_DIM, dtype=np.float32)
-    # A full public arm translation action corresponds to an approximately
-    # 2.5 cm controller target delta after the environment's action scaling.
-    action[:2] = _to_numpy(
-        (xy_error / 0.025).clamp(-0.7, 0.7),
-        squeeze_batch=False,
-    )
-    if float(xy_error.norm()) < 0.0025:
-        action[2] = -0.16
-    return action
+    return _to_numpy(base.compute_expert_action())[0].astype(np.float32)
 
 
 def _collect_episode(env: Any, seed: int, max_steps: int) -> list[dict[str, Any]]:
