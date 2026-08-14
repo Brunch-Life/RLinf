@@ -351,24 +351,19 @@ class PegSlotEnv(BaseEnv):
         ]
 
     def compute_expert_action(self) -> torch.Tensor:
-        """Return a batched recovery-capable scripted arm action for DAgger."""
-        tip_position = self.peg_tip_pose.p
-        xy_error = self._slot_xy - tip_position[:, :2]
-        lateral_error = torch.linalg.vector_norm(xy_error, dim=-1)
+        """Continuously servo the peg tip position and yaw to the hole pose."""
+        position_error = self.slot_hole_pose.p - self.peg_tip_pose.p
+        peg_rotation = self.peg.pose.to_transformation_matrix()[..., :3, :3]
+        hole_rotation = self.slot_hole_pose.to_transformation_matrix()[..., :3, :3]
+        peg_yaw = torch.atan2(peg_rotation[:, 1, 0], peg_rotation[:, 0, 0])
+        hole_yaw = torch.atan2(hole_rotation[:, 1, 0], hole_rotation[:, 0, 0])
+        yaw_delta = hole_yaw - peg_yaw
+        yaw_error = torch.atan2(torch.sin(yaw_delta), torch.cos(yaw_delta))
 
         action = torch.zeros((self.num_envs, 9), device=self.device)
-        needs_alignment = lateral_error >= 0.0025
-        safe_tip_height = 0.050
-        needs_lift = needs_alignment & (tip_position[:, 2] < safe_tip_height)
-        can_translate = needs_alignment & ~needs_lift
-
-        action[can_translate, :2] = (xy_error[can_translate] / 0.025).clamp(
-            -0.7, 0.7
-        )
-        action[needs_lift, 2] = (
-            (safe_tip_height - tip_position[needs_lift, 2]) / 0.025
-        ).clamp(0.08, 0.5)
-        action[~needs_alignment, 2] = -0.16
+        action[:, :2] = (position_error[:, :2] / 0.025).clamp(-0.7, 0.7)
+        action[:, 2] = (position_error[:, 2] / 0.025).clamp(-0.16, 0.0)
+        action[:, 5] = (yaw_error / 0.025).clamp(-1.0, 1.0)
         return action
 
     def compute_sparse_reward(self, obs, action, info: dict):
