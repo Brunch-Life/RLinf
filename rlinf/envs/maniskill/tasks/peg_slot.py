@@ -33,6 +33,24 @@ from mani_skill.utils.structs import Pose
 from mani_skill.utils.structs.types import SimConfig
 
 
+def _tilt_error_to_down(peg_rotation: torch.Tensor) -> torch.Tensor:
+    """Return the shortest world-frame rotation aligning local +Z with down."""
+    peg_axis = peg_rotation[..., 2]
+    downward = torch.zeros_like(peg_axis)
+    downward[..., 2] = -1.0
+    tilt_cross = torch.linalg.cross(peg_axis, downward, dim=-1)
+    tilt_sin = torch.linalg.vector_norm(tilt_cross, dim=-1)
+    tilt_cos = torch.sum(peg_axis * downward, dim=-1).clamp(-1.0, 1.0)
+    tilt_angle = torch.atan2(tilt_sin, tilt_cos)
+    fallback_axis = peg_rotation[..., 0]
+    tilt_axis = torch.where(
+        (tilt_sin > 1e-6).unsqueeze(-1),
+        tilt_cross / tilt_sin.clamp_min(1e-6).unsqueeze(-1),
+        fallback_axis,
+    )
+    return tilt_axis * tilt_angle.unsqueeze(-1)
+
+
 @register_env("RealAgainstPegSlot-v0", max_episode_steps=200)
 class PegSlotEnv(BaseEnv):
     """Insert a grasped vertical peg into an upward-facing movable slot.
@@ -56,6 +74,7 @@ class PegSlotEnv(BaseEnv):
     SLOT_XY_LIMIT = 0.18
     SLOT_ACTION_SCALE = 0.010
     SLOT_YAW_ACTION_SCALE = np.deg2rad(5.0)
+    SLOT_RESET_YAW_RANGE = np.deg2rad(30.0)
     ARM_POSITION_ACTION_SCALE = 0.25
     ARM_ROTATION_ACTION_SCALE = 0.25
 
@@ -199,13 +218,15 @@ class PegSlotEnv(BaseEnv):
             self.peg.set_linear_velocity(torch.zeros((batch_size, 3)))
             self.peg.set_angular_velocity(torch.zeros((batch_size, 3)))
 
-            # The slot begins close to the peg projection but with seeded XY
-            # noise, ensuring that both policies have a meaningful action.
+            # Keep the existing XY range and independently randomize yaw so
+            # demonstrations exercise the arm's yaw correction.
             noise = torch.rand((batch_size, 2), device=self.device) * 0.08 - 0.04
             slot_xy = self.agent.tcp.pose.p[env_idx, :2] + noise
             slot_xy.clamp_(-self.SLOT_XY_LIMIT, self.SLOT_XY_LIMIT)
             self._slot_xy[env_idx] = slot_xy
-            self._slot_yaw[env_idx] = 0.0
+            self._slot_yaw[env_idx] = (
+                torch.rand(batch_size, device=self.device) * 2.0 - 1.0
+            ) * self.SLOT_RESET_YAW_RANGE
             self._set_slot_pose(env_idx)
 
     def _set_slot_pose(self, env_idx: torch.Tensor | None = None) -> None:
@@ -351,18 +372,36 @@ class PegSlotEnv(BaseEnv):
         ]
 
     def compute_expert_action(self) -> torch.Tensor:
-        """Continuously servo the peg tip position and yaw to the hole pose."""
+        """Servo position and all three orientation axes toward the hole."""
         position_error = self.slot_hole_pose.p - self.peg_tip_pose.p
         peg_rotation = self.peg.pose.to_transformation_matrix()[..., :3, :3]
-        hole_rotation = self.slot_hole_pose.to_transformation_matrix()[..., :3, :3]
-        peg_yaw = torch.atan2(peg_rotation[:, 1, 0], peg_rotation[:, 0, 0])
-        hole_yaw = torch.atan2(hole_rotation[:, 1, 0], hole_rotation[:, 0, 0])
-        yaw_delta = hole_yaw - peg_yaw
-        yaw_error = torch.atan2(torch.sin(yaw_delta), torch.cos(yaw_delta))
+
+        tilt_error = _tilt_error_to_down(peg_rotation)
+
+        peg_tip_in_hole = self.slot_hole_pose.inv() * self.peg_tip_pose
+        relative_rotation = peg_tip_in_hole.to_transformation_matrix()[..., :3, :3]
+        peg_yaw_in_hole = torch.atan2(
+            relative_rotation[:, 1, 0], relative_rotation[:, 0, 0]
+        )
+        # Peg and hole are square, so rotations separated by 90 degrees are
+        # equivalent. Fold the relative yaw onto the nearest aligned pose.
+        yaw_error = (
+            torch.atan2(
+                torch.sin(4.0 * peg_yaw_in_hole),
+                torch.cos(4.0 * peg_yaw_in_hole),
+            )
+            / 4.0
+        )
 
         action = torch.zeros((self.num_envs, 9), device=self.device)
         action[:, :2] = (position_error[:, :2] / 0.025).clamp(-0.7, 0.7)
         action[:, 2] = (position_error[:, 2] / 0.025).clamp(-0.16, 0.0)
+        # ``_prepare_action`` and Panda's normalized controller together map a
+        # public rotation action to -0.025 rad in the world frame. Negate the
+        # desired tilt correction accordingly. Yaw already represents
+        # peg-minus-hole, so its sign is positive here. Position, tilt, and yaw
+        # are corrected simultaneously; the expert never waits or lifts first.
+        action[:, 3:5] = (-tilt_error[:, :2] / 0.025).clamp(-1.0, 1.0)
         action[:, 5] = (yaw_error / 0.025).clamp(-1.0, 1.0)
         return action
 

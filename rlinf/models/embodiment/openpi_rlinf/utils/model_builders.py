@@ -23,8 +23,8 @@ builders here, each of which wraps the core in the concrete variant:
 * :func:`_build_rl_model`   → :class:`OpenPiPytorchRLActionModel`
 
 The eval / RL builders assemble the shared ``openpi.transforms`` pipeline via
-:func:`transforms_pipeline.build_openpi_transforms`; the SFT builder holds no
-transforms (the SFT data loader applies them upstream).
+:func:`transforms_pipeline.build_openpi_transforms`. SFT does the same only for
+online LeRobot batches; its offline data loader applies transforms upstream.
 """
 
 from __future__ import annotations
@@ -96,29 +96,48 @@ def _build_eval_model(
 
 
 def _build_sft_model(
+    cfg,
     model_cfg,
     model,
     *,
     num_steps,
+    action_chunk,
     action_env_dim,
 ):
     """Build the SFT variant.
 
-    The observation/action transform is applied upstream in the environment SFT
-    data loader, which routes each frame through the same openpi transform
-    pipeline the eval/RL paths use, so the SFT model holds no processor and no
-    transforms — it just computes the flow-matching loss.
+    Offline SFT data is transformed by its loader. Online LeRobot DAgger data is
+    transformed by the model through the same pipeline used for evaluation.
     """
+    from omegaconf import OmegaConf
+
     from rlinf.models.embodiment.openpi_rlinf.sft_action_model import (
         OpenPiPytorchSFTActionModel,
     )
+    from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
+        build_openpi_transforms,
+    )
 
-    return OpenPiPytorchSFTActionModel(
+    config_name = str(OmegaConf.select(model_cfg, "config_name", default=""))
+    if not config_name:
+        raise ValueError(
+            "actor.model.openpi.config_name is required for task='sft'."
+        )
+
+    sft_model = OpenPiPytorchSFTActionModel(
         model,
         num_steps=num_steps,
         action_env_dim=action_env_dim,
+        action_chunk=action_chunk,
+        config_name=config_name,
         rlt_cfg=build_rlt_config(model_cfg),
     )
+    if bool(OmegaConf.select(model_cfg, "online_lerobot", default=False)):
+        input_transforms, output_transforms = build_openpi_transforms(
+            cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
+        )
+        sft_model.setup_wrappers(input_transforms, output_transforms)
+    return sft_model
 
 
 def _build_rl_model(

@@ -72,6 +72,13 @@ class ManiskillEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
+        self.expert_intervention_beta = getattr(
+            cfg, "expert_intervention_beta", None
+        )
+        if self.expert_intervention_beta is not None:
+            self.expert_intervention_beta = float(self.expert_intervention_beta)
+            if not 0.0 <= self.expert_intervention_beta <= 1.0:
+                raise ValueError("expert_intervention_beta must be in [0, 1]")
 
         self.video_cfg = cfg.video_cfg
 
@@ -342,6 +349,19 @@ class ManiskillEnv(gym.Env):
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
+        intervention_beta = self.expert_intervention_beta
+        expert_chunk_mask = None
+        if intervention_beta is not None:
+            if not callable(
+                getattr(self.env.unwrapped, "compute_expert_action", None)
+            ):
+                raise ValueError(
+                    "Expert intervention requires the ManiSkill task to implement "
+                    "compute_expert_action()."
+                )
+            expert_chunk_mask = (
+                torch.rand(self.num_envs, device=self.device) < intervention_beta
+            )
         obs_list = []
         infos_list = []
         chunk_rewards = []
@@ -349,9 +369,21 @@ class ManiskillEnv(gym.Env):
         raw_chunk_truncations = []
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
+            expert_actions = None
+            if expert_chunk_mask is not None:
+                actions = torch.as_tensor(
+                    actions, device=self.device, dtype=torch.float32
+                )
+                expert_actions = self.env.unwrapped.compute_expert_action()
+                actions = torch.where(
+                    expert_chunk_mask[:, None], expert_actions, actions
+                )
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
                 actions, auto_reset=False
             )
+            if expert_actions is not None:
+                infos["intervene_action"] = expert_actions
+                infos["intervene_flag"] = expert_chunk_mask
             obs_list.append(extracted_obs)
             infos_list.append(infos)
 
@@ -370,6 +402,14 @@ class ManiskillEnv(gym.Env):
         past_terminations = raw_chunk_terminations.any(dim=1)
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
+
+        if expert_chunk_mask is not None:
+            infos_list[-1]["intervene_action"] = torch.stack(
+                [info["intervene_action"] for info in infos_list], dim=1
+            ).reshape(self.num_envs, -1)
+            infos_list[-1]["intervene_flag"] = torch.stack(
+                [info["intervene_flag"] for info in infos_list], dim=1
+            )
 
         if past_dones.any() and self.auto_reset:
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(

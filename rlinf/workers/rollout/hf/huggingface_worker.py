@@ -601,10 +601,14 @@ class MultiStepRolloutWorker(Worker):
             bootstrap_values=self.get_bootstrap_values(final_obs),
             intervene_flags=intervene_flags,
             forward_inputs=result["forward_inputs"],
-            versions=torch.full_like(
-                result["prev_logprobs"],
-                float(self.version),
-                dtype=torch.float32,
+            versions=(
+                torch.full_like(
+                    result["prev_logprobs"],
+                    float(self.version),
+                    dtype=torch.float32,
+                )
+                if result["prev_logprobs"] is not None
+                else None
             ),
         )
 

@@ -16,8 +16,10 @@
 
 from rlinf.data.datasets.dagger.dataloader import build_dataloader_from_dataset
 from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
+from rlinf.data.datasets.dagger.schedule import linear_episode_target
 
 __all__ = [
     "RollingLeRobotDataset",
     "build_dataloader_from_dataset",
+    "linear_episode_target",
 ]

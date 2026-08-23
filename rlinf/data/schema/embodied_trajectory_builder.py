@@ -666,21 +666,27 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         self,
         *,
         step_obs: Any,
+        post_step_obs: Any | None,
         step_info: Any,
         env_idx: int,
         env_done: bool,
+        obs_is_pre_action: bool = False,
     ) -> tuple[Any, Any]:
         has_final_obs = isinstance(step_info, dict) and "final_observation" in step_info
         if has_final_obs and env_done:
-            final_observation = step_info["final_observation"]
             final_info_batch = step_info["final_info"]
             info_no_reset = copy.deepcopy(step_info)
             info_no_reset.pop("final_observation")
             info_no_reset.pop("final_info")
-            env_obs = self._slice_data(final_observation, env_idx, self.num_envs)
+            observation = (
+                step_obs if obs_is_pre_action else step_info["final_observation"]
+            )
+            env_obs = self._slice_data(observation, env_idx, self.num_envs)
             env_info = self._slice_data(final_info_batch, env_idx, self.num_envs)
             self._pending_obs[env_idx] = self._slice_data(
-                step_obs, env_idx, self.num_envs
+                post_step_obs if obs_is_pre_action else step_obs,
+                env_idx,
+                self.num_envs,
             )
             self._pending_info[env_idx] = self._slice_data(
                 info_no_reset, env_idx, self.num_envs
@@ -753,6 +759,7 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
         terminations,
         truncations,
         infos_list,
+        initial_obs=None,
     ) -> None:
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
         num_envs = self.num_envs
@@ -778,11 +785,16 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 num_chunks=num_chunks,
                 action_dim=action_dim,
             )
-
         for step_idx in range(chunk_size):
-            step_obs = (
+            post_step_obs = (
                 obs_list[step_idx] if isinstance(obs_list, (list, tuple)) else obs_list
             )
+            if initial_obs is None:
+                step_obs = post_step_obs
+            elif step_idx == 0:
+                step_obs = initial_obs
+            else:
+                step_obs = obs_list[step_idx - 1]
             step_term = (
                 terminations[:, step_idx]
                 if getattr(terminations, "ndim", 1) > 1
@@ -814,9 +826,11 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
                 env_done = done_by_term or done_by_trunc
                 env_obs, env_info = self._resolve_step_obs_info(
                     step_obs=step_obs,
+                    post_step_obs=post_step_obs,
                     step_info=step_info,
                     env_idx=env_idx,
                     env_done=env_done,
+                    obs_is_pre_action=initial_obs is not None,
                 )
 
                 if self._bool_from_env_info(env_info, "record_reset"):

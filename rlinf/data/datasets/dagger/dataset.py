@@ -233,7 +233,14 @@ class RollingLeRobotDataset(Dataset):
         w = max(0, int(self.window_size))
         if self._valid_physical_indices is not None:
             self._window_valid_slice_lo = max(0, len(self._valid_physical_indices) - w)
-            if self._window_valid_slice_lo < len(self._valid_physical_indices):
+            # Do not advance the physical window until logical samples are
+            # actually trimmed. Advancing to the first valid sample while the
+            # window is still under capacity can evict an earlier live shard;
+            # its path remains indexed and a later sample then fails with a
+            # missing in-memory shard error.
+            if self._window_valid_slice_lo == 0:
+                self._window_physical_start = 0
+            elif self._window_valid_slice_lo < len(self._valid_physical_indices):
                 self._window_physical_start = self._valid_physical_indices[
                     self._window_valid_slice_lo
                 ]

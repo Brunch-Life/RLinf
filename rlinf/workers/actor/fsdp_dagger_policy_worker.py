@@ -25,6 +25,7 @@ from rlinf.config import SupportedModel
 from rlinf.data.datasets.dagger import (
     RollingLeRobotDataset,
     build_dataloader_from_dataset,
+    linear_episode_target,
 )
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
@@ -62,11 +63,45 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_resume_done = True
         self._lerobot_resume_thread: threading.Thread | None = None
         self._lerobot_resume_error: Exception | None = None
+        self._lerobot_collection_limit_logged = False
 
     def _online_lerobot_cfg(self) -> DictConfig:
         return OmegaConf.select(
             self.cfg, "algorithm.dagger.online_lerobot", default=OmegaConf.create({})
         )
+
+    def _online_lerobot_rank_episode_limit(self) -> tuple[int, int]:
+        """Return the global and this actor rank's collection limits."""
+        global_limit = int(self._online_lerobot_cfg().get("max_episodes", 0) or 0)
+        if global_limit <= 0:
+            return 0, 0
+        base, remainder = divmod(global_limit, self._world_size)
+        rank_limit = base + int(self._rank < remainder)
+        return global_limit, rank_limit
+
+    def _online_lerobot_rank_episode_target(self) -> tuple[int, int]:
+        """Return the currently released global and per-rank episode targets."""
+        global_limit, rank_limit = self._online_lerobot_rank_episode_limit()
+        schedule_cfg = self._online_lerobot_cfg().get("collection_schedule", {})
+        if not bool(schedule_cfg.get("enabled", False)):
+            return global_limit, rank_limit
+
+        initial_episodes = int(schedule_cfg.get("initial_episodes", 1))
+        if initial_episodes < self._world_size:
+            raise ValueError(
+                "collection_schedule.initial_episodes must be at least the actor "
+                f"world size ({self._world_size}) so every rank can start training"
+            )
+        global_target = linear_episode_target(
+            max_episodes=global_limit,
+            initial_episodes=initial_episodes,
+            current_step=self.update_step,
+            total_steps=int(self.cfg.actor.optim.total_training_steps),
+            end_fraction=float(schedule_cfg.get("end_fraction", 0.5)),
+        )
+        base, remainder = divmod(global_target, self._world_size)
+        rank_target = base + int(self._rank < remainder)
+        return global_target, rank_target
 
     def _build_lerobot_dataset(self):
         online_lerobot_cfg = self._online_lerobot_cfg()
@@ -275,6 +310,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 ),
             )
         else:
+            self._online_lerobot_rank_episode_target()
             self._build_lerobot_dataset()
             self._resume_lerobot_dataset()
 
@@ -380,13 +416,39 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         """
         if not ep_frames:
             return
+        global_max_episodes, rank_max_episodes = (
+            self._online_lerobot_rank_episode_limit()
+        )
+        _, rank_target_episodes = self._online_lerobot_rank_episode_target()
         with self._pending_archive_lock:
+            if (
+                rank_target_episodes > 0
+                and self._next_lerobot_archive_id >= rank_target_episodes
+            ):
+                if (
+                    rank_max_episodes > 0
+                    and self._next_lerobot_archive_id >= rank_max_episodes
+                    and not self._lerobot_collection_limit_logged
+                ):
+                    self._logger.info(
+                        "Reached online LeRobot collection limit: "
+                        "global_max_episodes=%d, rank_max_episodes=%d; continuing "
+                        "training without collecting more episodes.",
+                        global_max_episodes,
+                        rank_max_episodes,
+                    )
+                    self._lerobot_collection_limit_logged = True
+                return
             archive_path = self._current_archive_path()
+            self._next_lerobot_archive_id += 1
+            reached_collection_limit = (
+                rank_max_episodes > 0
+                and self._next_lerobot_archive_id >= rank_max_episodes
+            )
         self.dataset.append_episode_to_memory(archive_path, ep_frames)
         should_archive = False
         with self._pending_archive_lock:
             self._pending_archive_episodes.append(ep_frames)
-            self._next_lerobot_archive_id += 1
             finalize_interval = OmegaConf.select(
                 self.cfg, "algorithm.dagger.online_lerobot.finalize_interval", default=8
             )
@@ -394,7 +456,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 finalize_interval
             ):
                 should_archive = True
-        if should_archive:
+        if should_archive or reached_collection_limit:
             self._archive_pending_lerobot_episodes()
 
     @Worker.timer("archive_lerobot_episodes")
@@ -579,9 +641,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 f"lerobot_dataset/{key}": value
                 for key, value in lerobot_dataset_stats.items()
             }
+            global_target, rank_target = self._online_lerobot_rank_episode_target()
             resume_thread = self._lerobot_resume_thread
             lerobot_dataset_stats.update(
                 {
+                    "lerobot_dataset/collection_global_target_episodes": global_target,
+                    "lerobot_dataset/collection_rank_target_episodes": rank_target,
+                    "lerobot_dataset/collection_rank_accepted_episodes": (
+                        self._next_lerobot_archive_id
+                    ),
                     "lerobot_dataset/resume_done": int(self._lerobot_resume_done),
                     "lerobot_dataset/resume_loading": int(
                         resume_thread is not None and resume_thread.is_alive()
@@ -708,6 +776,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             checkpoint_format="local_shard"
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
+        )
+        self.update_step = max(
+            self.update_step, int(getattr(self.lr_scheduler, "last_epoch", 0))
         )
 
         if not self.enable_online_lerobot:

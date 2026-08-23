@@ -72,7 +72,7 @@ def _state(env: Any) -> np.ndarray:
 
 def _expert_action(env: Any) -> np.ndarray:
     base = env.unwrapped
-    return _to_numpy(base.compute_expert_action())[0].astype(np.float32)
+    return _to_numpy(base.compute_expert_action()).astype(np.float32)
 
 
 def _collect_episode(env: Any, seed: int, max_steps: int) -> list[dict[str, Any]]:

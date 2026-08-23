@@ -1150,6 +1150,7 @@ class EnvWorker(Worker):
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
                         stage_builder.append_chunk_episode_data(
                             policy_output=policy_output,
+                            initial_obs=curr_obs,
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()

@@ -119,9 +119,11 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
     elif task == "sft":
         wrapper = _build_sft_model(
+            cfg,
             model_cfg,
             model,
             num_steps=num_steps,
+            action_chunk=action_chunk,
             action_env_dim=action_env_dim,
         )
     elif task == "rl":

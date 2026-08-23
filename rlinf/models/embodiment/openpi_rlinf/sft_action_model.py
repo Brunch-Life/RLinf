@@ -19,8 +19,8 @@ from typing import Any
 import torch
 
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.models.embodiment.openpi_rlinf.openpi_action_model import (
-    OpenPiPytorchActionModel,
+from rlinf.models.embodiment.openpi_rlinf.eval_action_model import (
+    OpenPiPytorchEvalActionModel,
 )
 from rlinf.models.embodiment.openpi_rlinf.pi0_model import model as pi0_model_module
 from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
@@ -30,7 +30,7 @@ from rlinf.models.embodiment.openpi_rlinf.utils.rlt_utils import (
 )
 
 
-class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
+class OpenPiPytorchSFTActionModel(OpenPiPytorchEvalActionModel):
     """SFT variant of :class:`OpenPiPytorchActionModel`.
 
     With ``openpi.use_rlt=False`` this computes the ordinary flow-matching loss.
@@ -46,14 +46,38 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         *,
         num_steps: int,
         action_env_dim: int,
+        action_chunk: int,
+        config_name: str,
         rlt_cfg: OpenPiPytorchRLTConfig | None = None,
     ):
         super().__init__(
             pi0_model,
             num_steps=num_steps,
             action_env_dim=action_env_dim,
+            action_chunk=action_chunk,
+            config_name=config_name,
             rlt_cfg=rlt_cfg,
         )
+
+    def prepare_lerobot_sft_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        """Apply the regular OpenPI pipeline to an online LeRobot batch."""
+        obs_dict = {
+            f"observation/{key}": batch[key]
+            for key in ("image", "wrist_image", "extra_view_image", "state")
+            if key in batch
+        }
+        batch_size = batch["actions"].shape[0]
+        obs_dict["actions"] = batch["actions"].reshape(
+            batch_size, self.action_chunk, -1
+        )
+        obs_dict["prompt"] = batch["task"]
+
+        processed = self.input_transform(obs_dict, transpose=False)
+        actions = processed.pop("actions")
+        return {
+            "observation": self._observation_dict_to_device(processed),
+            "actions": actions.to(device=self.device, dtype=torch.float32),
+        }
 
     def forward(self, forward_type: ForwardType = ForwardType.SFT, **kwargs):
         """Dispatch — SFT variant only supports :attr:`ForwardType.SFT`."""
@@ -63,6 +87,7 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
                 f"got forward_type={forward_type!r}. "
                 "Use the RL subclass (actor.model.openpi.task='rl') for PPO."
             )
+        kwargs.pop("use_action_chunk_loss", None)
         return self.sft_forward(**kwargs)
 
     def sft_forward(self, data: Any) -> torch.Tensor:
