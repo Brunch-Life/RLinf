@@ -24,9 +24,9 @@ runner:
     experiment_name: "realagainst_peg_slot_pi05_sft"
     logger_backends: ["tensorboard"]
   max_epochs: -1
-  max_steps: 10000
+  max_steps: 100000
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: 5000
 
 data:
   train_data_paths: "/mnt/public/chenyinuo/RealAgainst_new/RLinf/data/realagainst_peg_slot_expert"
@@ -78,7 +78,7 @@ actor:
     adam_eps: 1.0e-8
     weight_decay: 1.0e-10
     clip_grad: 1.0
-    total_training_steps: 10000
+    total_training_steps: 100000
     lr_warmup_steps: 1000
     lr_scheduler: "openpi_cosine"
     num_cycles: 0.5

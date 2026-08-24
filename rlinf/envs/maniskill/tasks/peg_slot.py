@@ -27,6 +27,11 @@ from mani_skill.agents.robots.panda import PandaWristCam
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
+from mani_skill.utils.geometry.rotation_conversions import (
+    euler_angles_to_matrix,
+    matrix_to_quaternion,
+    quaternion_multiply,
+)
 from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs import Pose
@@ -75,6 +80,7 @@ class PegSlotEnv(BaseEnv):
     SLOT_ACTION_SCALE = 0.010
     SLOT_YAW_ACTION_SCALE = np.deg2rad(5.0)
     SLOT_RESET_YAW_RANGE = np.deg2rad(30.0)
+    TCP_RESET_ROLL_PITCH_RANGE = np.deg2rad(15.0)
     ARM_POSITION_ACTION_SCALE = 0.25
     ARM_ROTATION_ACTION_SCALE = 0.25
 
@@ -205,6 +211,48 @@ class PegSlotEnv(BaseEnv):
             # forward kinematics before reading ``tcp.pose``; otherwise resets
             # after the first episode place the peg at the previous episode's
             # terminal TCP pose.
+            if self.gpu_sim_enabled:
+                self.scene._gpu_apply_all()
+                self.scene.px.gpu_update_articulation_kinematics()
+                self.scene._gpu_fetch_all()
+
+            # Randomize the grasped system's initial roll and pitch through the
+            # robot IK, rather than rotating the peg independently of the TCP.
+            # The target keeps the nominal TCP position and applies a
+            # root/world-aligned orientation delta in both directions.
+            arm_controller = self.agent.controller.controllers["arm"]
+            current_tcp_at_base = arm_controller.ee_pose_at_base[env_idx]
+            roll_pitch = (
+                torch.rand((batch_size, 2), device=self.device) * 2.0 - 1.0
+            ) * self.TCP_RESET_ROLL_PITCH_RANGE
+            reset_euler = torch.zeros((batch_size, 3), device=self.device)
+            reset_euler[:, :2] = roll_pitch
+            delta_quaternion = matrix_to_quaternion(
+                euler_angles_to_matrix(reset_euler, "XYZ")
+            )
+            target_tcp_at_base = Pose.create_from_pq(
+                p=current_tcp_at_base.p,
+                q=quaternion_multiply(delta_quaternion, current_tcp_at_base.q),
+            )
+
+            # GPU IK is a local Jacobian solve, so refine the absolute target a
+            # few times in kinematics space before committing articulation qpos.
+            reset_qpos = qpos
+            ik_iterations = 3 if self.gpu_sim_enabled else 1
+            for _ in range(ik_iterations):
+                arm_qpos = arm_controller.kinematics.compute_ik(
+                    pose=target_tcp_at_base,
+                    q0=reset_qpos,
+                    is_delta_pose=False,
+                    solver_config=arm_controller.config.delta_solver_config,
+                )
+                if arm_qpos is None:
+                    break
+                reset_qpos = torch.cat((arm_qpos, qpos[:, 7:]), dim=-1)
+            qpos = reset_qpos
+            self.agent.robot.set_qpos(qpos)
+            self.agent.robot.set_qvel(torch.zeros_like(qpos))
+
             if self.gpu_sim_enabled:
                 self.scene._gpu_apply_all()
                 self.scene.px.gpu_update_articulation_kinematics()
