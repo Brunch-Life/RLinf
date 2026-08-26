@@ -101,7 +101,7 @@ rollout:
   pipeline_stage_num: 1
   collect_prev_infos: false
   model:
-    model_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260819-11:34:51-realagainst_peg_slot_sft_openpi_pi05/realagainst_peg_slot_pi05_sft/checkpoints/global_step_10000
+    model_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260823-15:41:33-realagainst_peg_slot_sft_openpi_pi05/realagainst_peg_slot_pi05_sft/checkpoints/global_step_30000
     precision: bf16
 
 actor:
@@ -113,7 +113,7 @@ actor:
   enable_offload: false
   model:
     model_type: openpi_rlinf
-    model_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260819-11:34:51-realagainst_peg_slot_sft_openpi_pi05/realagainst_peg_slot_pi05_sft/checkpoints/global_step_10000
+    model_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260823-15:41:33-realagainst_peg_slot_sft_openpi_pi05/realagainst_peg_slot_pi05_sft/checkpoints/global_step_30000
     precision: fp32
     pi05: true
     is_lora: false
