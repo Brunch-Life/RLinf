@@ -1176,6 +1176,25 @@ class EnvWorker(Worker):
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
                             else env_output.obs
                         )
+                        transition_obs_keys = self.cfg.rollout.get(
+                            "transition_obs_keys", None
+                        )
+                        if transition_obs_keys is not None:
+                            missing_curr = set(transition_obs_keys) - set(curr_obs)
+                            missing_next = set(transition_obs_keys) - set(next_obs)
+                            if missing_curr or missing_next:
+                                raise KeyError(
+                                    "Configured rollout.transition_obs_keys are "
+                                    "missing from observations: "
+                                    f"curr={sorted(missing_curr)}, "
+                                    f"next={sorted(missing_next)}"
+                                )
+                            curr_obs = {
+                                key: curr_obs[key] for key in transition_obs_keys
+                            }
+                            next_obs = {
+                                key: next_obs[key] for key in transition_obs_keys
+                            }
                         self.trajectory_builders[stage_id].append_transitions(
                             curr_obs, next_obs
                         )

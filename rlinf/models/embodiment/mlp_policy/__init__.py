@@ -53,6 +53,9 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             add_value_head=cfg.add_value_head,
             add_q_head=cfg.get("add_q_head", False),
             q_head_type=cfg.get("q_head_type", "default"),
+            value_granularity=cfg.get("value_granularity", "action_level"),
+            observation_key=cfg.get("observation_key", "states"),
+            hidden_dims=tuple(cfg.get("hidden_dims", (256, 256, 256))),
         )
 
     return model

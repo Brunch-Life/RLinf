@@ -83,7 +83,14 @@ def main(cfg) -> None:
     )
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = AsyncMultiStepRolloutWorker.create_group(cfg).launch(
+    rollout_worker_cls = AsyncMultiStepRolloutWorker
+    if cfg.rollout.get("peg_slot_adversary", {}).get("enabled", False):
+        from rlinf.workers.rollout.hf.peg_slot_adversary_worker import (
+            PegSlotAdversaryRolloutWorker,
+        )
+
+        rollout_worker_cls = PegSlotAdversaryRolloutWorker
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
 

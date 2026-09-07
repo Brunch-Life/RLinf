@@ -72,9 +72,7 @@ class ManiskillEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
-        self.expert_intervention_beta = getattr(
-            cfg, "expert_intervention_beta", None
-        )
+        self.expert_intervention_beta = getattr(cfg, "expert_intervention_beta", None)
         if self.expert_intervention_beta is not None:
             self.expert_intervention_beta = float(self.expert_intervention_beta)
             if not 0.0 <= self.expert_intervention_beta <= 1.0:
@@ -270,7 +268,7 @@ class ManiskillEnv(gym.Env):
                 self.returns[:] = 0.0
 
     def _record_metrics(self, step_reward, infos):
-        episode_info = {}
+        episode_info = dict(infos.get("episode", {}))
         self.returns += step_reward
         if "success" in infos:
             self.success_once = self.success_once | infos["success"]
@@ -323,14 +321,16 @@ class ManiskillEnv(gym.Env):
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
-        step_reward = self._calc_step_reward(_reward, infos)
-
-        infos = self._record_metrics(step_reward, infos)
         if isinstance(terminations, bool):
-            terminations = torch.tensor([terminations], device=self.device)
+            terminations = torch.full(
+                (self.num_envs,), terminations, device=self.device
+            )
         if isinstance(truncations, bool):
-            truncations = torch.tensor([truncations], device=self.device)
-            truncations = truncations.repeat(self.num_envs)
+            truncations = torch.full((self.num_envs,), truncations, device=self.device)
+
+        step_reward = self._calc_step_reward(_reward, infos)
+        if self.record_metrics:
+            infos = self._record_metrics(step_reward, infos)
         if self.ignore_terminations:
             terminations[:] = False
             if self.record_metrics:
@@ -352,9 +352,7 @@ class ManiskillEnv(gym.Env):
         intervention_beta = self.expert_intervention_beta
         expert_chunk_mask = None
         if intervention_beta is not None:
-            if not callable(
-                getattr(self.env.unwrapped, "compute_expert_action", None)
-            ):
+            if not callable(getattr(self.env.unwrapped, "compute_expert_action", None)):
                 raise ValueError(
                     "Expert intervention requires the ManiSkill task to implement "
                     "compute_expert_action()."

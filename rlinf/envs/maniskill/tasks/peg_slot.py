@@ -18,10 +18,12 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+import gymnasium as gym
 import numpy as np
 import sapien
 import torch
 from gymnasium import spaces
+from gymnasium.envs.registration import WrapperSpec
 from gymnasium.vector.utils import batch_space
 from mani_skill.agents.robots.panda import PandaWristCam
 from mani_skill.envs.sapien_env import BaseEnv
@@ -56,6 +58,97 @@ def _tilt_error_to_down(peg_rotation: torch.Tensor) -> torch.Tensor:
     return tilt_axis * tilt_angle.unsqueeze(-1)
 
 
+def _bounded_adversary_slot_update(
+    slot_xy: torch.Tensor,
+    slot_yaw: torch.Tensor,
+    reset_xy: torch.Tensor,
+    reset_yaw: torch.Tensor,
+    action: torch.Tensor,
+    *,
+    xy_action_scale: float,
+    yaw_action_scale: float,
+    xy_radius: float,
+    yaw_limit: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Apply one adversary action and project it into reset-relative bounds.
+
+    The returned boundary violation is the rejected displacement measured in
+    units of one maximum action step. It is zero for every fully legal action.
+    """
+    proposed_xy = slot_xy + action[:, :2] * xy_action_scale
+    proposed_xy_offset = proposed_xy - reset_xy
+    proposed_xy_distance = torch.linalg.vector_norm(proposed_xy_offset, dim=-1)
+    projection_scale = torch.clamp(
+        xy_radius / proposed_xy_distance.clamp_min(1e-6), max=1.0
+    )
+    bounded_xy = reset_xy + proposed_xy_offset * projection_scale[:, None]
+    xy_violation = (proposed_xy_distance - xy_radius).clamp_min(0.0) / (xy_action_scale)
+
+    proposed_yaw = slot_yaw + action[:, 2] * yaw_action_scale
+    proposed_yaw_offset = (
+        torch.remainder(proposed_yaw - reset_yaw + torch.pi, 2 * torch.pi) - torch.pi
+    )
+    bounded_yaw_offset = proposed_yaw_offset.clamp(-yaw_limit, yaw_limit)
+    bounded_yaw = reset_yaw + bounded_yaw_offset
+    yaw_violation = (proposed_yaw_offset.abs() - yaw_limit).clamp_min(0.0) / (
+        yaw_action_scale
+    )
+    return bounded_xy, bounded_yaw, xy_violation + yaw_violation
+
+
+def _adversary_step_reward(
+    action: torch.Tensor,
+    action_change: torch.Tensor,
+    boundary_violation: torch.Tensor,
+    first_success: torch.Tensor,
+    first_timeout: torch.Tensor,
+    *,
+    success_penalty: float,
+    timeout_bonus: float,
+    motion_penalty: float,
+    jerk_penalty: float,
+    boundary_penalty: float,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute terminal-dominant adversary reward and its cost terms."""
+    motion_cost = action.square().mean(dim=-1)
+    jerk_cost = action_change.square().mean(dim=-1)
+    success_cost = success_penalty * first_success.to(torch.float32)
+    weighted_motion_cost = motion_penalty * motion_cost
+    weighted_jerk_cost = jerk_penalty * jerk_cost
+    weighted_boundary_cost = boundary_penalty * boundary_violation
+    timeout_reward = timeout_bonus * first_timeout.to(torch.float32)
+    reward = timeout_reward - (
+        success_cost
+        + weighted_motion_cost
+        + weighted_jerk_cost
+        + weighted_boundary_cost
+    )
+    return reward, {
+        "adversary_timeout_bonus": timeout_reward,
+        "adversary_success_cost": success_cost,
+        "adversary_motion_cost": weighted_motion_cost,
+        "adversary_jerk_cost": weighted_jerk_cost,
+        "adversary_boundary_cost": weighted_boundary_cost,
+    }
+
+
+class PegSlotEpisodeBoundary(gym.Wrapper, gym.utils.RecordConstructorArgs):
+    """Give this task's finite-horizon termination precedence over TimeLimit."""
+
+    def __init__(self, env: gym.Env) -> None:
+        gym.utils.RecordConstructorArgs.__init__(self)
+        gym.Wrapper.__init__(self, env)
+
+    def step(
+        self, action: Any
+    ) -> tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+        """Preserve external truncations unless the task has truly terminated."""
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if self.unwrapped.adversary_control:
+            truncated = truncated & ~terminated
+        return obs, reward, terminated, truncated, info
+
+
 @register_env("RealAgainstPegSlot-v0", max_episode_steps=200)
 class PegSlotEnv(BaseEnv):
     """Insert a grasped vertical peg into an upward-facing movable slot.
@@ -80,6 +173,10 @@ class PegSlotEnv(BaseEnv):
     SLOT_ACTION_SCALE = 0.010
     SLOT_YAW_ACTION_SCALE = np.deg2rad(5.0)
     SLOT_RESET_YAW_RANGE = np.deg2rad(30.0)
+    ADVERSARY_SLOT_ACTION_SCALE = 0.002
+    ADVERSARY_SLOT_YAW_ACTION_SCALE = np.deg2rad(1.0)
+    ADVERSARY_SLOT_XY_RADIUS = 0.050
+    ADVERSARY_SLOT_YAW_LIMIT = np.deg2rad(30.0)
     TCP_RESET_ROLL_PITCH_RANGE = np.deg2rad(15.0)
     ARM_POSITION_ACTION_SCALE = 0.25
     ARM_ROTATION_ACTION_SCALE = 0.25
@@ -87,6 +184,11 @@ class PegSlotEnv(BaseEnv):
     INSERTION_DEPTH = 0.010
     LATERAL_TOLERANCE = 0.0105
     ORIENTATION_TOLERANCE_RAD = np.deg2rad(12.0)
+    ADVERSARY_SUCCESS_PENALTY = 2.0
+    ADVERSARY_TIMEOUT_BONUS = 2.0
+    ADVERSARY_MOTION_PENALTY = 0.002
+    ADVERSARY_JERK_PENALTY = 0.005
+    ADVERSARY_BOUNDARY_PENALTY = 0.05
 
     _ROBOT_BASE_POSE = sapien.Pose(p=[-0.615, 0.0, 0.0])
     _ROBOT_QPOS = np.array(
@@ -109,10 +211,53 @@ class PegSlotEnv(BaseEnv):
         *args,
         robot_uids: str = "panda_wristcam",
         control_mode: str = "pd_ee_delta_pose",
+        adversary_control: bool = False,
+        adversary_slot_action_scale: float = ADVERSARY_SLOT_ACTION_SCALE,
+        adversary_slot_yaw_action_scale: float = ADVERSARY_SLOT_YAW_ACTION_SCALE,
+        adversary_slot_xy_radius: float = ADVERSARY_SLOT_XY_RADIUS,
+        adversary_slot_yaw_limit: float = ADVERSARY_SLOT_YAW_LIMIT,
+        adversary_episode_steps: int = 100,
+        adversary_success_penalty: float = ADVERSARY_SUCCESS_PENALTY,
+        adversary_timeout_bonus: float = ADVERSARY_TIMEOUT_BONUS,
+        adversary_motion_penalty: float = ADVERSARY_MOTION_PENALTY,
+        adversary_jerk_penalty: float = ADVERSARY_JERK_PENALTY,
+        adversary_boundary_penalty: float = ADVERSARY_BOUNDARY_PENALTY,
         **kwargs,
     ):
         if control_mode != "pd_ee_delta_pose":
             raise ValueError("PegSlotEnv requires control_mode='pd_ee_delta_pose'")
+        self.adversary_control = bool(adversary_control)
+        self.adversary_slot_action_scale = float(adversary_slot_action_scale)
+        self.adversary_slot_yaw_action_scale = float(adversary_slot_yaw_action_scale)
+        self.adversary_slot_xy_radius = float(adversary_slot_xy_radius)
+        self.adversary_slot_yaw_limit = float(adversary_slot_yaw_limit)
+        self.adversary_episode_steps = int(adversary_episode_steps)
+        self.adversary_success_penalty = float(adversary_success_penalty)
+        self.adversary_timeout_bonus = float(adversary_timeout_bonus)
+        self.adversary_motion_penalty = float(adversary_motion_penalty)
+        self.adversary_jerk_penalty = float(adversary_jerk_penalty)
+        self.adversary_boundary_penalty = float(adversary_boundary_penalty)
+        positive_parameters = {
+            "adversary_slot_action_scale": self.adversary_slot_action_scale,
+            "adversary_slot_yaw_action_scale": (self.adversary_slot_yaw_action_scale),
+            "adversary_slot_xy_radius": self.adversary_slot_xy_radius,
+            "adversary_slot_yaw_limit": self.adversary_slot_yaw_limit,
+            "adversary_episode_steps": self.adversary_episode_steps,
+        }
+        for name, value in positive_parameters.items():
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        penalty_parameters = {
+            "adversary_success_penalty": self.adversary_success_penalty,
+            "adversary_timeout_bonus": self.adversary_timeout_bonus,
+            "adversary_motion_penalty": self.adversary_motion_penalty,
+            "adversary_jerk_penalty": self.adversary_jerk_penalty,
+            "adversary_boundary_penalty": self.adversary_boundary_penalty,
+        }
+        for name, value in penalty_parameters.items():
+            if value < 0:
+                raise ValueError(f"{name} must be non-negative")
+
         super().__init__(
             *args,
             robot_uids=robot_uids,
@@ -136,11 +281,7 @@ class PegSlotEnv(BaseEnv):
         camera_pose = sapien_utils.look_at(
             eye=[0.42, -0.52, 0.62], target=[0.0, 0.0, 0.12]
         )
-        return [
-            CameraConfig(
-                "3rd_view_camera", camera_pose, 256, 256, 1.0, 0.01, 2.0
-            )
-        ]
+        return [CameraConfig("3rd_view_camera", camera_pose, 256, 256, 1.0, 0.01, 2.0)]
 
     @property
     def _default_human_render_camera_configs(self):
@@ -192,6 +333,20 @@ class PegSlotEnv(BaseEnv):
 
         self._slot_xy = torch.zeros((self.num_envs, 2), device=self.device)
         self._slot_yaw = torch.zeros(self.num_envs, device=self.device)
+        self._slot_reset_xy = torch.zeros_like(self._slot_xy)
+        self._slot_reset_yaw = torch.zeros_like(self._slot_yaw)
+        self._last_slot_action = torch.zeros((self.num_envs, 3), device=self.device)
+        self._slot_action_change = torch.zeros_like(self._last_slot_action)
+        self._slot_boundary_violation = torch.zeros(self.num_envs, device=self.device)
+        self._adversary_success_seen = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self._adversary_timeout_seen = torch.zeros_like(self._adversary_success_seen)
+        self._adversary_motion_cost_sum = torch.zeros(self.num_envs, device=self.device)
+        self._adversary_jerk_cost_sum = torch.zeros(self.num_envs, device=self.device)
+        self._adversary_boundary_cost_sum = torch.zeros(
+            self.num_envs, device=self.device
+        )
 
     def _initialize_episode(self, env_idx: torch.Tensor, options: dict):
         del options
@@ -275,6 +430,16 @@ class PegSlotEnv(BaseEnv):
             self._slot_yaw[env_idx] = (
                 torch.rand(batch_size, device=self.device) * 2.0 - 1.0
             ) * self.SLOT_RESET_YAW_RANGE
+            self._slot_reset_xy[env_idx] = self._slot_xy[env_idx]
+            self._slot_reset_yaw[env_idx] = self._slot_yaw[env_idx]
+            self._last_slot_action[env_idx] = 0.0
+            self._slot_action_change[env_idx] = 0.0
+            self._slot_boundary_violation[env_idx] = 0.0
+            self._adversary_success_seen[env_idx] = False
+            self._adversary_timeout_seen[env_idx] = False
+            self._adversary_motion_cost_sum[env_idx] = 0.0
+            self._adversary_jerk_cost_sum[env_idx] = 0.0
+            self._adversary_boundary_cost_sum[env_idx] = 0.0
             self._set_slot_pose(env_idx)
 
     def _set_slot_pose(self, env_idx: torch.Tensor | None = None) -> None:
@@ -314,14 +479,35 @@ class PegSlotEnv(BaseEnv):
         slot_action = flat_action[:, 6:]
 
         slot_action = slot_action.clamp(-1.0, 1.0)
-        slot_xy_delta = slot_action[:, :2] * self.SLOT_ACTION_SCALE
-        self._slot_xy = (self._slot_xy + slot_xy_delta).clamp(
-            -self.SLOT_XY_LIMIT, self.SLOT_XY_LIMIT
-        )
-        self._slot_yaw += slot_action[:, 2] * self.SLOT_YAW_ACTION_SCALE
-        self._slot_yaw = (
-            torch.remainder(self._slot_yaw + torch.pi, 2 * torch.pi) - torch.pi
-        )
+        self._slot_action_change = slot_action - self._last_slot_action
+        self._last_slot_action = slot_action
+
+        if self.adversary_control:
+            (
+                self._slot_xy,
+                self._slot_yaw,
+                self._slot_boundary_violation,
+            ) = _bounded_adversary_slot_update(
+                self._slot_xy,
+                self._slot_yaw,
+                self._slot_reset_xy,
+                self._slot_reset_yaw,
+                slot_action,
+                xy_action_scale=self.adversary_slot_action_scale,
+                yaw_action_scale=self.adversary_slot_yaw_action_scale,
+                xy_radius=self.adversary_slot_xy_radius,
+                yaw_limit=self.adversary_slot_yaw_limit,
+            )
+        else:
+            slot_xy_delta = slot_action[:, :2] * self.SLOT_ACTION_SCALE
+            self._slot_xy = (self._slot_xy + slot_xy_delta).clamp(
+                -self.SLOT_XY_LIMIT, self.SLOT_XY_LIMIT
+            )
+            self._slot_yaw += slot_action[:, 2] * self.SLOT_YAW_ACTION_SCALE
+            self._slot_yaw = (
+                torch.remainder(self._slot_yaw + torch.pi, 2 * torch.pi) - torch.pi
+            )
+            self._slot_boundary_violation.zero_()
         self._set_slot_pose()
 
         scaled_arm_action = arm_action.clamp(-1.0, 1.0).clone()
@@ -368,11 +554,66 @@ class PegSlotEnv(BaseEnv):
             success,
         )
 
+    def _build_adversary_observation(self) -> torch.Tensor:
+        """Build the normalized 17D privileged state used only by the adversary."""
+        tip_in_slot, _, depth, _, _ = self._alignment()
+        relative_position_scale = torch.tensor([0.05, 0.05, 0.10], device=self.device)
+        relative_position = (tip_in_slot.p / relative_position_scale).clamp(-4.0, 4.0)
+
+        peg_rotation = self.peg.pose.to_transformation_matrix()[..., :3, :3]
+        tilt_error = _tilt_error_to_down(peg_rotation) / torch.pi
+        relative_rotation = tip_in_slot.to_transformation_matrix()[..., :3, :3]
+        relative_yaw = torch.atan2(
+            relative_rotation[:, 1, 0], relative_rotation[:, 0, 0]
+        )
+        relative_yaw_features = torch.stack(
+            (torch.sin(relative_yaw), torch.cos(relative_yaw)), dim=-1
+        )
+
+        normalized_depth = (depth / self.INSERTION_DEPTH).clamp(-4.0, 4.0)
+        normalized_slot_xy = (
+            (self._slot_xy - self._slot_reset_xy) / self.adversary_slot_xy_radius
+        ).clamp(-1.0, 1.0)
+        slot_yaw_offset = (
+            torch.remainder(
+                self._slot_yaw - self._slot_reset_yaw + torch.pi, 2 * torch.pi
+            )
+            - torch.pi
+        )
+        slot_yaw_features = torch.stack(
+            (torch.sin(slot_yaw_offset), torch.cos(slot_yaw_offset)), dim=-1
+        )
+        time_fraction = (
+            self.elapsed_steps.to(dtype=torch.float32)
+            / float(self.adversary_episode_steps)
+        ).clamp(0.0, 1.0)
+
+        return torch.cat(
+            (
+                relative_position,
+                tilt_error,
+                relative_yaw_features,
+                normalized_depth[:, None],
+                normalized_slot_xy,
+                slot_yaw_features,
+                self._last_slot_action,
+                time_fraction[:, None],
+            ),
+            dim=-1,
+        )
+
     def evaluate(self):
         tip_in_slot, lateral_error, depth, orientation_error, success = (
             self._alignment()
         )
-        return {
+        slot_xy_offset = self._slot_xy - self._slot_reset_xy
+        slot_yaw_offset = (
+            torch.remainder(
+                self._slot_yaw - self._slot_reset_yaw + torch.pi, 2 * torch.pi
+            )
+            - torch.pi
+        )
+        info = {
             "success": success,
             "peg_tip_in_slot": tip_in_slot.p,
             "lateral_error": lateral_error,
@@ -380,7 +621,17 @@ class PegSlotEnv(BaseEnv):
             "orientation_error": orientation_error,
             "slot_xy": self._slot_xy.clone(),
             "slot_yaw": self._slot_yaw.clone(),
+            "adversary_slot_xy_offset": slot_xy_offset,
+            "adversary_slot_yaw_offset": slot_yaw_offset,
+            "adversary_boundary_violation": (self._slot_boundary_violation.clone()),
         }
+        if self.adversary_control:
+            timeout_failure = (self.elapsed_steps >= self.adversary_episode_steps) & ~(
+                self._adversary_success_seen | success
+            )
+            info["fail"] = self._adversary_timeout_seen | timeout_failure
+            info["adversary_timeout"] = info["fail"]
+        return info
 
     def _get_obs_extra(self, info: dict):
         observation = {
@@ -405,13 +656,16 @@ class PegSlotEnv(BaseEnv):
         """
         sensor_data = raw_obs["sensor_data"]
         state = raw_obs["agent"]["qpos"][..., :9].to(dtype=torch.float32)
-        return {
+        observation = {
             "main_images": sensor_data["3rd_view_camera"]["rgb"].to(torch.uint8),
             "wrist_images": sensor_data["hand_camera"]["rgb"].to(torch.uint8),
             "extra_view_images": None,
             "states": state,
             "task_descriptions": self.get_language_instruction(),
         }
+        if self.adversary_control:
+            observation["adversary_states"] = self._build_adversary_observation()
+        return observation
 
     def get_language_instruction(self):
         return [
@@ -454,9 +708,54 @@ class PegSlotEnv(BaseEnv):
         return action
 
     def compute_sparse_reward(self, obs, action, info: dict):
+        if self.adversary_control:
+            return self.compute_dense_reward(obs, action, info)
         return info["success"].to(torch.float32)
 
     def compute_dense_reward(self, obs: Any, action, info: dict):
+        if self.adversary_control:
+            first_success = info["success"] & ~(
+                self._adversary_success_seen | self._adversary_timeout_seen
+            )
+            first_timeout = info["adversary_timeout"] & ~self._adversary_timeout_seen
+            self._adversary_success_seen |= info["success"]
+            self._adversary_timeout_seen |= info["adversary_timeout"]
+            reward, reward_info = _adversary_step_reward(
+                self._last_slot_action,
+                self._slot_action_change,
+                self._slot_boundary_violation,
+                first_success,
+                first_timeout,
+                success_penalty=self.adversary_success_penalty,
+                timeout_bonus=self.adversary_timeout_bonus,
+                motion_penalty=self.adversary_motion_penalty,
+                jerk_penalty=self.adversary_jerk_penalty,
+                boundary_penalty=self.adversary_boundary_penalty,
+            )
+            self._adversary_motion_cost_sum += reward_info["adversary_motion_cost"]
+            self._adversary_jerk_cost_sum += reward_info["adversary_jerk_cost"]
+            self._adversary_boundary_cost_sum += reward_info["adversary_boundary_cost"]
+            info.update(reward_info)
+            info["adversary_first_success"] = first_success
+            info["adversary_motion_cost_sum"] = self._adversary_motion_cost_sum.clone()
+            info["adversary_jerk_cost_sum"] = self._adversary_jerk_cost_sum.clone()
+            info["adversary_boundary_cost_sum"] = (
+                self._adversary_boundary_cost_sum.clone()
+            )
+            info["episode"] = {
+                key: info[key].clone()
+                for key in (
+                    "adversary_timeout",
+                    "adversary_timeout_bonus",
+                    "adversary_first_success",
+                    "adversary_success_cost",
+                    "adversary_motion_cost_sum",
+                    "adversary_jerk_cost_sum",
+                    "adversary_boundary_cost_sum",
+                )
+            }
+            return reward
+
         lateral_reward = 1.0 - torch.tanh(12.0 * info["lateral_error"])
         orientation_reward = 1.0 - torch.tanh(info["orientation_error"])
         depth_reward = torch.clamp(
@@ -467,4 +766,19 @@ class PegSlotEnv(BaseEnv):
         return reward
 
     def compute_normalized_dense_reward(self, obs, action, info: dict):
-        return self.compute_dense_reward(obs, action, info) / 5.0
+        reward = self.compute_dense_reward(obs, action, info)
+        return reward if self.adversary_control else reward / 5.0
+
+
+# This task-only wrapper runs after ManiSkill's TimeLimit, including gym.make.
+_peg_slot_spec = gym.spec("RealAgainstPegSlot-v0")
+if not any(
+    w.name == "PegSlotEpisodeBoundary" for w in _peg_slot_spec.additional_wrappers
+):
+    _peg_slot_spec.additional_wrappers += (
+        WrapperSpec(
+            name="PegSlotEpisodeBoundary",
+            entry_point="rlinf.envs.maniskill.tasks.peg_slot:PegSlotEpisodeBoundary",
+            kwargs={},
+        ),
+    )

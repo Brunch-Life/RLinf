@@ -35,12 +35,18 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
         value_granularity="action_level",
         critic_obs_dim=None,
+        observation_key="states",
+        hidden_dims=(256, 256, 256),
     ):
         super().__init__()
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim or obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
+        self.observation_key = observation_key
+        self.hidden_dims = tuple(int(dim) for dim in hidden_dims)
+        if not self.hidden_dims or any(dim <= 0 for dim in self.hidden_dims):
+            raise ValueError("hidden_dims must contain positive dimensions")
         self.torch_compile_enabled = False
         # default setting
         self.independent_std = True
@@ -58,7 +64,7 @@ class MLPPolicy(nn.Module, BasePolicy):
         if add_value_head:
             self.value_head = ValueHead(
                 obs_dim,
-                hidden_sizes=(256, 256, 256),
+                hidden_sizes=self.hidden_dims,
                 activation=activation,
                 output_dim=output_dim,
             )
@@ -70,7 +76,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             if q_head_type == "default":
                 self.q_head = MultiQHead(
                     hidden_size=self.critic_obs_dim,
-                    hidden_dims=[256, 256, 256],
+                    hidden_dims=list(self.hidden_dims),
                     num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
@@ -78,7 +84,7 @@ class MLPPolicy(nn.Module, BasePolicy):
             elif q_head_type == "crossq":
                 self.q_head = MultiCrossQHead(
                     hidden_size=self.critic_obs_dim,
-                    hidden_dims=[256, 256, 256],
+                    hidden_dims=list(self.hidden_dims),
                     num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
@@ -88,23 +94,26 @@ class MLPPolicy(nn.Module, BasePolicy):
 
         act = get_act_func(activation)
 
-        self.backbone = nn.Sequential(
-            layer_init(nn.Linear(obs_dim, 256)),
-            act(),
-            layer_init(nn.Linear(256, 256)),
-            act(),
-            layer_init(nn.Linear(256, 256)),
-            act(),
-        )
+        backbone_layers = []
+        input_dim = obs_dim
+        for hidden_dim in self.hidden_dims:
+            backbone_layers.extend(
+                (layer_init(nn.Linear(input_dim, hidden_dim)), act())
+            )
+            input_dim = hidden_dim
+        self.backbone = nn.Sequential(*backbone_layers)
         self.actor_mean = layer_init(
-            nn.Linear(256, self.num_action_chunks * action_dim), std=0.01 * np.sqrt(2)
+            nn.Linear(input_dim, self.num_action_chunks * action_dim),
+            std=0.01 * np.sqrt(2),
         )
         if self.independent_std:
             self.actor_logstd = nn.Parameter(
                 torch.ones(1, self.num_action_chunks * action_dim) * -0.5
             )
         else:
-            self.actor_logstd = nn.Linear(256, self.num_action_chunks * action_dim)
+            self.actor_logstd = nn.Linear(
+                input_dim, self.num_action_chunks * action_dim
+            )
 
         if action_scale is not None:
             l, h = action_scale
@@ -121,7 +130,12 @@ class MLPPolicy(nn.Module, BasePolicy):
 
     def preprocess_env_obs(self, env_obs):
         device = next(self.parameters()).device
-        return {"states": env_obs["states"].to(device)}
+        if self.observation_key not in env_obs:
+            raise KeyError(
+                f"MLP observation key {self.observation_key!r} is missing; "
+                f"available keys: {sorted(env_obs)}"
+            )
+        return {"states": env_obs[self.observation_key].to(device)}
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""

@@ -1,0 +1,245 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 3
+    rollout: 0-3
+    env: 0-3
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: logs/realagainst_peg_slot_adversary_sac_dagger6k_sparse
+    project_name: rlinf
+    experiment_name: realagainst_peg_slot_adversary_sac_dagger6k_sparse
+    logger_backends: [tensorboard]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: false
+  val_check_interval: 50
+  save_interval: 100
+  resume_dir: null
+  ckpt_path: null
+  weight_sync_interval: 1
+
+algorithm:
+  update_epoch: 8
+  group_size: 1
+  agg_q: min
+  actor_agg_q: mean
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: token-mean
+  bootstrap_type: standard
+  gamma: 0.99
+  tau: 0.005
+  backup_entropy: true
+  entropy_tuning:
+    alpha_type: softplus
+    initial_alpha: 0.01
+    # The SAC action is a 10 x 3 chunk, so entropy is summed over 30 scalars.
+    target_entropy: -30
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: true
+    cache_size: 2000
+    sample_window_size: 2000
+    # Four env workers add four batched trajectories per collection epoch.
+    min_buffer_size: 12
+    auto_save: false
+  target_update_freq: 1
+
+env:
+  group_name: EnvGroup
+  train:
+    env_type: maniskill
+    total_num_envs: 128
+    rollout_epoch: 1
+    reset_seed_mode: sequential
+    wrap_obs_mode: raw
+    auto_reset: true
+    ignore_terminations: false
+    use_rel_reward: false
+    reward_mode: raw
+    seed: 0
+    group_size: 1
+    use_fixed_reset_state_ids: false
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    enable_offload: false
+    video_cfg:
+      save_video: false
+    init_params: &adversary_env_params
+      id: RealAgainstPegSlot-v0
+      num_envs: null
+      obs_mode: rgb
+      reward_mode: dense
+      control_mode: pd_ee_delta_pose
+      sim_backend: gpu
+      adversary_control: true
+      # Per 20 Hz control step: at most 2 mm XY and 1 degree yaw.
+      adversary_slot_action_scale: 0.002
+      adversary_slot_yaw_action_scale: 0.017453292519943295
+      # Reset-relative cumulative bounds: 5 cm XY and 30 degrees yaw.
+      adversary_slot_xy_radius: 0.05
+      adversary_slot_yaw_limit: 0.5235987755982988
+      adversary_episode_steps: 100
+      # r_t = -2 first_success - 0.002 mean(a^2)
+      #       - 0.005 mean((a-a_prev)^2) - 0.05 boundary_violation.
+      adversary_success_penalty: 2.0
+      adversary_timeout_bonus: 2.0
+      adversary_motion_penalty: 0.002
+      adversary_jerk_penalty: 0.005
+      adversary_boundary_penalty: 0.05
+      sim_config:
+        sim_freq: 200
+        control_freq: 20
+      max_episode_steps: ${..max_episode_steps}
+      sensor_configs:
+        width: 224
+        height: 224
+        shader_pack: default
+      render_mode: all
+
+  eval:
+    env_type: maniskill
+    total_num_envs: 96
+    rollout_epoch: 1
+    reset_seed_mode: sequential
+    wrap_obs_mode: raw
+    auto_reset: false
+    ignore_terminations: false
+    use_rel_reward: false
+    reward_mode: raw
+    seed: 10000
+    group_size: 1
+    use_fixed_reset_state_ids: false
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    enable_offload: false
+    video_cfg:
+      save_video: true
+      info_on_video: true
+      image_keys: [main_images, wrist_images]
+      separate_envs: false
+      stop_on_termination: true
+      outcome_info_key: success
+      extra_info_on_video:
+        - success
+        - adversary_timeout
+        - adversary_motion_cost_sum
+        - adversary_jerk_cost_sum
+        - adversary_boundary_cost_sum
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      <<: *adversary_env_params
+      max_episode_steps: ${..max_episode_steps}
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  generation_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: false
+  transition_obs_keys: [adversary_states]
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  peg_slot_adversary:
+    enabled: true
+  model:
+    model_path: ""
+    precision: "32"
+  robot_model:
+    model_type: openpi_rlinf
+    model_path: "/mnt/public/chenyinuo/RealAgainst_new/RLinf/logs/20260831-10:21:37-realagainst_peg_slot_dagger_sft_5000_100k_openpi_rlinf/realagainst_peg_slot_dagger_sft_5000_100k_env64/checkpoints/global_step_6000"
+    precision: bf16
+    pi05: true
+    is_lora: false
+    lora_rank: 32
+    load_to_device: true
+    num_action_chunks: 10
+    action_dim: 9
+    policy_setup: panda-ee-dpose
+    use_proprio: true
+    num_steps: 5
+    add_value_head: false
+    openpi_data:
+      repo_id: local/realagainst_peg_slot_expert_5000
+      default_prompt: insert the grasped peg downward into the movable slot
+      norm_stats_path: /mnt/public/chenyinuo/RealAgainst_new/RLinf/data/realagainst_peg_slot_expert_5000/norm_stats.json
+    openpi:
+      task: eval
+      config_name: pi05_realagainst_peg_slot
+      num_images_in_input: 2
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      action_horizon: ${..num_action_chunks}
+      num_steps: ${..num_steps}
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: true
+      use_rlt: false
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 0
+  enable_offload: false
+  model:
+    model_type: mlp_policy
+    model_path: ""
+    policy_setup: panda-ee-dpose
+    observation_key: adversary_states
+    obs_dim: 17
+    action_dim: 3
+    num_action_chunks: 10
+    # One scalar from each Q head for the complete 10-step macro-action.
+    value_granularity: chunk_level
+    hidden_dims: [128, 128]
+    precision: "32"
+    add_value_head: false
+    add_q_head: true
+    is_lora: false
+  optim:
+    clip_grad: 10.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
