@@ -101,6 +101,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_resnet_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.resnet_mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_flow_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.flow_policy import get_model
 
@@ -219,6 +224,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.CNN_POLICY.value,
         _build_cnn_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RESNET_MLP_POLICY.value,
+        _build_resnet_mlp_policy,
         category="embodied",
         force=True,
     )

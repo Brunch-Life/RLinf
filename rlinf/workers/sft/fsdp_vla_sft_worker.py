@@ -30,6 +30,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.RESNET_MLP_POLICY:
+            from rlinf.data.datasets.resnet_mlp import build_resnet_mlp_sft_dataloader
+
+            return build_resnet_mlp_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         if model_type == SupportedModel.OPENPI_RLINF:
             from rlinf.data.datasets.openpi_rlinf import (
                 build_openpi_rlinf_sft_dataloader,

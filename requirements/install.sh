@@ -85,7 +85,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "resnet-mlp")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1962,6 +1962,21 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
+install_resnet_mlp_model() {
+    case "$ENV_NAME" in
+        maniskill_libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_maniskill_libero_env
+            install_lerobot
+            ;;
+        *)
+            echo "ResNet-MLP currently supports --env maniskill_libero." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_lerobot() {
     env -u UV_TORCH_BACKEND uv pip install \
         "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
@@ -2768,6 +2783,9 @@ main() {
             fi
 
             case "$MODEL" in
+                resnet-mlp)
+                    install_resnet_mlp_model
+                    ;;
                 openvla)
                     install_openvla_model
                     ;;
