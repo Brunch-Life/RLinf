@@ -59,7 +59,7 @@ actor:
   seed: 0
   enable_offload: false
   optim:
-    lr: 1.0e-05
+    lr: 1.0e-04
     adam_beta1: 0.9
     adam_beta2: 0.999
     adam_eps: 1.0e-08
