@@ -40,5 +40,23 @@ def get_model(cfg: DictConfig, torch_dtype=torch.float32):
     )
     if checkpoint is not None:
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        model.load_state_dict(state, strict=True)
+        if model.sac_enabled and not any(key.startswith("q_head.") for key in state):
+            # Only a complete SFT actor may initialize newly added SAC heads.
+            expected = {
+                k
+                for k in model.state_dict()
+                if not k.startswith(("q_head.", "actor_logstd."))
+            }
+            if set(state) != expected:
+                raise ValueError(
+                    "SFT checkpoint does not exactly match the ResNet actor"
+                )
+            incompatible = model.load_state_dict(state, strict=False)
+            if incompatible.unexpected_keys or any(
+                not key.startswith(("q_head.", "actor_logstd."))
+                for key in incompatible.missing_keys
+            ):
+                raise ValueError(f"Invalid SFT-to-SAC checkpoint: {incompatible}")
+        else:
+            model.load_state_dict(state, strict=True)
     return model.to(dtype=torch_dtype)

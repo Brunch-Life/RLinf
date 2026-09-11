@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, ClassVar
 
 import gymnasium as gym
@@ -25,7 +26,6 @@ import torch
 from gymnasium import spaces
 from gymnasium.envs.registration import WrapperSpec
 from gymnasium.vector.utils import batch_space
-from mani_skill.agents.robots.panda import PandaWristCam
 from mani_skill.envs.sapien_env import BaseEnv
 from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
@@ -38,6 +38,8 @@ from mani_skill.utils.registration import register_env
 from mani_skill.utils.scene_builder.table import TableSceneBuilder
 from mani_skill.utils.structs import Pose
 from mani_skill.utils.structs.types import SimConfig
+
+from rlinf.envs.maniskill.tasks.peg_slot_agent import PegSlotPanda
 
 
 def _tilt_error_to_down(peg_rotation: torch.Tensor) -> torch.Tensor:
@@ -151,20 +153,20 @@ class PegSlotEpisodeBoundary(gym.Wrapper, gym.utils.RecordConstructorArgs):
 
 @register_env("RealAgainstPegSlot-v0", max_episode_steps=200)
 class PegSlotEnv(BaseEnv):
-    """Insert a grasped vertical peg into an upward-facing movable slot.
+    """Insert a rigidly mounted peg into an upward-facing movable slot.
 
     The public action is a normalized flat 9D vector. Its first six values are
     the end-effector delta pose and its last three values are the slot
     ``[dx, dy, dyaw]`` delta. The slot is a kinematic actor, so its height
     remains fixed while it translates in world XY and rotates about world Z.
-    The gripper is held closed by the environment.
+    The peg belongs to the hand body; both finger coordinates stay at 8 mm.
     """
 
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["panda_wristcam"]
     SUPPORTED_REWARD_MODES = ("sparse", "dense", "normalized_dense")
-    agent: PandaWristCam
+    agent: PegSlotPanda
 
-    PEG_HALF_SIZE = (0.009, 0.009, 0.060)
+    PEG_HALF_SIZE = PegSlotPanda.PEG_HALF_SIZE
     SLOT_INNER_HALF_WIDTH = 0.012
     SLOT_OUTER_HALF_WIDTH = 0.070
     SLOT_HALF_HEIGHT = 0.012
@@ -200,8 +202,8 @@ class PegSlotEnv(BaseEnv):
             0.0,
             3 * np.pi / 4,
             -np.pi / 4,
-            0.008,
-            0.008,
+            PegSlotPanda.GRIPPER_HOLD,
+            PegSlotPanda.GRIPPER_HOLD,
         ],
         dtype=np.float32,
     )
@@ -222,8 +224,15 @@ class PegSlotEnv(BaseEnv):
         adversary_motion_penalty: float = ADVERSARY_MOTION_PENALTY,
         adversary_jerk_penalty: float = ADVERSARY_JERK_PENALTY,
         adversary_boundary_penalty: float = ADVERSARY_BOUNDARY_PENALTY,
+        adversary_budget: float | None = None,
+        adversary_budget_xy_reference: float = 0.05,
+        adversary_budget_yaw_reference: float = math.pi / 6,
+        adversary_reward_mode: str = "legacy",
+        sac_train_role: str = "adversary",
         **kwargs,
     ):
+        if robot_uids != "panda_wristcam":
+            raise ValueError("PegSlotEnv requires robot_uids=panda_wristcam")
         if control_mode != "pd_ee_delta_pose":
             raise ValueError("PegSlotEnv requires control_mode='pd_ee_delta_pose'")
         self.adversary_control = bool(adversary_control)
@@ -237,7 +246,26 @@ class PegSlotEnv(BaseEnv):
         self.adversary_motion_penalty = float(adversary_motion_penalty)
         self.adversary_jerk_penalty = float(adversary_jerk_penalty)
         self.adversary_boundary_penalty = float(adversary_boundary_penalty)
+        self.adversary_budget = adversary_budget
+        self.adversary_budget_xy_reference = float(adversary_budget_xy_reference)
+        self.adversary_budget_yaw_reference = float(adversary_budget_yaw_reference)
+        self.adversary_reward_mode = adversary_reward_mode
+        self.sac_train_role = sac_train_role
+        if adversary_budget is not None and (
+            not math.isfinite(adversary_budget) or adversary_budget < 0
+        ):
+            raise ValueError("adversary_budget must be finite and non-negative")
+        if adversary_reward_mode not in {"legacy", "terminal"}:
+            raise ValueError("adversary_reward_mode must be legacy or terminal")
+        if sac_train_role not in {"adversary", "robot"}:
+            raise ValueError("sac_train_role must be adversary or robot")
+        if adversary_reward_mode == "terminal" and (
+            not self.adversary_control or adversary_budget is None
+        ):
+            raise ValueError("Terminal SAC requires adversary_control and a budget")
         positive_parameters = {
+            "adversary_budget_xy_reference": self.adversary_budget_xy_reference,
+            "adversary_budget_yaw_reference": self.adversary_budget_yaw_reference,
             "adversary_slot_action_scale": self.adversary_slot_action_scale,
             "adversary_slot_yaw_action_scale": (self.adversary_slot_yaw_action_scale),
             "adversary_slot_xy_radius": self.adversary_slot_xy_radius,
@@ -245,7 +273,7 @@ class PegSlotEnv(BaseEnv):
             "adversary_episode_steps": self.adversary_episode_steps,
         }
         for name, value in positive_parameters.items():
-            if value <= 0:
+            if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive")
         penalty_parameters = {
             "adversary_success_penalty": self.adversary_success_penalty,
@@ -291,21 +319,20 @@ class PegSlotEnv(BaseEnv):
         return CameraConfig("render_camera", camera_pose, 512, 512, 1.0, 0.01, 3.0)
 
     def _load_agent(self, options: dict):
-        super()._load_agent(options, self._ROBOT_BASE_POSE)
+        del options
+        self.agent = PegSlotPanda(
+            self.scene,
+            self._control_freq,
+            self._control_mode,
+            initial_pose=self._ROBOT_BASE_POSE,
+        )
+        self.peg = self.agent.peg
+        self._rigid_peg_metadata = self.agent.peg_metadata
 
     def _load_scene(self, options: dict):
         del options
         self.table_scene = TableSceneBuilder(self, robot_init_qpos_noise=0)
         self.table_scene.build()
-
-        peg_builder = self.scene.create_actor_builder()
-        peg_builder.add_box_collision(half_size=self.PEG_HALF_SIZE)
-        peg_material = sapien.render.RenderMaterial(
-            base_color=sapien_utils.hex2rgba("#F26B38"), roughness=0.45
-        )
-        peg_builder.add_box_visual(half_size=self.PEG_HALF_SIZE, material=peg_material)
-        peg_builder.initial_pose = sapien.Pose(p=[0.0, 0.0, 0.4])
-        self.peg = peg_builder.build("peg")
 
         slot_builder = self.scene.create_actor_builder()
         inner = self.SLOT_INNER_HALF_WIDTH
@@ -338,6 +365,13 @@ class PegSlotEnv(BaseEnv):
         self._last_slot_action = torch.zeros((self.num_envs, 3), device=self.device)
         self._slot_action_change = torch.zeros_like(self._last_slot_action)
         self._slot_boundary_violation = torch.zeros(self.num_envs, device=self.device)
+        self._budget_remaining = torch.full(
+            (self.num_envs,), float(self.adversary_budget or 0.0), device=self.device
+        )
+        self._episode_budget = self._budget_remaining.clone()
+        self._budget_cost = torch.zeros(self.num_envs, device=self.device)
+        self._slot_path_length = torch.zeros(self.num_envs, device=self.device)
+        self._slot_rotation_length = torch.zeros(self.num_envs, device=self.device)
         self._adversary_success_seen = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
@@ -362,10 +396,8 @@ class PegSlotEnv(BaseEnv):
             self.agent.robot.set_qvel(torch.zeros_like(qpos))
             self.agent.robot.set_pose(self._ROBOT_BASE_POSE)
 
-            # ``set_qpos`` only stages the articulation state on GPU. Refresh
-            # forward kinematics before reading ``tcp.pose``; otherwise resets
-            # after the first episode place the peg at the previous episode's
-            # terminal TCP pose.
+            # set_qpos stages GPU state. Refresh kinematics before constructing
+            # the randomized TCP target from the nominal arm configuration.
             if self.gpu_sim_enabled:
                 self.scene._gpu_apply_all()
                 self.scene.px.gpu_update_articulation_kinematics()
@@ -413,13 +445,7 @@ class PegSlotEnv(BaseEnv):
                 self.scene.px.gpu_update_articulation_kinematics()
                 self.scene._gpu_fetch_all()
 
-            # Panda TCP local +Z points down in this reset pose. Keeping the peg's
-            # local frame equal to the TCP frame makes its +Z the insertion axis.
-            peg_offset = sapien.Pose(p=[0.0, 0.0, self.PEG_HALF_SIZE[2] - 0.006])
-            peg_pose = self.agent.tcp.pose[env_idx] * peg_offset
-            self.peg.set_pose(peg_pose)
-            self.peg.set_linear_velocity(torch.zeros((batch_size, 3)))
-            self.peg.set_angular_velocity(torch.zeros((batch_size, 3)))
+            # The peg is rigid hand geometry; the arm reset also resets it.
 
             # Keep the existing XY range and independently randomize yaw so
             # demonstrations exercise the arm's yaw correction.
@@ -435,6 +461,11 @@ class PegSlotEnv(BaseEnv):
             self._last_slot_action[env_idx] = 0.0
             self._slot_action_change[env_idx] = 0.0
             self._slot_boundary_violation[env_idx] = 0.0
+            self._episode_budget[env_idx] = float(self.adversary_budget or 0.0)
+            self._budget_remaining[env_idx] = self._episode_budget[env_idx]
+            self._budget_cost[env_idx] = 0.0
+            self._slot_path_length[env_idx] = 0.0
+            self._slot_rotation_length[env_idx] = 0.0
             self._adversary_success_seen[env_idx] = False
             self._adversary_timeout_seen[env_idx] = False
             self._adversary_motion_cost_sum[env_idx] = 0.0
@@ -465,6 +496,24 @@ class PegSlotEnv(BaseEnv):
     def slot_hole_pose(self):
         return self.slot.pose
 
+    def set_adversary_budget(self, budget: float) -> None:
+        """Set the budget for future resets without refilling active episodes."""
+        if self.adversary_budget is None:
+            raise ValueError("Cannot enable budgets midway through a legacy episode")
+        if not math.isfinite(budget) or budget < 0:
+            raise ValueError("Budget must be finite and non-negative")
+        self.adversary_budget = float(budget)
+
+    def _read_slot_xy_yaw(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Read the current simulator pose, not the commanded pose cache."""
+        pose = self.slot.pose
+        q = pose.q
+        yaw = torch.atan2(
+            2 * (q[:, 0] * q[:, 3] + q[:, 1] * q[:, 2]),
+            1 - 2 * (q[:, 2].square() + q[:, 3].square()),
+        )
+        return pose.p[:, :2].clone(), yaw
+
     def _prepare_action(self, action: Any) -> torch.Tensor:
         """Split the flat policy action and build the Panda controller action."""
         flat_action = torch.as_tensor(action, dtype=torch.float32, device=self.device)
@@ -478,11 +527,16 @@ class PegSlotEnv(BaseEnv):
         arm_action = flat_action[:, :6]
         slot_action = flat_action[:, 6:]
 
+        self._slot_step_start_xy, self._slot_step_start_yaw = self._read_slot_xy_yaw()
+        self._slot_xy = self._slot_step_start_xy.clone()
+        self._slot_yaw = self._slot_step_start_yaw.clone()
         slot_action = slot_action.clamp(-1.0, 1.0)
         self._slot_action_change = slot_action - self._last_slot_action
         self._last_slot_action = slot_action
 
         if self.adversary_control:
+            previous_xy = self._slot_xy.clone()
+            previous_yaw = self._slot_yaw.clone()
             (
                 self._slot_xy,
                 self._slot_yaw,
@@ -498,6 +552,24 @@ class PegSlotEnv(BaseEnv):
                 xy_radius=self.adversary_slot_xy_radius,
                 yaw_limit=self.adversary_slot_yaw_limit,
             )
+            if self.adversary_budget is not None:
+                # Interpolate between feasible endpoints: hard bounds are preserved.
+                delta_xy = self._slot_xy - previous_xy
+                delta_yaw = (
+                    torch.remainder(
+                        self._slot_yaw - previous_yaw + torch.pi, 2 * torch.pi
+                    )
+                    - torch.pi
+                )
+                cost = (
+                    delta_xy.norm(dim=-1) / self.adversary_budget_xy_reference
+                    + delta_yaw.abs() / self.adversary_budget_yaw_reference
+                )
+                scale = (self._budget_remaining / cost.clamp_min(1e-12)).clamp(max=1)
+                delta_xy = delta_xy * scale[:, None]
+                delta_yaw = delta_yaw * scale
+                self._slot_xy = previous_xy + delta_xy
+                self._slot_yaw = previous_yaw + delta_yaw
         else:
             slot_xy_delta = slot_action[:, :2] * self.SLOT_ACTION_SCALE
             self._slot_xy = (self._slot_xy + slot_xy_delta).clamp(
@@ -513,8 +585,58 @@ class PegSlotEnv(BaseEnv):
         scaled_arm_action = arm_action.clamp(-1.0, 1.0).clone()
         scaled_arm_action[:, :3] *= self.ARM_POSITION_ACTION_SCALE
         scaled_arm_action[:, 3:] *= self.ARM_ROTATION_ACTION_SCALE
-        closed_gripper = -torch.ones((self.num_envs, 1), device=self.device)
-        return torch.cat((scaled_arm_action, closed_gripper), dim=-1)
+        gripper = self.agent.controller.controllers["gripper"].config
+        hold_action = (
+            2
+            * (self.agent.GRIPPER_HOLD - gripper.lower)
+            / (gripper.upper - gripper.lower)
+            - 1
+        )
+        fixed_gripper = torch.full((self.num_envs, 1), hold_action, device=self.device)
+        return torch.cat((scaled_arm_action, fixed_gripper), dim=-1)
+
+    def _before_control_step(self) -> None:
+        """Submit staged rigid-body poses before PhysX advances the scene."""
+        super()._before_control_step()
+        if self.gpu_sim_enabled:
+            # Actor.set_pose only writes the GPU staging tensor. BaseEnv's
+            # normal step submits articulation targets, not rigid-body data.
+            # Keep this out of _set_slot_pose: resets have their own GPU apply.
+            self.scene.px.gpu_apply_rigid_dynamic_data()
+
+    def _step_action(self, action):
+        """Account for movement after BaseEnv has fetched the actual GPU pose."""
+        result = super()._step_action(action)
+        self._slot_xy, self._slot_yaw = self._read_slot_xy_yaw()
+        if self.adversary_control and self.adversary_budget is not None:
+            delta_xy = self._slot_xy - self._slot_step_start_xy
+            delta_yaw = (
+                torch.remainder(
+                    self._slot_yaw - self._slot_step_start_yaw + torch.pi,
+                    2 * torch.pi,
+                )
+                - torch.pi
+            )
+            distance = delta_xy.norm(dim=-1)
+            angle = delta_yaw.abs()
+            self._budget_cost = (
+                distance / self.adversary_budget_xy_reference
+                + angle / self.adversary_budget_yaw_reference
+            )
+            self._budget_remaining = (
+                self._budget_remaining - self._budget_cost
+            ).clamp_min(0)
+            self._slot_path_length += distance
+            self._slot_rotation_length += angle
+            self._last_slot_action = torch.cat(
+                (
+                    delta_xy / self.adversary_slot_action_scale,
+                    (delta_yaw / self.adversary_slot_yaw_action_scale)[:, None],
+                ),
+                dim=-1,
+            )
+        # BaseEnv.step computes observations, rewards and episode metrics next.
+        return result
 
     def reset(self, *args, **kwargs):
         """Reset and expose the standardized RLinf observation in ``info``."""
@@ -588,7 +710,7 @@ class PegSlotEnv(BaseEnv):
             / float(self.adversary_episode_steps)
         ).clamp(0.0, 1.0)
 
-        return torch.cat(
+        observation = torch.cat(
             (
                 relative_position,
                 tilt_error,
@@ -601,6 +723,16 @@ class PegSlotEnv(BaseEnv):
             ),
             dim=-1,
         )
+        if self.adversary_budget is not None:
+            observation = torch.cat(
+                (
+                    observation,
+                    self._episode_budget[:, None],
+                    self._budget_remaining[:, None],
+                ),
+                dim=-1,
+            )
+        return observation
 
     def evaluate(self):
         tip_in_slot, lateral_error, depth, orientation_error, success = (
@@ -665,6 +797,14 @@ class PegSlotEnv(BaseEnv):
         }
         if self.adversary_control:
             observation["adversary_states"] = self._build_adversary_observation()
+            observation["critic_states"] = torch.cat(
+                (
+                    observation["adversary_states"],
+                    state,
+                    raw_obs["agent"]["qvel"][..., :9].to(torch.float32),
+                ),
+                dim=-1,
+            )
         return observation
 
     def get_language_instruction(self):
@@ -720,18 +860,25 @@ class PegSlotEnv(BaseEnv):
             first_timeout = info["adversary_timeout"] & ~self._adversary_timeout_seen
             self._adversary_success_seen |= info["success"]
             self._adversary_timeout_seen |= info["adversary_timeout"]
+            legacy = self.adversary_reward_mode == "legacy"
             reward, reward_info = _adversary_step_reward(
                 self._last_slot_action,
                 self._slot_action_change,
                 self._slot_boundary_violation,
                 first_success,
                 first_timeout,
-                success_penalty=self.adversary_success_penalty,
-                timeout_bonus=self.adversary_timeout_bonus,
-                motion_penalty=self.adversary_motion_penalty,
-                jerk_penalty=self.adversary_jerk_penalty,
-                boundary_penalty=self.adversary_boundary_penalty,
+                success_penalty=self.adversary_success_penalty if legacy else 0.0,
+                timeout_bonus=self.adversary_timeout_bonus if legacy else 0.0,
+                motion_penalty=self.adversary_motion_penalty if legacy else 0.0,
+                jerk_penalty=self.adversary_jerk_penalty if legacy else 0.0,
+                boundary_penalty=self.adversary_boundary_penalty if legacy else 0.0,
             )
+            if not legacy:
+                reward = (
+                    first_timeout
+                    if self.sac_train_role == "adversary"
+                    else first_success
+                ).to(torch.float32)
             self._adversary_motion_cost_sum += reward_info["adversary_motion_cost"]
             self._adversary_jerk_cost_sum += reward_info["adversary_jerk_cost"]
             self._adversary_boundary_cost_sum += reward_info["adversary_boundary_cost"]
@@ -754,6 +901,14 @@ class PegSlotEnv(BaseEnv):
                     "adversary_boundary_cost_sum",
                 )
             }
+            if self.adversary_budget is not None:
+                info["episode"].update(
+                    adversary_budget_remaining=self._budget_remaining.clone(),
+                    adversary_budget_used=self._episode_budget - self._budget_remaining,
+                    adversary_budget_exhausted=(self._budget_remaining <= 1e-7).float(),
+                    adversary_path_length=self._slot_path_length.clone(),
+                    adversary_rotation_length=self._slot_rotation_length.clone(),
+                )
             return reward
 
         lateral_reward = 1.0 - torch.tanh(12.0 * info["lateral_error"])

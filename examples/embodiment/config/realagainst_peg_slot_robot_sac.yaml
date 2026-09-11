@@ -1,0 +1,243 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# One learner GPU and three colocated simulation/inference GPUs.
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0
+    rollout: 1-3
+    env: 1-3
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: ${oc.env:REPO_PATH}/logs/realagainst_peg_slot_robot_sac_rigid_peg
+    project_name: rlinf
+    experiment_name: robot_sac_rigid_peg
+    logger_backends: [tensorboard]
+  max_epochs: 50000
+  max_steps: 50000
+  only_eval: false
+  val_check_interval: 500
+  save_interval: 500
+  weight_sync_interval: 50
+  resume_dir: null
+  ckpt_path: null
+
+# One change per evaluation; the interval is runner.val_check_interval.
+budget:
+  initial: 1.0
+  minimum: 0.05
+  maximum: 4.0
+  success_low: 0.45
+  success_high: 0.55
+  decrease_factor: 0.8
+  increase_factor: 1.2
+
+algorithm:
+  update_epoch: 1
+  group_size: 1
+  agg_q: min
+  actor_agg_q: min
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: token-mean
+  bootstrap_type: standard
+  # Per single control step, unlike the previous 10-step macro-action.
+  gamma: 0.999
+  tau: 0.005
+  backup_entropy: true
+  entropy_tuning:
+    alpha_type: softplus
+    initial_alpha: 0.001
+    target_entropy: -6
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+  replay_buffer:
+    enable_cache: true
+    # Counts batched rollout fragments, not individual transitions.
+    # Short fragments bound RGB replay memory in robot-learning phases.
+    cache_size: 32
+    sample_window_size: 32
+    min_buffer_size: 3
+    prefetch_size: 2
+    auto_save: false
+  target_update_freq: 1
+
+env:
+  group_name: EnvGroup
+  train:
+    env_type: maniskill
+    total_num_envs: 96
+    rollout_epoch: 1
+    reset_seed_mode: sequential
+    wrap_obs_mode: raw
+    auto_reset: true
+    ignore_terminations: false
+    use_rel_reward: false
+    reward_mode: raw
+    seed: 0
+    group_size: 1
+    use_fixed_reset_state_ids: false
+    expert_intervention_beta: null
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 4
+    enable_offload: false
+    video_cfg:
+      save_video: false
+    init_params: &task_params
+      # Peg geometry is rigidly mounted on panda_hand; slot moves independently.
+      id: RealAgainstPegSlot-v0
+      num_envs: null
+      obs_mode: rgb
+      reward_mode: dense
+      control_mode: pd_ee_delta_pose
+      sim_backend: gpu
+      adversary_control: true
+      # Legacy per-axis XY bound: 2 mm each, 2.83 mm diagonally.
+      adversary_slot_action_scale: 0.002
+      adversary_slot_yaw_action_scale: 0.017453292519943295
+      adversary_slot_xy_radius: 0.05
+      adversary_slot_yaw_limit: 0.5235987755982988
+      adversary_episode_steps: 100
+      adversary_reward_mode: terminal
+      sac_train_role: ${rollout.peg_slot_adversary.train_role}
+      adversary_budget: ${budget.initial}
+      # B=1 permits total 5 cm translation OR 30 deg yaw, or a mixture.
+      adversary_budget_xy_reference: 0.05
+      adversary_budget_yaw_reference: 0.5235987755982988
+      sim_config:
+        sim_freq: 200
+        control_freq: 20
+      max_episode_steps: 100
+      sensor_configs:
+        width: 224
+        height: 224
+        shader_pack: default
+      render_mode: all
+  eval:
+    env_type: maniskill
+    total_num_envs: 96
+    # 288 paired evaluation episodes, divisible over three rollout workers.
+    rollout_epoch: 3
+    reset_seed_mode: sequential
+    wrap_obs_mode: raw
+    auto_reset: false
+    ignore_terminations: false
+    use_rel_reward: false
+    reward_mode: raw
+    seed: 20000
+    group_size: 1
+    use_fixed_reset_state_ids: false
+    expert_intervention_beta: null
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    enable_offload: false
+    video_cfg:
+      save_video: false
+      image_keys: [main_images, wrist_images]
+      separate_envs: true
+      stop_on_termination: true
+      outcome_info_key: success
+      video_base_dir: ${runner.logger.log_path}/videos
+    init_params:
+      <<: *task_params
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  generation_backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: true
+  collect_prev_infos: false
+  transition_obs_keys: [main_images, wrist_images, states, critic_states]
+  enable_torch_compile: false
+  enable_cuda_graph: false
+  peg_slot_adversary:
+    enabled: true
+    train_role: robot
+  model: ${actor.model}
+  adversary_model:
+    model_type: mlp_policy
+    # Set this manually to the selected trained adversary checkpoint.
+    model_path: ???
+    precision: "32"
+    is_lora: false
+    policy_setup: panda-ee-dpose
+    num_action_chunks: 1
+    action_dim: 3
+    observation_key: adversary_states
+    # Existing 17 privileged features + total budget + remaining budget.
+    obs_dim: 19
+    hidden_dims: [128, 128]
+    value_granularity: chunk_level
+    add_value_head: false
+    add_q_head: true
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 64
+  global_batch_size: 256
+  seed: 0
+  enable_offload: false
+  critic_warmup_updates: 100
+  model:
+    model_type: resnet_mlp_policy
+    model_path: ${oc.env:REPO_PATH}/logs/20260907-22:10:23-realagainst_peg_slot_sft_5000_resnet18_mlp_unfrozen/realagainst_peg_slot_resnet18_mlp_sft_5000_100k_freeze_resnet_False/checkpoints/global_step_100000
+    precision: "32"
+    is_lora: false
+    policy_setup: panda-ee-dpose
+    num_action_chunks: 1
+    action_dim: 9
+    predicted_action_dim: 6
+    state_dim: 9
+    image_size: 224
+    hidden_dims: [256, 256, 256, 256]
+    freeze_resnet: false
+    pretrained_backbone: false
+    norm_stats_path: ${oc.env:REPO_PATH}/data/realagainst_peg_slot_expert_5000/norm_stats.json
+    add_value_head: false
+    add_q_head: true
+    sac_initial_log_std: -3.5
+    critic_observation_key: critic_states
+    critic_obs_dim: 37
+    critic_hidden_dims: [256, 256]
+  optim:
+    clip_grad: 1.0
+    lr: 1.0e-5
+    lr_scheduler: torch_constant
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3.0e-4
+    lr_scheduler: torch_constant
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    # Both policies are fully trainable. Keep the existing SAC flat-parameter
+    # path; torch 2.11 FSDP1 original-parameter views break after SAC's no-grad pass.
+    use_orig_params: false
+    mixed_precision:
+      param_dtype: "32"
+      reduce_dtype: "32"
+      buffer_dtype: "32"
+
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false
