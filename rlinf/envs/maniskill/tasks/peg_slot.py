@@ -228,6 +228,8 @@ class PegSlotEnv(BaseEnv):
         adversary_budget_xy_reference: float = 0.05,
         adversary_budget_yaw_reference: float = math.pi / 6,
         adversary_reward_mode: str = "legacy",
+        adversary_survival_reward_total: float = 0.5,
+        adversary_survival_reward_ratio: float = 2.0,
         sac_train_role: str = "adversary",
         **kwargs,
     ):
@@ -255,14 +257,33 @@ class PegSlotEnv(BaseEnv):
             not math.isfinite(adversary_budget) or adversary_budget < 0
         ):
             raise ValueError("adversary_budget must be finite and non-negative")
-        if adversary_reward_mode not in {"legacy", "terminal"}:
-            raise ValueError("adversary_reward_mode must be legacy or terminal")
+        if adversary_reward_mode not in {"legacy", "terminal", "dense"}:
+            raise ValueError("adversary_reward_mode must be legacy, terminal or dense")
         if sac_train_role not in {"adversary", "robot"}:
             raise ValueError("sac_train_role must be adversary or robot")
-        if adversary_reward_mode == "terminal" and (
+        if adversary_reward_mode != "legacy" and (
             not self.adversary_control or adversary_budget is None
         ):
-            raise ValueError("Terminal SAC requires adversary_control and a budget")
+            raise ValueError(
+                "Budgeted SAC rewards require adversary_control and a budget"
+            )
+        if adversary_reward_mode == "dense":
+            if (
+                not math.isfinite(adversary_survival_reward_total)
+                or adversary_survival_reward_total < 0
+            ):
+                raise ValueError(
+                    "adversary_survival_reward_total must be finite and non-negative"
+                )
+            if (
+                not math.isfinite(adversary_survival_reward_ratio)
+                or adversary_survival_reward_ratio < 1
+            ):
+                raise ValueError(
+                    "adversary_survival_reward_ratio must be finite and at least 1"
+                )
+            if not math.isfinite(self.adversary_timeout_bonus):
+                raise ValueError("adversary_timeout_bonus must be finite")
         positive_parameters = {
             "adversary_budget_xy_reference": self.adversary_budget_xy_reference,
             "adversary_budget_yaw_reference": self.adversary_budget_yaw_reference,
@@ -293,6 +314,16 @@ class PegSlotEnv(BaseEnv):
             **kwargs,
         )
 
+        if adversary_reward_mode == "dense":
+            weights = torch.logspace(
+                0.0,
+                math.log10(adversary_survival_reward_ratio),
+                steps=self.adversary_episode_steps,
+                device=self.device,
+            )
+            self._adversary_survival_rewards = (
+                adversary_survival_reward_total * weights / weights.sum()
+            )
         self.single_action_space = spaces.Box(-1.0, 1.0, shape=(9,), dtype=np.float32)
         self.action_space = (
             batch_space(self.single_action_space, n=self.num_envs)
@@ -376,6 +407,9 @@ class PegSlotEnv(BaseEnv):
             self.num_envs, dtype=torch.bool, device=self.device
         )
         self._adversary_timeout_seen = torch.zeros_like(self._adversary_success_seen)
+        self._adversary_survival_reward_sum = torch.zeros(
+            self.num_envs, device=self.device
+        )
         self._adversary_motion_cost_sum = torch.zeros(self.num_envs, device=self.device)
         self._adversary_jerk_cost_sum = torch.zeros(self.num_envs, device=self.device)
         self._adversary_boundary_cost_sum = torch.zeros(
@@ -468,6 +502,7 @@ class PegSlotEnv(BaseEnv):
             self._slot_rotation_length[env_idx] = 0.0
             self._adversary_success_seen[env_idx] = False
             self._adversary_timeout_seen[env_idx] = False
+            self._adversary_survival_reward_sum[env_idx] = 0.0
             self._adversary_motion_cost_sum[env_idx] = 0.0
             self._adversary_jerk_cost_sum[env_idx] = 0.0
             self._adversary_boundary_cost_sum[env_idx] = 0.0
@@ -854,9 +889,8 @@ class PegSlotEnv(BaseEnv):
 
     def compute_dense_reward(self, obs: Any, action, info: dict):
         if self.adversary_control:
-            first_success = info["success"] & ~(
-                self._adversary_success_seen | self._adversary_timeout_seen
-            )
+            active = ~(self._adversary_success_seen | self._adversary_timeout_seen)
+            first_success = info["success"] & active
             first_timeout = info["adversary_timeout"] & ~self._adversary_timeout_seen
             self._adversary_success_seen |= info["success"]
             self._adversary_timeout_seen |= info["adversary_timeout"]
@@ -879,6 +913,23 @@ class PegSlotEnv(BaseEnv):
                     if self.sac_train_role == "adversary"
                     else first_success
                 ).to(torch.float32)
+                if (
+                    self.adversary_reward_mode == "dense"
+                    and self.sac_train_role == "adversary"
+                ):
+                    # Reward each unsolved step, including the first timeout step.
+                    # Completed environments may keep stepping during batched eval.
+                    step_idx = (self.elapsed_steps - 1).clamp(
+                        0, self.adversary_episode_steps - 1
+                    )
+                    survival_reward = self._adversary_survival_rewards[step_idx] * (
+                        active & ~info["success"] & (self.elapsed_steps > 0)
+                    )
+                    self._adversary_survival_reward_sum += survival_reward
+                    reward_info["adversary_timeout_bonus"] = (
+                        self.adversary_timeout_bonus * first_timeout.to(torch.float32)
+                    )
+                    reward = survival_reward + reward_info["adversary_timeout_bonus"]
             self._adversary_motion_cost_sum += reward_info["adversary_motion_cost"]
             self._adversary_jerk_cost_sum += reward_info["adversary_jerk_cost"]
             self._adversary_boundary_cost_sum += reward_info["adversary_boundary_cost"]
@@ -901,6 +952,10 @@ class PegSlotEnv(BaseEnv):
                     "adversary_boundary_cost_sum",
                 )
             }
+            if self.adversary_reward_mode == "dense":
+                info["episode"]["adversary_survival_reward_sum"] = (
+                    self._adversary_survival_reward_sum.clone()
+                )
             if self.adversary_budget is not None:
                 info["episode"].update(
                     adversary_budget_remaining=self._budget_remaining.clone(),

@@ -22,6 +22,29 @@ class PegSlotSACPolicyWorker(EmbodiedSACFSDPPolicy):
             self._policy_updates = getattr(self, "_policy_updates", 0) + 1
         return result
 
+    def run_training(self, num_updates=None):
+        """Reuse SAC's update loop, shortening batches at runner boundaries."""
+        configured_updates = self.cfg.algorithm.update_epoch
+        updates = configured_updates if num_updates is None else num_updates
+        if isinstance(updates, bool) or not isinstance(updates, int) or updates < 1:
+            raise ValueError("num_updates must be a positive integer")
+        previous_step = self.update_step
+        try:
+            self.cfg.algorithm.update_epoch = updates
+            metrics = super().run_training()
+        finally:
+            self.cfg.algorithm.update_epoch = configured_updates
+        if self.update_step - previous_step != updates:
+            raise RuntimeError("SAC did not perform the requested optimizer updates")
+        metrics.update(
+            {
+                "sac/critic_updates": self.update_step,
+                "sac/actor_updates": getattr(self, "_policy_updates", 0),
+                "sac/updates_in_batch": updates,
+            }
+        )
+        return metrics
+
     def get_update_counts(self):
         return {
             "critic_updates": int(self.update_step),
@@ -36,12 +59,26 @@ class PegSlotSACPolicyWorker(EmbodiedSACFSDPPolicy):
             )
 
     def load_checkpoint(self, load_base_path):
+        initial_entropy_state = None
+        if self.cfg.algorithm.entropy_tuning.get("reset_on_resume", False):
+            initial_entropy_state = {
+                key: value.detach().clone()
+                for key, value in self.entropy_temp.state_dict().items()
+            }
         counts = json.loads(
             (Path(load_base_path) / "peg_slot_update_counts.json").read_text()
         )
         super().load_checkpoint(load_base_path)
         self.update_step = int(counts["critic_updates"])
         self._policy_updates = int(counts["actor_updates"])
+        if initial_entropy_state is not None:
+            self.entropy_temp.load_state_dict(initial_entropy_state)
+            if self.alpha_optimizer is not None:
+                self.alpha_optimizer.state.clear()
+            self.log_info(
+                f"Reset SAC entropy temperature to {self.entropy_temp.alpha:g} "
+                "after checkpoint restore"
+            )
 
     def forward_actor(self, batch):
         self.qf_optimizer.zero_grad(set_to_none=True)

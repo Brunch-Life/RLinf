@@ -151,6 +151,9 @@ class MetricLogger:
         worker_group_name: str | None = None,
         rank: int | None = None,
     ):
+        # Optional metric groups can be empty; SwanLab rejects empty mappings.
+        if isinstance(data, dict) and not data:
+            return
         target_logger = self.logger
         if self.per_worker_log and worker_group_name is not None and rank is not None:
             target_logger = self._get_scoped_logger(

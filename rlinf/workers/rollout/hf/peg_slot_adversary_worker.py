@@ -70,6 +70,19 @@ class _PegSlotPolicyPair:
         )
         if self.train_role not in {"adversary", "robot"}:
             raise ValueError("train_role must be adversary or robot")
+        self.deterministic_train_fraction = float(
+            self.cfg.rollout.peg_slot_adversary.get("deterministic_train_fraction", 0.0)
+        )
+        if not 0 <= self.deterministic_train_fraction <= 1:
+            raise ValueError("deterministic_train_fraction must be in [0, 1]")
+        if self.deterministic_train_fraction and (
+            self.train_role != "adversary"
+            or self.cfg.actor.model.model_type != "mlp_policy"
+            or not self.collect_transitions
+        ):
+            raise ValueError(
+                "Mixed deterministic collection requires a SAC MLP adversary"
+            )
         key = "robot_model" if self.train_role == "adversary" else "adversary_model"
         opponent_cfg = copy.deepcopy(self.cfg.rollout.get(key))
         self.opponent_model = None
@@ -102,6 +115,32 @@ class _PegSlotPolicyPair:
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """Return the learner's replay action, but execute both policies."""
         learner_actions, result = super().predict(env_obs, mode=mode)
+        if mode == "train" and self.deterministic_train_fraction:
+            count = int(learner_actions.shape[0] * self.deterministic_train_fraction)
+            if count:
+                mean_actions, mean_result = self.hf_model.predict_action_batch(
+                    env_obs=env_obs, mode="eval", return_obs=False
+                )
+                learner_actions = learner_actions.clone()
+                learner_actions[:count] = mean_actions[:count]
+                # SAC recomputes policy log-probabilities for its loss. Keep
+                # rollout likelihoods and version shapes aligned with actions.
+                for key in ("prev_logprobs", "prev_values"):
+                    if result.get(key) is not None:
+                        result[key] = result[key].clone()
+                        result[key][:count] = mean_result[key][:count]
+                replay_actions = learner_actions.reshape(learner_actions.shape[0], -1)
+                result["forward_inputs"]["action"] = replay_actions
+                result["forward_inputs"]["model_action"] = replay_actions
+                deterministic_mask = torch.zeros(
+                    (learner_actions.shape[0], 1),
+                    dtype=torch.bool,
+                    device=learner_actions.device,
+                )
+                deterministic_mask[:count] = True
+                result["forward_inputs"]["deterministic_collection"] = (
+                    deterministic_mask
+                )
         if self.opponent_model is None:
             opponent_actions = torch.zeros_like(learner_actions[..., :3])
         else:
