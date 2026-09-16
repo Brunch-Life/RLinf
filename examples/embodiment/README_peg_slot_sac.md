@@ -3,6 +3,48 @@
 入口：`bash examples/embodiment/run_peg_slot_sac.sh realagainst_peg_slot_adversary_sac`。
 执行器固定使用未冻结 ResNet 训练得到的 SFT100k 检查点，本配置训练小型 SAC 对手。
 
+## 下一阶段：训练执行策略
+
+使用`realagainst_peg_slot_robot_sac`配置。固定对手加载已完成的dense SAC 50k
+检查点，始终使用均值动作；执行器从未冻结双ResNet18的SFT100k权重初始化，
+开始新的SAC阶段，critic、replay和更新计数从零开始。执行器扰动预算固定为对手
+最终评估的2.30328170513957，`budget.minimum`和`budget.maximum`均设为该值；
+每100步仍评估并录像，但不再调整预算。等值上下限也会在续训时覆盖检查点内的旧预算，
+权重、优化器和replay照常恢复，旧预算下采集的replay由后续数据自然替换。
+执行器配置`budget.zero_budget_eval: false`，预算降至下限后仍按该预算正常评估和训练，
+不再额外进行零扰动评估或因此自动停止；设为`true`可恢复这项检查。
+
+执行器奖励为首次成功+1、其余0。目标500,000步，前2,000步只更新critic。
+新训练先按`algorithm.initial_collect_steps: 100`，让每个环境交互100个控制步，
+期间不更新critic、actor或温度。复用25轮每轮4步的采集，在首次更新前取得至少
+一回合的完整数据，共102,400条转移；成功回合会提前结束，环境照常自动reset。
+随后恢复每轮采集4步、更新5次。2,000次critic预热另对应每环境1,600步交互。
+预采仅在训练计数为0时执行，普通检查点续训跳过，预采步数不计入优化器步数。
+预热是固定更新步数，不是实际成功回合计数门槛。
+达到2,000步后，actor按8:1的更新周期开始训练。
+GPU 0负责学习，GPU 0-1各采集512个环境，共1,024个；每轮每环境采集4步，
+再从replay采样5个global batch 2,048（micro batch 2,048）进行5次critic更新，
+每轮共10,240条抽样记录，允许重复采样，抽样条次与新增转移之比为2.5。
+`algorithm.critic_actor_ratio: 8`控制预热结束后每8次critic更新才更新一次actor，
+即每轮0–1次actor更新；critic UTD为5/4096，约0.00122。
+这里UTD指critic更新次数除以新增转移数；抽样条次与新增转移之比等于UTD乘batch size。
+执行器关闭`backup_entropy`，并将alpha固定为0，不使用Actor熵正则或自动温度调节。
+RGB replay保留256个片段，共524,288条转移，对应每环境最近512个控制步，
+确保初始100步数据不会在预采时被覆盖。有效RGB数据约294 GiB，运行时还需为
+模型、Ray及临时缓存预留内存；保存检查点时也会保存当前replay。
+`gamma: 0.98`，`sac_initial_log_std: -1.0`对应tanh前约0.368的初始标准差。
+Critic学习率为`1e-3`，Actor学习率保持`1e-5`，均使用恒定学习率调度器。
+全部命中缓存时直接gather到输出batch，减少一次图像复制，保持随机抽样顺序。
+执行器的`learner`节点组将`OMP_NUM_THREADS`与`MKL_NUM_THREADS`设为8，
+只作用于GPU 0上的学习进程，采集进程使用原配置。独立CPU采样基准中，
+8线程优于4线程，16线程收益已饱和，32线程反而变慢；实际吞吐以训练日志为准。
+
+评估使用2进程各48环境、3轮，共288回合，每100步评估并录像。
+每1,000步保存检查点，权重每10步同步。所有这些步数均按critic更新次数计，
+总步数上限保持500,000，critic预热单独设为2,000次更新。
+TensorBoard和SwanLab并行记录。新实验日志目录以`YYYYMMDD-HHMMSS-`开头；
+不能用对手检查点作为`runner.resume_dir`，该字段只用于同一训练角色续训。
+
 ## 默认设置
 
 | 项目 | 设置 |
@@ -30,8 +72,14 @@
 
 ## 直接结果指标
 
-TensorBoard 与 SwanLab 使用相同指标，每500次优化器更新评估一次。
-成功率是0–1之间的比例；训练过程的随机采样结果在`env/`，正式均值动作评估在`eval/`。
+TensorBoard 与 SwanLab 使用相同指标，评估间隔由各配置的
+`runner.val_check_interval`控制：对手每500次、执行器每100次critic更新。
+成功率是0–1之间的比例，统一查看`eval/robot_success_rate`与
+`eval/adversary_success_rate`，兼容保留`eval/success_once`和`eval/fail_once`。
+短采集窗口只返回已经结束的回合，成功回合可能先于100步超时回合结束，
+因此不再上报`env/success_once`、`env/fail_once`、`env/adversary_timeout`和
+`env/adversary_first_success`。其余`env/`回报、长度、预算和动作统计仍是
+本轮已结束回合的诊断均值，`env/num_trajectories`是这些回合的数量。
 
 | 指标 | 含义 |
 | --- | --- |
@@ -46,7 +94,7 @@ TensorBoard 与 SwanLab 使用相同指标，每500次优化器更新评估一�
 | `budget/evaluated`、`budget/next` | 本次评估使用的预算、评估后设定的下一阶段预算 |
 
 累计路程和转角包含往返运动，不是终点相对起点的位移或偏航角。
-原始指标继续保留；旧版本已经把`eval/success_once`上传云端，只是命名不直观。
+原始`eval/`指标继续保留；旧版本已经把`eval/success_once`上传云端，只是命名不直观。
 成功率比较应同时查看`budget/evaluated`；预算调整后，训练中已有回合仍使用各自
 开始时的预算，新回合才使用`budget/next`。
 

@@ -675,7 +675,11 @@ class TrajectoryReplayBuffer:
                 if batch is None:
                     batch = self._init_batch_from_buffer(cache_buffer, num_chunks)
                 self._fill_batch_from_buffer_indices(
-                    batch, cache_buffer, buffer_indices, batch_indices
+                    batch,
+                    cache_buffer,
+                    buffer_indices,
+                    batch_indices,
+                    all_rows=bool(cached_mask.all()),
                 )
 
         # 2) Cache misses: load all, concat, then gather once.
@@ -813,13 +817,18 @@ class TrajectoryReplayBuffer:
         buffer: dict,
         buffer_indices: torch.Tensor,
         batch_indices: torch.Tensor,
+        all_rows: bool = False,
     ) -> None:
         for key, value in buffer.items():
             if isinstance(value, torch.Tensor):
-                batch[key][batch_indices] = value.index_select(0, buffer_indices)
+                if all_rows:
+                    # Full cache hits already follow output order; gather once.
+                    torch.index_select(value, 0, buffer_indices, out=batch[key])
+                else:
+                    batch[key][batch_indices] = value.index_select(0, buffer_indices)
             elif isinstance(value, dict):
                 self._fill_batch_from_buffer_indices(
-                    batch[key], value, buffer_indices, batch_indices
+                    batch[key], value, buffer_indices, batch_indices, all_rows=all_rows
                 )
 
     def _concat_flat_trajectories(self, flats: list[dict]) -> dict:

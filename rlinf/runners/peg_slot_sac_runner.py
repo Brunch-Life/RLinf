@@ -12,6 +12,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from rlinf.runners.embodied_runner import EmbodiedRunner
+from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 ENVIRONMENT_REVISION = "rigid_peg_v1"
@@ -109,6 +110,9 @@ class PegSlotSACRunner(EmbodiedRunner):
             if state["global_step"] != self.global_step:
                 raise ValueError("Checkpoint budget and learner step do not match")
             self.budget = float(state["next_budget"])
+            # Equal bounds explicitly pin the budget, including on resume.
+            if self.cfg.budget.minimum == self.cfg.budget.maximum:
+                self.budget = float(self.cfg.budget.initial)
             adjust_budget(self.budget, 0.5, self.cfg.budget)
             self.budget_history = state["history"]
             self.env.reset_training_budget(self.budget).wait()
@@ -129,8 +133,55 @@ class PegSlotSACRunner(EmbodiedRunner):
                 updates = min(updates, interval - self.global_step % interval)
         return updates
 
+    def _collect_rollouts(self):
+        env_handle = self.env.interact(
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+            reward_channel=self.reward_channel,
+            actor_channel=self.actor_channel,
+        )
+        rollout_handle = self.rollout.generate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
+        self.actor.recv_rollout_trajectories(input_channel=self.actor_channel).wait()
+        rollout_handle.wait()
+        return env_handle, rollout_handle
+
+    def _prefill_replay(self):
+        steps = self.cfg.algorithm.get("initial_collect_steps", 0)
+        if self.global_step or not steps:
+            return
+        steps_per_collection = (
+            self.cfg.env.train.max_steps_per_rollout_epoch
+            * self.cfg.env.train.rollout_epoch
+        )
+        self.actor.set_global_step(0).wait()
+        self.rollout.set_global_step(0).wait()
+        self.update_rollout_weights()
+        completed_episodes = 0
+        successful_episodes = 0
+        for collected in range(steps_per_collection, steps + 1, steps_per_collection):
+            env_handle, _ = self._collect_rollouts()
+            metrics = summarize_peg_slot_outcomes(
+                compute_evaluate_metrics(
+                    [result for result in env_handle.wait() if result is not None]
+                )
+            )
+            completed_episodes += int(metrics.get("num_trajectories", 0))
+            successful_episodes += int(metrics.get("robot_success_count", 0))
+            self.logger.info(
+                f"Initial replay collection: {collected}/{steps} control steps "
+                "per environment; optimizer updates remain zero."
+            )
+        self.logger.info(
+            f"Initial replay ready: {completed_episodes} completed episodes, "
+            f"{successful_episodes} successful robot episodes."
+        )
+
     def run(self):
         """Collect once, then reuse replay for several actual SAC updates."""
+        self._prefill_replay()
         if self.cfg.algorithm.update_epoch == 1:
             return super().run()
 
@@ -150,20 +201,7 @@ class PegSlotSACRunner(EmbodiedRunner):
                     if collection_step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
-                    env_handle = self.env.interact(
-                        input_channel=self.env_channel,
-                        rollout_channel=self.rollout_channel,
-                        reward_channel=self.reward_channel,
-                        actor_channel=self.actor_channel,
-                    )
-                    rollout_handle = self.rollout.generate(
-                        input_channel=self.rollout_channel,
-                        output_channel=self.env_channel,
-                    )
-                    self.actor.recv_rollout_trajectories(
-                        input_channel=self.actor_channel
-                    ).wait()
-                    rollout_handle.wait()
+                    env_handle, rollout_handle = self._collect_rollouts()
 
                 with self.timer("cal_adv_and_returns"):
                     actor_rollout_metrics = (
@@ -198,6 +236,25 @@ class PegSlotSACRunner(EmbodiedRunner):
             )
         self._finish_run()
 
+    def _log_step_metrics(self, *, env_handle, **kwargs):
+        """Report success rates only for complete evaluation cohorts.
+
+        Training returns only the episodes ending in a short collection window.
+        Early successes arrive before 100-step timeouts, so their fraction is
+        not a success-rate estimate for all episodes started together.
+        These worker results are used only for logging, not replay or training.
+        """
+        for metrics in env_handle.wait():
+            if metrics is not None:
+                for key in (
+                    "success_once",
+                    "fail_once",
+                    "adversary_timeout",
+                    "adversary_first_success",
+                ):
+                    metrics.pop(key, None)
+        super()._log_step_metrics(env_handle=env_handle, **kwargs)
+
     def evaluate(self):
         self.env.prepare_budget_evaluation(self.budget).wait()
         metrics = super().evaluate()
@@ -226,10 +283,11 @@ class PegSlotSACRunner(EmbodiedRunner):
             previous = self.budget
             success = float(metrics["success_once"])
             candidate = adjust_budget(previous, success, self.cfg.budget)
-            # An extra clean check is only needed when further budget reduction
-            # cannot help. Do not restart training or repeat critic warmup.
+            # Optionally check without disturbance at the budget floor and stop
+            # if the learner also fails there.
             if (
-                success < self.cfg.budget.success_low
+                self.cfg.budget.get("zero_budget_eval", True)
+                and success < self.cfg.budget.success_low
                 and previous <= self.cfg.budget.minimum
             ):
                 self.env.prepare_budget_evaluation(0.0).wait()
@@ -339,6 +397,18 @@ def validate_peg_slot_sac_config(cfg):
     updates = cfg.algorithm.update_epoch
     if isinstance(updates, bool) or not isinstance(updates, int) or updates < 1:
         raise ValueError("update_epoch must be a positive integer")
+    initial_steps = cfg.algorithm.get("initial_collect_steps", 0)
+    if (
+        isinstance(initial_steps, bool)
+        or not isinstance(initial_steps, int)
+        or initial_steps < 0
+    ):
+        raise ValueError("initial_collect_steps must be a non-negative integer")
+    collection_steps = (
+        cfg.env.train.max_steps_per_rollout_epoch * cfg.env.train.rollout_epoch
+    )
+    if initial_steps and (collection_steps < 1 or initial_steps % collection_steps):
+        raise ValueError("initial_collect_steps must be a multiple of collection steps")
     if updates > 1 and cfg.runner.get("use_training_pipeline", False):
         raise ValueError(
             "Multiple SAC updates currently require the synchronous runner"
