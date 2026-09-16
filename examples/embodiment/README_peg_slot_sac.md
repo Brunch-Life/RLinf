@@ -23,7 +23,8 @@
 预热是固定更新步数，不是实际成功回合计数门槛。
 达到2,000步后，actor按8:1的更新周期开始训练。
 GPU 0负责学习，GPU 0-1各采集512个环境，共1,024个；每轮每环境采集4步，
-再从replay采样5个global batch 2,048（micro batch 2,048）进行5次critic更新，
+再从replay采样5个global batch 2,048（micro batch 1,024）进行5次critic更新，
+每次更新通过两个micro batch累计梯度；micro 2,048在两卡共置显存短测中OOM。
 每轮共10,240条抽样记录，允许重复采样，抽样条次与新增转移之比为2.5。
 `algorithm.critic_actor_ratio: 8`控制预热结束后每8次critic更新才更新一次actor，
 即每轮0–1次actor更新；critic UTD为5/4096，约0.00122。
